@@ -3,14 +3,27 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SHADZ OS — Admin</title>
+  <title>SHADZ OS</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    :root {
+      --gold:       #c9a84c;
+      --gold-light: #e2c36a;
+      --gold-dim:   #7a5f28;
+      --bg:         #000;
+      --surface:    #0d0d0d;
+      --surface-2:  #141414;
+      --border:     #1e1e1e;
+      --border-2:   #2a2520;
+      --text:       #d4d0c8;
+      --text-muted: #4a4540;
+    }
+
     body {
-      font-family: system-ui, sans-serif;
-      background: #0f0f0f;
-      color: #e2e2e2;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
       min-height: 100vh;
       display: flex;
       align-items: center;
@@ -18,179 +31,293 @@
       padding: 2rem 1rem;
     }
 
-    .card {
-      background: #1a1a1a;
-      border: 1px solid #2a2a2a;
-      border-radius: 10px;
-      padding: 2rem;
+    .panel {
       width: 100%;
-      max-width: 420px;
+      max-width: 400px;
     }
 
-    h1 {
-      font-size: 1.1rem;
-      font-weight: 600;
-      letter-spacing: 0.05em;
-      color: #fff;
-      margin-bottom: 1.5rem;
+    /* ── Wordmark ── */
+    .wordmark {
+      text-align: center;
+      margin-bottom: 2.5rem;
     }
 
-    h1 span { color: #6ee7b7; }
-
-    hr {
-      border: none;
-      border-top: 1px solid #2a2a2a;
-      margin: 1.5rem 0;
-    }
-
-    h2 {
-      font-size: 0.78rem;
-      font-weight: 600;
-      letter-spacing: 0.08em;
+    .wordmark-title {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: 0.2em;
       text-transform: uppercase;
-      color: #555;
-      margin-bottom: 1rem;
+      color: var(--gold);
     }
 
+    .wordmark-sub {
+      font-size: 0.65rem;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-top: 0.3rem;
+    }
+
+    /* ── Cards (home screen) ── */
+    .home-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+
+    .home-card {
+      background: var(--surface);
+      border: 1px solid var(--border-2);
+      border-radius: 8px;
+      padding: 1.4rem 1.5rem;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      text-align: left;
+    }
+
+    .home-card:hover {
+      border-color: var(--gold-dim);
+      background: var(--surface-2);
+    }
+
+    .home-card-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--gold);
+      letter-spacing: 0.04em;
+    }
+
+    .home-card-desc {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.3rem;
+      letter-spacing: 0.02em;
+    }
+
+    .home-card-arrow {
+      float: right;
+      color: var(--gold-dim);
+      font-size: 1rem;
+      margin-top: -1.35rem;
+    }
+
+    /* ── Section views ── */
+    .section {
+      display: none;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1.75rem;
+    }
+
+    .back-btn {
+      background: none;
+      border: 1px solid var(--border-2);
+      color: var(--text-muted);
+      border-radius: 5px;
+      padding: 0.3rem 0.65rem;
+      font-size: 0.75rem;
+      cursor: pointer;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      transition: border-color 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+
+    .back-btn:hover { border-color: var(--gold-dim); color: var(--gold); }
+
+    .section-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--gold);
+    }
+
+    /* ── Form elements ── */
     label {
       display: block;
-      font-size: 0.75rem;
+      font-size: 0.68rem;
       font-weight: 500;
-      color: #888;
+      color: var(--text-muted);
       text-transform: uppercase;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.1em;
       margin-bottom: 0.35rem;
     }
 
     input {
       display: block;
       width: 100%;
-      padding: 0.6rem 0.75rem;
-      background: #111;
-      border: 1px solid #333;
+      padding: 0.65rem 0.8rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
       border-radius: 6px;
-      color: #e2e2e2;
-      font-size: 0.9rem;
+      color: var(--text);
+      font-size: 0.88rem;
       margin-bottom: 1rem;
       outline: none;
       transition: border-color 0.15s;
     }
 
-    input:focus { border-color: #6ee7b7; }
+    input:focus { border-color: var(--gold-dim); }
 
-    button {
+    .action-btn {
       width: 100%;
-      padding: 0.65rem;
-      background: #6ee7b7;
-      color: #0f0f0f;
+      padding: 0.7rem;
+      background: var(--gold);
+      color: #000;
       border: none;
       border-radius: 6px;
-      font-size: 0.9rem;
-      font-weight: 600;
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
       cursor: pointer;
       transition: background 0.15s;
       margin-top: 0.25rem;
     }
 
-    button:hover { background: #34d399; }
-    button:disabled { background: #2a2a2a; color: #555; cursor: not-allowed; }
+    .action-btn:hover    { background: var(--gold-light); }
+    .action-btn:disabled { background: var(--border); color: var(--text-muted); cursor: not-allowed; }
 
-    button.secondary {
-      background: #1f2937;
-      color: #6ee7b7;
-      border: 1px solid #374151;
-    }
-
-    button.secondary:hover { background: #374151; }
-
+    /* ── Messages ── */
     .msg {
       margin-top: 1rem;
-      padding: 0.65rem 0.75rem;
+      padding: 0.65rem 0.8rem;
       border-radius: 6px;
-      font-size: 0.85rem;
+      font-size: 0.82rem;
       display: none;
+      letter-spacing: 0.01em;
     }
 
-    .msg.success { background: #052e16; border: 1px solid #166534; color: #6ee7b7; }
-    .msg.error   { background: #2d0a0a; border: 1px solid #7f1d1d; color: #fca5a5; }
+    .msg.success { background: #120e00; border: 1px solid var(--gold-dim); color: var(--gold-light); }
+    .msg.error   { background: #1a0000; border: 1px solid #5a1e1e;         color: #e07070; }
 
+    /* ── Stats box ── */
     .stats-box {
       margin-top: 1rem;
-      padding: 0.85rem 1rem;
-      background: #111;
-      border: 1px solid #2a2a2a;
+      border: 1px solid var(--border-2);
       border-radius: 6px;
+      overflow: hidden;
       display: none;
     }
 
-    .stats-box .stat-row {
+    .stats-row {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 0.3rem 0;
+      padding: 0.8rem 1rem;
+      background: var(--surface);
     }
 
-    .stats-box .stat-row + .stat-row {
-      border-top: 1px solid #1e1e1e;
-    }
+    .stats-row + .stats-row { border-top: 1px solid var(--border); }
 
-    .stats-box .stat-label { font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.06em; }
-    .stats-box .stat-value { font-size: 0.9rem; color: #e2e2e2; font-weight: 500; }
-    .stats-box .stat-value.highlight { color: #6ee7b7; font-size: 1.1rem; }
+    .stats-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    .stats-value { font-size: 0.95rem; color: var(--text); font-weight: 500; }
+    .stats-value.gold { color: var(--gold); font-size: 1.15rem; font-weight: 700; }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>SHADZ OS <span>/ Admin</span></h1>
+  <div class="panel">
 
-    <label for="apiKey">API Key</label>
-    <input type="password" id="apiKey" placeholder="••••••••••••" autocomplete="off" />
+    <div class="wordmark">
+      <div class="wordmark-title">SHADZ OS</div>
+      <div class="wordmark-sub">Control Panel</div>
+    </div>
 
-    <!-- Update redirect -->
-    <h2>Update Redirect</h2>
-
-    <label for="clientId">Client ID</label>
-    <input type="text" id="clientId" placeholder="tag-abc-001" autocomplete="off" />
-
-    <label for="targetUrl">New Redirect URL</label>
-    <input type="url" id="targetUrl" placeholder="https://example.com/page" />
-
-    <button id="updateBtn" onclick="updateRedirect()">Update Redirect Link</button>
-    <div id="updateMsg" class="msg"></div>
-
-    <hr />
-
-    <!-- Stats -->
-    <h2>Scan Stats</h2>
-
-    <label for="statsClientId">Client ID</label>
-    <input type="text" id="statsClientId" placeholder="tag-abc-001" autocomplete="off" />
-
-    <button id="statsBtn" class="secondary" onclick="checkStats()">Check Stats</button>
-
-    <div id="statsBox" class="stats-box">
-      <div class="stat-row">
-        <span class="stat-label">Total Scans</span>
-        <span class="stat-value highlight" id="statScans">—</span>
+    <!-- Home screen -->
+    <div id="home" class="home-grid">
+      <div class="home-card" onclick="show('updateSection')">
+        <div class="home-card-title">Update Redirect Link</div>
+        <div class="home-card-desc">Change where an NFC tag points</div>
+        <div class="home-card-arrow">›</div>
       </div>
-      <div class="stat-row">
-        <span class="stat-label">Latest Scan</span>
-        <span class="stat-value" id="statLatest">—</span>
+      <div class="home-card" onclick="show('statsSection')">
+        <div class="home-card-title">Check Stats</div>
+        <div class="home-card-desc">View scan count and latest activity</div>
+        <div class="home-card-arrow">›</div>
       </div>
     </div>
 
-    <div id="statsMsg" class="msg"></div>
+    <!-- Update redirect section -->
+    <div id="updateSection" class="section">
+      <div class="section-header">
+        <button class="back-btn" onclick="goHome()">← Back</button>
+        <span class="section-title">Update Redirect</span>
+      </div>
+
+      <label for="u-apiKey">API Key</label>
+      <input type="password" id="u-apiKey" placeholder="••••••••••••" autocomplete="off" />
+
+      <label for="u-clientId">Client ID</label>
+      <input type="text" id="u-clientId" placeholder="tag-abc-001" autocomplete="off" />
+
+      <label for="u-targetUrl">New Redirect URL</label>
+      <input type="url" id="u-targetUrl" placeholder="https://example.com" />
+
+      <button class="action-btn" id="u-btn" onclick="updateRedirect()">Update Redirect Link</button>
+      <div id="u-msg" class="msg"></div>
+    </div>
+
+    <!-- Stats section -->
+    <div id="statsSection" class="section">
+      <div class="section-header">
+        <button class="back-btn" onclick="goHome()">← Back</button>
+        <span class="section-title">Scan Stats</span>
+      </div>
+
+      <label for="s-apiKey">API Key</label>
+      <input type="password" id="s-apiKey" placeholder="••••••••••••" autocomplete="off" />
+
+      <label for="s-clientId">Client ID</label>
+      <input type="text" id="s-clientId" placeholder="tag-abc-001" autocomplete="off" />
+
+      <button class="action-btn" id="s-btn" onclick="checkStats()">Check Stats</button>
+
+      <div id="statsBox" class="stats-box">
+        <div class="stats-row">
+          <span class="stats-label">Total Scans</span>
+          <span class="stats-value gold" id="statScans">—</span>
+        </div>
+        <div class="stats-row">
+          <span class="stats-label">Latest Scan</span>
+          <span class="stats-value" id="statLatest">—</span>
+        </div>
+      </div>
+
+      <div id="s-msg" class="msg"></div>
+    </div>
+
   </div>
 
   <script>
+    function show(sectionId) {
+      document.getElementById('home').style.display = 'none';
+      document.getElementById(sectionId).style.display = 'block';
+    }
+
+    function goHome() {
+      document.querySelectorAll('.section').forEach(s => s.style.display = 'none');
+      document.getElementById('home').style.display = 'flex';
+      document.getElementById('statsBox').style.display = 'none';
+      ['u-msg', 's-msg'].forEach(id => {
+        const el = document.getElementById(id);
+        el.style.display = 'none';
+        el.className = 'msg';
+      });
+    }
+
     async function updateRedirect() {
-      const apiKey    = document.getElementById('apiKey').value.trim();
-      const clientId  = document.getElementById('clientId').value.trim();
-      const targetUrl = document.getElementById('targetUrl').value.trim();
-      const btn       = document.getElementById('updateBtn');
+      const apiKey    = document.getElementById('u-apiKey').value.trim();
+      const clientId  = document.getElementById('u-clientId').value.trim();
+      const targetUrl = document.getElementById('u-targetUrl').value.trim();
+      const btn       = document.getElementById('u-btn');
 
       if (!apiKey || !clientId || !targetUrl) {
-        showMsg('updateMsg', 'error', 'All fields are required.');
+        showMsg('u-msg', 'error', 'All fields are required.');
         return;
       }
 
@@ -205,12 +332,12 @@
         });
         const data = await res.json();
         if (res.ok) {
-          showMsg('updateMsg', 'success', `Updated: ${data.tag_id} → ${data.target_url}`);
+          showMsg('u-msg', 'success', `Updated: ${data.tag_id} → ${data.target_url}`);
         } else {
-          showMsg('updateMsg', 'error', data.detail || `Error ${res.status}`);
+          showMsg('u-msg', 'error', data.detail || `Error ${res.status}`);
         }
       } catch {
-        showMsg('updateMsg', 'error', 'Network error — is the server running?');
+        showMsg('u-msg', 'error', 'Network error — is the server running?');
       } finally {
         btn.disabled = false;
         btn.textContent = 'Update Redirect Link';
@@ -218,16 +345,16 @@
     }
 
     async function checkStats() {
-      const apiKey   = document.getElementById('apiKey').value.trim();
-      const clientId = document.getElementById('statsClientId').value.trim();
-      const btn      = document.getElementById('statsBtn');
-      const box      = document.getElementById('statsBox');
+      const apiKey   = document.getElementById('s-apiKey').value.trim();
+      const clientId = document.getElementById('s-clientId').value.trim();
+      const btn      = document.getElementById('s-btn');
 
-      box.style.display = 'none';
-      hideMsg('statsMsg');
+      document.getElementById('statsBox').style.display = 'none';
+      const msgEl = document.getElementById('s-msg');
+      msgEl.style.display = 'none';
 
       if (!apiKey || !clientId) {
-        showMsg('statsMsg', 'error', 'API key and Client ID are required.');
+        showMsg('s-msg', 'error', 'API key and Client ID are required.');
         return;
       }
 
@@ -241,15 +368,18 @@
         const data = await res.json();
 
         if (res.ok) {
-          document.getElementById('statScans').textContent  = data.total_scans;
+          document.getElementById('statScans').textContent =
+            data.total_scans;
           document.getElementById('statLatest').textContent =
-            data.latest_scan_time ? new Date(data.latest_scan_time).toLocaleString() : 'Never';
-          box.style.display = 'block';
+            data.latest_scan_time
+              ? new Date(data.latest_scan_time).toLocaleString()
+              : 'Never';
+          document.getElementById('statsBox').style.display = 'block';
         } else {
-          showMsg('statsMsg', 'error', data.detail || `Error ${res.status}`);
+          showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
         }
       } catch {
-        showMsg('statsMsg', 'error', 'Network error — is the server running?');
+        showMsg('s-msg', 'error', 'Network error — is the server running?');
       } finally {
         btn.disabled = false;
         btn.textContent = 'Check Stats';
@@ -261,12 +391,6 @@
       el.textContent = text;
       el.className = `msg ${type}`;
       el.style.display = 'block';
-    }
-
-    function hideMsg(id) {
-      const el = document.getElementById(id);
-      el.style.display = 'none';
-      el.className = 'msg';
     }
   </script>
 </body>
