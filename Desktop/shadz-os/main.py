@@ -4,7 +4,7 @@ import platform
 import subprocess
 import psutil
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi import FastAPI, HTTPException, Depends, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.security.api_key import APIKeyHeader
@@ -94,6 +94,12 @@ class NFCUpdate(BaseModel):
 class NFCAdminUpdate(BaseModel):
     client_id: str
     new_target_url: str
+
+
+class NFCStats(BaseModel):
+    tag_id: str
+    total_scans: int
+    latest_scan_time: datetime | None
 
 
 class NFCResponse(BaseModel):
@@ -195,11 +201,27 @@ def admin_update_nfc(payload: NFCAdminUpdate, db: Session = Depends(get_db), _ke
     return record
 
 
+@app.get("/nfc/{tag_id}/stats", response_model=NFCStats)
+def get_nfc_stats(tag_id: str, db: Session = Depends(get_db), _key=Depends(require_api_key)):
+    if not db.query(models.NFCRecord).filter(models.NFCRecord.tag_id == tag_id).first():
+        raise HTTPException(status_code=404, detail=f"tag_id '{tag_id}' not found")
+    logs = db.query(models.ScanLog).filter(models.ScanLog.tag_id == tag_id).all()
+    latest = max((l.scanned_at for l in logs), default=None)
+    return NFCStats(tag_id=tag_id, total_scans=len(logs), latest_scan_time=latest)
+
+
 @app.get("/r/{tag_id}")
-def redirect_nfc(tag_id: str, db: Session = Depends(get_db)):
+def redirect_nfc(tag_id: str, request: Request, db: Session = Depends(get_db)):
     record = db.query(models.NFCRecord).filter(models.NFCRecord.tag_id == tag_id).first()
     if not record:
         raise HTTPException(status_code=404, detail=f"tag_id '{tag_id}' not found")
+    log = models.ScanLog(
+        tag_id=tag_id,
+        user_agent=request.headers.get("user-agent"),
+        ip_address=request.client.host if request.client else None,
+    )
+    db.add(log)
+    db.commit()
     return RedirectResponse(url=record.target_url, status_code=302)
 
 
