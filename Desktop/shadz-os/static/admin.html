@@ -15,6 +15,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      padding: 2rem 1rem;
     }
 
     .card {
@@ -35,6 +36,21 @@
     }
 
     h1 span { color: #6ee7b7; }
+
+    hr {
+      border: none;
+      border-top: 1px solid #2a2a2a;
+      margin: 1.5rem 0;
+    }
+
+    h2 {
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #555;
+      margin-bottom: 1rem;
+    }
 
     label {
       display: block;
@@ -79,7 +95,15 @@
     button:hover { background: #34d399; }
     button:disabled { background: #2a2a2a; color: #555; cursor: not-allowed; }
 
-    #message {
+    button.secondary {
+      background: #1f2937;
+      color: #6ee7b7;
+      border: 1px solid #374151;
+    }
+
+    button.secondary:hover { background: #374151; }
+
+    .msg {
       margin-top: 1rem;
       padding: 0.65rem 0.75rem;
       border-radius: 6px;
@@ -87,8 +111,32 @@
       display: none;
     }
 
-    #message.success { background: #052e16; border: 1px solid #166534; color: #6ee7b7; }
-    #message.error   { background: #2d0a0a; border: 1px solid #7f1d1d; color: #fca5a5; }
+    .msg.success { background: #052e16; border: 1px solid #166534; color: #6ee7b7; }
+    .msg.error   { background: #2d0a0a; border: 1px solid #7f1d1d; color: #fca5a5; }
+
+    .stats-box {
+      margin-top: 1rem;
+      padding: 0.85rem 1rem;
+      background: #111;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      display: none;
+    }
+
+    .stats-box .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.3rem 0;
+    }
+
+    .stats-box .stat-row + .stat-row {
+      border-top: 1px solid #1e1e1e;
+    }
+
+    .stats-box .stat-label { font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.06em; }
+    .stats-box .stat-value { font-size: 0.9rem; color: #e2e2e2; font-weight: 500; }
+    .stats-box .stat-value.highlight { color: #6ee7b7; font-size: 1.1rem; }
   </style>
 </head>
 <body>
@@ -98,15 +146,40 @@
     <label for="apiKey">API Key</label>
     <input type="password" id="apiKey" placeholder="••••••••••••" autocomplete="off" />
 
+    <!-- Update redirect -->
+    <h2>Update Redirect</h2>
+
     <label for="clientId">Client ID</label>
     <input type="text" id="clientId" placeholder="tag-abc-001" autocomplete="off" />
 
     <label for="targetUrl">New Redirect URL</label>
     <input type="url" id="targetUrl" placeholder="https://example.com/page" />
 
-    <button id="submitBtn" onclick="updateRedirect()">Update Redirect Link</button>
+    <button id="updateBtn" onclick="updateRedirect()">Update Redirect Link</button>
+    <div id="updateMsg" class="msg"></div>
 
-    <div id="message"></div>
+    <hr />
+
+    <!-- Stats -->
+    <h2>Scan Stats</h2>
+
+    <label for="statsClientId">Client ID</label>
+    <input type="text" id="statsClientId" placeholder="tag-abc-001" autocomplete="off" />
+
+    <button id="statsBtn" class="secondary" onclick="checkStats()">Check Stats</button>
+
+    <div id="statsBox" class="stats-box">
+      <div class="stat-row">
+        <span class="stat-label">Total Scans</span>
+        <span class="stat-value highlight" id="statScans">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Latest Scan</span>
+        <span class="stat-value" id="statLatest">—</span>
+      </div>
+    </div>
+
+    <div id="statsMsg" class="msg"></div>
   </div>
 
   <script>
@@ -114,14 +187,10 @@
       const apiKey    = document.getElementById('apiKey').value.trim();
       const clientId  = document.getElementById('clientId').value.trim();
       const targetUrl = document.getElementById('targetUrl').value.trim();
-      const btn       = document.getElementById('submitBtn');
-      const msg       = document.getElementById('message');
-
-      msg.style.display = 'none';
-      msg.className = '';
+      const btn       = document.getElementById('updateBtn');
 
       if (!apiKey || !clientId || !targetUrl) {
-        showMessage('error', 'All fields are required.');
+        showMsg('updateMsg', 'error', 'All fields are required.');
         return;
       }
 
@@ -129,35 +198,75 @@
       btn.textContent = 'Updating…';
 
       try {
-        const res = await fetch('/admin/nfc', {
+        const res  = await fetch('/admin/nfc', {
           method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-API-Key': apiKey,
-          },
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
           body: JSON.stringify({ client_id: clientId, new_target_url: targetUrl }),
         });
-
         const data = await res.json();
-
         if (res.ok) {
-          showMessage('success', `Updated: ${data.tag_id} → ${data.target_url}`);
+          showMsg('updateMsg', 'success', `Updated: ${data.tag_id} → ${data.target_url}`);
         } else {
-          showMessage('error', data.detail || `Error ${res.status}`);
+          showMsg('updateMsg', 'error', data.detail || `Error ${res.status}`);
         }
       } catch {
-        showMessage('error', 'Network error — is the server running?');
+        showMsg('updateMsg', 'error', 'Network error — is the server running?');
       } finally {
         btn.disabled = false;
         btn.textContent = 'Update Redirect Link';
       }
     }
 
-    function showMessage(type, text) {
-      const msg = document.getElementById('message');
-      msg.textContent = text;
-      msg.className = type;
-      msg.style.display = 'block';
+    async function checkStats() {
+      const apiKey   = document.getElementById('apiKey').value.trim();
+      const clientId = document.getElementById('statsClientId').value.trim();
+      const btn      = document.getElementById('statsBtn');
+      const box      = document.getElementById('statsBox');
+
+      box.style.display = 'none';
+      hideMsg('statsMsg');
+
+      if (!apiKey || !clientId) {
+        showMsg('statsMsg', 'error', 'API key and Client ID are required.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Loading…';
+
+      try {
+        const res  = await fetch(`/nfc/${encodeURIComponent(clientId)}/stats`, {
+          headers: { 'X-API-Key': apiKey },
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          document.getElementById('statScans').textContent  = data.total_scans;
+          document.getElementById('statLatest').textContent =
+            data.latest_scan_time ? new Date(data.latest_scan_time).toLocaleString() : 'Never';
+          box.style.display = 'block';
+        } else {
+          showMsg('statsMsg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('statsMsg', 'error', 'Network error — is the server running?');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Check Stats';
+      }
+    }
+
+    function showMsg(id, type, text) {
+      const el = document.getElementById(id);
+      el.textContent = text;
+      el.className = `msg ${type}`;
+      el.style.display = 'block';
+    }
+
+    function hideMsg(id) {
+      const el = document.getElementById(id);
+      el.style.display = 'none';
+      el.className = 'msg';
     }
   </script>
 </body>
