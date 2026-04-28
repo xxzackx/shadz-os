@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SHADZ OS — Admin</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0f0f0f;
+      color: #e2e2e2;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .card {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      padding: 2rem;
+      width: 100%;
+      max-width: 420px;
+    }
+
+    h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      color: #fff;
+      margin-bottom: 1.5rem;
+    }
+
+    h1 span { color: #6ee7b7; }
+
+    label {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.35rem;
+    }
+
+    input {
+      display: block;
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 6px;
+      color: #e2e2e2;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    input:focus { border-color: #6ee7b7; }
+
+    button {
+      width: 100%;
+      padding: 0.65rem;
+      background: #6ee7b7;
+      color: #0f0f0f;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+      margin-top: 0.25rem;
+    }
+
+    button:hover { background: #34d399; }
+    button:disabled { background: #2a2a2a; color: #555; cursor: not-allowed; }
+
+    #message {
+      margin-top: 1rem;
+      padding: 0.65rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      display: none;
+    }
+
+    #message.success { background: #052e16; border: 1px solid #166534; color: #6ee7b7; }
+    #message.error   { background: #2d0a0a; border: 1px solid #7f1d1d; color: #fca5a5; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>SHADZ OS <span>/ Admin</span></h1>
+
+    <label for="apiKey">API Key</label>
+    <input type="password" id="apiKey" placeholder="••••••••••••" autocomplete="off" />
+
+    <label for="clientId">Client ID</label>
+    <input type="text" id="clientId" placeholder="tag-abc-001" autocomplete="off" />
+
+    <label for="targetUrl">New Redirect URL</label>
+    <input type="url" id="targetUrl" placeholder="https://example.com/page" />
+
+    <button id="submitBtn" onclick="updateRedirect()">Update Redirect Link</button>
+
+    <div id="message"></div>
+  </div>
+
+  <script>
+    async function updateRedirect() {
+      const apiKey    = document.getElementById('apiKey').value.trim();
+      const clientId  = document.getElementById('clientId').value.trim();
+      const targetUrl = document.getElementById('targetUrl').value.trim();
+      const btn       = document.getElementById('submitBtn');
+      const msg       = document.getElementById('message');
+
+      msg.style.display = 'none';
+      msg.className = '';
+
+      if (!apiKey || !clientId || !targetUrl) {
+        showMessage('error', 'All fields are required.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Updating…';
+
+      try {
+        const res = await fetch('/admin/nfc', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-Key': apiKey,
+          },
+          body: JSON.stringify({ client_id: clientId, new_target_url: targetUrl }),
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          showMessage('success', `Updated: ${data.tag_id} → ${data.target_url}`);
+        } else {
+          showMessage('error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMessage('error', 'Network error — is the server running?');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Update Redirect Link';
+      }
+    }
+
+    function showMessage(type, text) {
+      const msg = document.getElementById('message');
+      msg.textContent = text;
+      msg.className = type;
+      msg.style.display = 'block';
+    }
+  </script>
+</body>
+</html>

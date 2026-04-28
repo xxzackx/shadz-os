@@ -6,7 +6,7 @@ import psutil
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -201,6 +201,11 @@ def redirect_nfc(tag_id: str, db: Session = Depends(get_db)):
     if not record:
         raise HTTPException(status_code=404, detail=f"tag_id '{tag_id}' not found")
     return RedirectResponse(url=record.target_url, status_code=302)
+
+
+@app.get("/admin", include_in_schema=False)
+def admin_ui():
+    return FileResponse("static/admin.html")
 
 
 @app.get("/health")
