@@ -3,17 +3,25 @@ import time
 import platform
 import subprocess
 import psutil
+from datetime import datetime
 from fastapi import FastAPI, HTTPException, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+
+import models
+from database import Base, engine, get_db
+
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Shadz OS Dashboard", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT"],
     allow_headers=["*", "X-API-Key"],
 )
 
@@ -73,6 +81,24 @@ class ServerStatus(BaseModel):
     uptime_seconds: float
 
 
+class NFCCreate(BaseModel):
+    tag_id: str
+    target_url: str
+
+
+class NFCUpdate(BaseModel):
+    target_url: str
+
+
+class NFCResponse(BaseModel):
+    id: int
+    tag_id: str
+    target_url: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -118,6 +144,38 @@ def run_command(req: CommandRequest, _key=Depends(require_api_key)):
         output=output.strip(),
         exit_code=result.returncode,
     )
+
+
+@app.post("/nfc", response_model=NFCResponse, status_code=201)
+def create_nfc(payload: NFCCreate, db: Session = Depends(get_db), _key=Depends(require_api_key)):
+    record = models.NFCRecord(tag_id=payload.tag_id, target_url=payload.target_url)
+    db.add(record)
+    try:
+        db.commit()
+        db.refresh(record)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=f"tag_id '{payload.tag_id}' already exists")
+    return record
+
+
+@app.get("/nfc/{tag_id}", response_model=NFCResponse)
+def get_nfc(tag_id: str, db: Session = Depends(get_db), _key=Depends(require_api_key)):
+    record = db.query(models.NFCRecord).filter(models.NFCRecord.tag_id == tag_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail=f"tag_id '{tag_id}' not found")
+    return record
+
+
+@app.put("/nfc/{tag_id}", response_model=NFCResponse)
+def update_nfc(tag_id: str, payload: NFCUpdate, db: Session = Depends(get_db), _key=Depends(require_api_key)):
+    record = db.query(models.NFCRecord).filter(models.NFCRecord.tag_id == tag_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail=f"tag_id '{tag_id}' not found")
+    record.target_url = payload.target_url
+    db.commit()
+    db.refresh(record)
+    return record
 
 
 @app.get("/health")
