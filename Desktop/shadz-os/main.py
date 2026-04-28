@@ -6,6 +6,7 @@ import psutil
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -176,6 +177,14 @@ def update_nfc(tag_id: str, payload: NFCUpdate, db: Session = Depends(get_db), _
     db.commit()
     db.refresh(record)
     return record
+
+
+@app.get("/r/{tag_id}")
+def redirect_nfc(tag_id: str, db: Session = Depends(get_db)):
+    record = db.query(models.NFCRecord).filter(models.NFCRecord.tag_id == tag_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail=f"tag_id '{tag_id}' not found")
+    return RedirectResponse(url=record.target_url, status_code=302)
 
 
 @app.get("/health")
