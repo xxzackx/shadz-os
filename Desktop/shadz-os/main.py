@@ -22,7 +22,7 @@ app = FastAPI(title="Shadz OS Dashboard", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST", "PUT"],
+    allow_methods=["GET", "POST", "PUT", "PATCH"],
     allow_headers=["*", "X-API-Key"],
 )
 
@@ -89,6 +89,11 @@ class NFCCreate(BaseModel):
 
 class NFCUpdate(BaseModel):
     target_url: str
+
+
+class NFCAdminUpdate(BaseModel):
+    client_id: str
+    new_target_url: str
 
 
 class NFCResponse(BaseModel):
@@ -174,6 +179,17 @@ def update_nfc(tag_id: str, payload: NFCUpdate, db: Session = Depends(get_db), _
     if not record:
         raise HTTPException(status_code=404, detail=f"tag_id '{tag_id}' not found")
     record.target_url = payload.target_url
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@app.patch("/admin/nfc", response_model=NFCResponse)
+def admin_update_nfc(payload: NFCAdminUpdate, db: Session = Depends(get_db), _key=Depends(require_api_key)):
+    record = db.query(models.NFCRecord).filter(models.NFCRecord.tag_id == payload.client_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail=f"client_id '{payload.client_id}' not found")
+    record.target_url = payload.new_target_url
     db.commit()
     db.refresh(record)
     return record
