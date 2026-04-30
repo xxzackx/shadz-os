@@ -3,7 +3,7 @@ import time
 import platform
 import subprocess
 import psutil
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Depends, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, FileResponse
@@ -58,6 +58,21 @@ SAFE_COMMANDS: dict[str, list[str]] = {
     "check_docker": ["docker", "ps", "--format", "table {{.Names}}\t{{.Status}}"],
     "check_disk":   _DF_CMD,
 }
+
+# Paths that must never be handled by the /{slug} dynamic redirect route.
+# FastAPI's registration order already protects these, but this guard makes
+# the protection explicit and survives any future route reordering.
+RESERVED_SLUGS: frozenset[str] = frozenset({
+    "admin",
+    "health",
+    "status",
+    "run-command",
+    "nfc",
+    "r",
+    "docs",       # FastAPI auto-generated OpenAPI UI
+    "redoc",      # FastAPI auto-generated ReDoc UI
+    "openapi.json",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -233,3 +248,66 @@ def admin_ui():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# v0.2 — Dynamic Redirect System
+# ---------------------------------------------------------------------------
+
+class LinkUpdate(BaseModel):
+    destination_url: str
+
+
+class LinkInfo(BaseModel):
+    slug: str
+    destination_url: str
+    scan_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+@app.get("/{slug}")
+def redirect_slug(slug: str, request: Request, db: Session = Depends(get_db)):
+    """Public endpoint — NFC tags point here (e.g. shadz.io/a).
+    Looks up the slug, increments scan_count, then issues a 302 redirect.
+    Returns 404 if the slug doesn't exist in the database or is reserved.
+    """
+    # Guard: never process built-in or reserved paths as slugs.
+    # FastAPI's route-registration order already prevents this in practice,
+    # but this check makes the safety explicit and order-independent.
+    if slug in RESERVED_SLUGS:
+        raise HTTPException(status_code=404, detail=f"'{slug}' is a reserved path")
+
+    link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
+    if not link:
+        raise HTTPException(status_code=404, detail=f"Slug '{slug}' not found")
+    link.scan_count += 1
+    link.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return RedirectResponse(url=link.destination_url, status_code=302)
+
+
+@app.get("/admin/link/{slug}", response_model=LinkInfo)
+def get_link(slug: str, db: Session = Depends(get_db), _key=Depends(require_api_key)):
+    """Return current destination URL and total scan count for a slug."""
+    link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
+    if not link:
+        raise HTTPException(status_code=404, detail=f"Slug '{slug}' not found")
+    return link
+
+
+@app.post("/admin/link/{slug}", response_model=LinkInfo)
+def update_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db), _key=Depends(require_api_key)):
+    """Update the destination URL for a slug.
+    Body: {"destination_url": "https://example.com"}
+    """
+    link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
+    if not link:
+        raise HTTPException(status_code=404, detail=f"Slug '{slug}' not found — use seed.py to create it")
+    link.destination_url = payload.destination_url
+    link.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(link)
+    return link

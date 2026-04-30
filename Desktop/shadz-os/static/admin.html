@@ -232,12 +232,12 @@
     <div id="home" class="home-grid">
       <div class="home-card" onclick="show('updateSection')">
         <div class="home-card-title">Update Redirect Link</div>
-        <div class="home-card-desc">Change where an NFC tag points</div>
+        <div class="home-card-desc">Change where a slug points</div>
         <div class="home-card-arrow">›</div>
       </div>
       <div class="home-card" onclick="show('statsSection')">
         <div class="home-card-title">Check Stats</div>
-        <div class="home-card-desc">View scan count and latest activity</div>
+        <div class="home-card-desc">View destination and scan count for a slug</div>
         <div class="home-card-arrow">›</div>
       </div>
     </div>
@@ -252,8 +252,8 @@
       <label for="u-apiKey">API Key</label>
       <input type="password" id="u-apiKey" placeholder="••••••••••••" autocomplete="off" />
 
-      <label for="u-clientId">Client ID</label>
-      <input type="text" id="u-clientId" placeholder="tag-abc-001" autocomplete="off" />
+      <label for="u-slug">Slug</label>
+      <input type="text" id="u-slug" placeholder="a" autocomplete="off" />
 
       <label for="u-targetUrl">New Redirect URL</label>
       <input type="url" id="u-targetUrl" placeholder="https://example.com" />
@@ -272,19 +272,23 @@
       <label for="s-apiKey">API Key</label>
       <input type="password" id="s-apiKey" placeholder="••••••••••••" autocomplete="off" />
 
-      <label for="s-clientId">Client ID</label>
-      <input type="text" id="s-clientId" placeholder="tag-abc-001" autocomplete="off" />
+      <label for="s-slug">Slug</label>
+      <input type="text" id="s-slug" placeholder="a" autocomplete="off" />
 
       <button class="action-btn" id="s-btn" onclick="checkStats()">Check Stats</button>
 
       <div id="statsBox" class="stats-box">
         <div class="stats-row">
-          <span class="stats-label">Total Scans</span>
-          <span class="stats-value gold" id="statScans">—</span>
+          <span class="stats-label">Slug</span>
+          <span class="stats-value" id="statSlug">—</span>
         </div>
         <div class="stats-row">
-          <span class="stats-label">Latest Scan</span>
-          <span class="stats-value" id="statLatest">—</span>
+          <span class="stats-label">Destination</span>
+          <span class="stats-value" id="statDest" style="word-break:break-all;text-align:right;max-width:68%">—</span>
+        </div>
+        <div class="stats-row">
+          <span class="stats-label">Total Scans</span>
+          <span class="stats-value gold" id="statScans">—</span>
         </div>
       </div>
 
@@ -312,11 +316,11 @@
 
     async function updateRedirect() {
       const apiKey    = document.getElementById('u-apiKey').value.trim();
-      const clientId  = document.getElementById('u-clientId').value.trim();
+      const slug      = document.getElementById('u-slug').value.trim();
       const targetUrl = document.getElementById('u-targetUrl').value.trim();
       const btn       = document.getElementById('u-btn');
 
-      if (!apiKey || !clientId || !targetUrl) {
+      if (!apiKey || !slug || !targetUrl) {
         showMsg('u-msg', 'error', 'All fields are required.');
         return;
       }
@@ -325,14 +329,14 @@
       btn.textContent = 'Updating…';
 
       try {
-        const res  = await fetch('/admin/nfc', {
-          method: 'PATCH',
+        const res  = await fetch(`/admin/link/${encodeURIComponent(slug)}`, {
+          method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
-          body: JSON.stringify({ client_id: clientId, new_target_url: targetUrl }),
+          body: JSON.stringify({ destination_url: targetUrl }),
         });
         const data = await res.json();
         if (res.ok) {
-          showMsg('u-msg', 'success', `Updated: ${data.tag_id} → ${data.target_url}`);
+          showMsg('u-msg', 'success', `Updated: /${data.slug} → ${data.destination_url}`);
         } else {
           showMsg('u-msg', 'error', data.detail || `Error ${res.status}`);
         }
@@ -345,16 +349,16 @@
     }
 
     async function checkStats() {
-      const apiKey   = document.getElementById('s-apiKey').value.trim();
-      const clientId = document.getElementById('s-clientId').value.trim();
-      const btn      = document.getElementById('s-btn');
+      const apiKey = document.getElementById('s-apiKey').value.trim();
+      const slug   = document.getElementById('s-slug').value.trim();
+      const btn    = document.getElementById('s-btn');
 
       document.getElementById('statsBox').style.display = 'none';
       const msgEl = document.getElementById('s-msg');
       msgEl.style.display = 'none';
 
-      if (!apiKey || !clientId) {
-        showMsg('s-msg', 'error', 'API key and Client ID are required.');
+      if (!apiKey || !slug) {
+        showMsg('s-msg', 'error', 'API key and Slug are required.');
         return;
       }
 
@@ -362,18 +366,15 @@
       btn.textContent = 'Loading…';
 
       try {
-        const res  = await fetch(`/nfc/${encodeURIComponent(clientId)}/stats`, {
+        const res  = await fetch(`/admin/link/${encodeURIComponent(slug)}`, {
           headers: { 'X-API-Key': apiKey },
         });
         const data = await res.json();
 
         if (res.ok) {
-          document.getElementById('statScans').textContent =
-            data.total_scans;
-          document.getElementById('statLatest').textContent =
-            data.latest_scan_time
-              ? new Date(data.latest_scan_time).toLocaleString()
-              : 'Never';
+          document.getElementById('statSlug').textContent  = data.slug;
+          document.getElementById('statDest').textContent  = data.destination_url;
+          document.getElementById('statScans').textContent = data.scan_count;
           document.getElementById('statsBox').style.display = 'block';
         } else {
           showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
