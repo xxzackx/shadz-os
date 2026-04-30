@@ -1,6 +1,10 @@
 __pycache__/
 *.pyc
+*.pyo
 .claude/
 .env
 .DS_Store
 *.db
+shadz.db
+.venv/
+venv/

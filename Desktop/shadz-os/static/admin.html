@@ -249,9 +249,6 @@
         <span class="section-title">Update Redirect</span>
       </div>
 
-      <label for="u-apiKey">API Key</label>
-      <input type="password" id="u-apiKey" placeholder="••••••••••••" autocomplete="off" />
-
       <label for="u-slug">Slug</label>
       <input type="text" id="u-slug" placeholder="a" autocomplete="off" />
 
@@ -268,9 +265,6 @@
         <button class="back-btn" onclick="goHome()">← Back</button>
         <span class="section-title">Scan Stats</span>
       </div>
-
-      <label for="s-apiKey">API Key</label>
-      <input type="password" id="s-apiKey" placeholder="••••••••••••" autocomplete="off" />
 
       <label for="s-slug">Slug</label>
       <input type="text" id="s-slug" placeholder="a" autocomplete="off" />
@@ -315,13 +309,12 @@
     }
 
     async function updateRedirect() {
-      const apiKey    = document.getElementById('u-apiKey').value.trim();
       const slug      = document.getElementById('u-slug').value.trim();
       const targetUrl = document.getElementById('u-targetUrl').value.trim();
       const btn       = document.getElementById('u-btn');
 
-      if (!apiKey || !slug || !targetUrl) {
-        showMsg('u-msg', 'error', 'All fields are required.');
+      if (!slug || !targetUrl) {
+        showMsg('u-msg', 'error', 'Slug and destination URL are required.');
         return;
       }
 
@@ -329,9 +322,12 @@
       btn.textContent = 'Updating…';
 
       try {
+        // credentials: 'same-origin' sends the browser's cached Basic Auth
+        // credentials automatically — no API key needed in the UI.
         const res  = await fetch(`/admin/link/${encodeURIComponent(slug)}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
           body: JSON.stringify({ destination_url: targetUrl }),
         });
         const data = await res.json();
@@ -349,16 +345,15 @@
     }
 
     async function checkStats() {
-      const apiKey = document.getElementById('s-apiKey').value.trim();
-      const slug   = document.getElementById('s-slug').value.trim();
-      const btn    = document.getElementById('s-btn');
+      const slug = document.getElementById('s-slug').value.trim();
+      const btn  = document.getElementById('s-btn');
 
       document.getElementById('statsBox').style.display = 'none';
       const msgEl = document.getElementById('s-msg');
       msgEl.style.display = 'none';
 
-      if (!apiKey || !slug) {
-        showMsg('s-msg', 'error', 'API key and Slug are required.');
+      if (!slug) {
+        showMsg('s-msg', 'error', 'Slug is required.');
         return;
       }
 
@@ -366,8 +361,10 @@
       btn.textContent = 'Loading…';
 
       try {
+        // credentials: 'same-origin' sends the browser's cached Basic Auth
+        // credentials automatically — no API key needed in the UI.
         const res  = await fetch(`/admin/link/${encodeURIComponent(slug)}`, {
-          headers: { 'X-API-Key': apiKey },
+          credentials: 'same-origin',
         });
         const data = await res.json();
 

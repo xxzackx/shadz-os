@@ -1,13 +1,14 @@
 import os
 import time
+import secrets
 import platform
 import subprocess
 import psutil
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException, Depends, Security, Request
+from fastapi import FastAPI, HTTPException, Depends, Security, Request, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, FileResponse
-from fastapi.security.api_key import APIKeyHeader
+from fastapi.security import HTTPBasic, HTTPBasicCredentials, APIKeyHeader
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -17,7 +18,7 @@ from database import Base, engine, get_db
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Shadz OS Dashboard", version="0.1.0")
+app = FastAPI(title="Shadz OS", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,8 +29,10 @@ app.add_middleware(
 
 BOOT_TIME = psutil.boot_time()
 
+
 # ---------------------------------------------------------------------------
-# API key auth — reads SHADZ_OS_API_KEY from environment at startup
+# Auth — X-API-Key
+# Used by legacy internal routes: /status, /run-command, /nfc/*
 # ---------------------------------------------------------------------------
 
 _API_KEY = os.environ.get("SHADZ_OS_API_KEY", "")
@@ -45,7 +48,54 @@ def require_api_key(key: str = Security(_api_key_header)) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Safe command registry — only these are ever executed
+# Auth — HTTP Basic (SHADZ Admin Core)
+# Protects all /admin/* routes via the admin_router dependency.
+# Credentials are read from ADMIN_USERNAME and ADMIN_PASSWORD env vars.
+# Browser shows native login popup on first visit to /admin.
+# ---------------------------------------------------------------------------
+
+_http_basic = HTTPBasic()
+
+
+def verify_admin(credentials: HTTPBasicCredentials = Depends(_http_basic)) -> str:
+    """Reusable dependency for all SHADZ admin routes.
+
+    - Reads ADMIN_USERNAME / ADMIN_PASSWORD from environment at call time.
+    - Uses secrets.compare_digest to prevent timing-based attacks.
+    - Returns the authenticated username on success.
+    - Raises 401 with WWW-Authenticate header on failure (triggers browser popup).
+    - Raises 500 if credentials are not configured on the server.
+    """
+    username = os.environ.get("ADMIN_USERNAME", "")
+    password = os.environ.get("ADMIN_PASSWORD", "")
+
+    if not username or not password:
+        raise HTTPException(
+            status_code=500,
+            detail="Admin credentials are not configured on this server",
+        )
+
+    username_ok = secrets.compare_digest(
+        credentials.username.encode("utf-8"),
+        username.encode("utf-8"),
+    )
+    password_ok = secrets.compare_digest(
+        credentials.password.encode("utf-8"),
+        password.encode("utf-8"),
+    )
+
+    if not (username_ok and password_ok):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid admin credentials",
+            headers={"WWW-Authenticate": 'Basic realm="SHADZ Admin"'},
+        )
+
+    return credentials.username
+
+
+# ---------------------------------------------------------------------------
+# Constants
 # ---------------------------------------------------------------------------
 
 _DF_CMD = (
@@ -69,8 +119,8 @@ RESERVED_SLUGS: frozenset[str] = frozenset({
     "run-command",
     "nfc",
     "r",
-    "docs",       # FastAPI auto-generated OpenAPI UI
-    "redoc",      # FastAPI auto-generated ReDoc UI
+    "docs",         # FastAPI auto-generated OpenAPI UI
+    "redoc",        # FastAPI auto-generated ReDoc UI
     "openapi.json",
 })
 
@@ -126,8 +176,33 @@ class NFCResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class LinkUpdate(BaseModel):
+    destination_url: str
+
+
+class LinkInfo(BaseModel):
+    slug: str
+    destination_url: str
+    scan_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # ---------------------------------------------------------------------------
-# Routes
+# Public routes
+# ---------------------------------------------------------------------------
+
+@app.get("/health")
+def health():
+    """Public health check — no auth required."""
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Legacy internal routes — X-API-Key protected
+# These predate the Admin Core and are used by internal tooling.
 # ---------------------------------------------------------------------------
 
 @app.get("/status", response_model=ServerStatus)
@@ -145,12 +220,10 @@ def get_status(_key=Depends(require_api_key)):
 @app.post("/run-command", response_model=CommandResult)
 def run_command(req: CommandRequest, _key=Depends(require_api_key)):
     if req.command not in SAFE_COMMANDS:
-        allowed = list(SAFE_COMMANDS.keys())
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown command. Allowed: {allowed}",
+            detail=f"Unknown command. Allowed: {list(SAFE_COMMANDS.keys())}",
         )
-
     argv = SAFE_COMMANDS[req.command]
     try:
         result = subprocess.run(
@@ -164,13 +237,8 @@ def run_command(req: CommandRequest, _key=Depends(require_api_key)):
         raise HTTPException(status_code=504, detail="Command timed out")
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail=f"Binary not found: {argv[0]}")
-
     output = result.stdout or result.stderr
-    return CommandResult(
-        command=req.command,
-        output=output.strip(),
-        exit_code=result.returncode,
-    )
+    return CommandResult(command=req.command, output=output.strip(), exit_code=result.returncode)
 
 
 @app.post("/nfc", response_model=NFCResponse, status_code=201)
@@ -205,26 +273,6 @@ def update_nfc(tag_id: str, payload: NFCUpdate, db: Session = Depends(get_db), _
     return record
 
 
-@app.patch("/admin/nfc", response_model=NFCResponse)
-def admin_update_nfc(payload: NFCAdminUpdate, db: Session = Depends(get_db), _key=Depends(require_api_key)):
-    record = db.query(models.NFCRecord).filter(models.NFCRecord.tag_id == payload.client_id).first()
-    if not record:
-        raise HTTPException(status_code=404, detail=f"client_id '{payload.client_id}' not found")
-    record.target_url = payload.new_target_url
-    db.commit()
-    db.refresh(record)
-    return record
-
-
-@app.get("/nfc/{tag_id}/stats", response_model=NFCStats)
-def get_nfc_stats(tag_id: str, db: Session = Depends(get_db), _key=Depends(require_api_key)):
-    if not db.query(models.NFCRecord).filter(models.NFCRecord.tag_id == tag_id).first():
-        raise HTTPException(status_code=404, detail=f"tag_id '{tag_id}' not found")
-    logs = db.query(models.ScanLog).filter(models.ScanLog.tag_id == tag_id).all()
-    latest = max((l.scanned_at for l in logs), default=None)
-    return NFCStats(tag_id=tag_id, total_scans=len(logs), latest_scan_time=latest)
-
-
 @app.get("/r/{tag_id}")
 def redirect_nfc(tag_id: str, request: Request, db: Session = Depends(get_db)):
     record = db.query(models.NFCRecord).filter(models.NFCRecord.tag_id == tag_id).first()
@@ -240,57 +288,44 @@ def redirect_nfc(tag_id: str, request: Request, db: Session = Depends(get_db)):
     return RedirectResponse(url=record.target_url, status_code=302)
 
 
-@app.get("/admin", include_in_schema=False)
+# ---------------------------------------------------------------------------
+# SHADZ Admin Core
+#
+# All routes under /admin/* live here.
+# Single dependency (verify_admin) applied at router level — no per-route
+# repetition needed. Adding a new admin route automatically inherits auth.
+#
+# Current module: Redirect Engine
+# Future modules: Analytics, NFC Client Manager, Settings, AI tools, etc.
+#
+# Planned route expansion (do not add yet):
+#   /admin/redirect/...   — Redirect Engine management
+#   /admin/analytics/...  — Scan charts and reporting
+#   /admin/clients/...    — NFC client management
+#   /admin/settings/...   — System configuration
+# ---------------------------------------------------------------------------
+
+admin_router = APIRouter(
+    prefix="/admin",
+    tags=["SHADZ Admin"],
+    dependencies=[Depends(verify_admin)],
+)
+
+
+@admin_router.get("", include_in_schema=False)
 def admin_ui():
+    """Serves the SHADZ Admin Dashboard.
+    HTTP Basic Auth triggers the browser's native login popup on first visit.
+    Once authenticated, all subsequent /admin/* fetch calls are authorised
+    automatically via the browser's cached credentials.
+    """
     return FileResponse("static/admin.html")
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+# ── Redirect Engine — admin routes ─────────────────────────────────────────
 
-
-# ---------------------------------------------------------------------------
-# v0.2 — Dynamic Redirect System
-# ---------------------------------------------------------------------------
-
-class LinkUpdate(BaseModel):
-    destination_url: str
-
-
-class LinkInfo(BaseModel):
-    slug: str
-    destination_url: str
-    scan_count: int
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
-@app.get("/{slug}")
-def redirect_slug(slug: str, request: Request, db: Session = Depends(get_db)):
-    """Public endpoint — NFC tags point here (e.g. shadz.io/a).
-    Looks up the slug, increments scan_count, then issues a 302 redirect.
-    Returns 404 if the slug doesn't exist in the database or is reserved.
-    """
-    # Guard: never process built-in or reserved paths as slugs.
-    # FastAPI's route-registration order already prevents this in practice,
-    # but this check makes the safety explicit and order-independent.
-    if slug in RESERVED_SLUGS:
-        raise HTTPException(status_code=404, detail=f"'{slug}' is a reserved path")
-
-    link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
-    if not link:
-        raise HTTPException(status_code=404, detail=f"Slug '{slug}' not found")
-    link.scan_count += 1
-    link.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    return RedirectResponse(url=link.destination_url, status_code=302)
-
-
-@app.get("/admin/link/{slug}", response_model=LinkInfo)
-def get_link(slug: str, db: Session = Depends(get_db), _key=Depends(require_api_key)):
+@admin_router.get("/link/{slug}", response_model=LinkInfo)
+def get_link(slug: str, db: Session = Depends(get_db)):
     """Return current destination URL and total scan count for a slug."""
     link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
     if not link:
@@ -298,16 +333,66 @@ def get_link(slug: str, db: Session = Depends(get_db), _key=Depends(require_api_
     return link
 
 
-@app.post("/admin/link/{slug}", response_model=LinkInfo)
-def update_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db), _key=Depends(require_api_key)):
+@admin_router.post("/link/{slug}", response_model=LinkInfo)
+def update_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db)):
     """Update the destination URL for a slug.
     Body: {"destination_url": "https://example.com"}
     """
     link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
     if not link:
-        raise HTTPException(status_code=404, detail=f"Slug '{slug}' not found — use seed.py to create it")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Slug '{slug}' not found — use seed.py to create it",
+        )
     link.destination_url = payload.destination_url
     link.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(link)
     return link
+
+
+# ── Legacy NFC admin route (kept for backwards compatibility) ──────────────
+
+@admin_router.patch("/nfc", response_model=NFCResponse)
+def admin_update_nfc(payload: NFCAdminUpdate, db: Session = Depends(get_db)):
+    """Legacy NFC admin update. Now protected by Admin Core (HTTP Basic Auth)
+    instead of X-API-Key.
+    """
+    record = db.query(models.NFCRecord).filter(models.NFCRecord.tag_id == payload.client_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail=f"client_id '{payload.client_id}' not found")
+    record.target_url = payload.new_target_url
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+# Register admin_router BEFORE /{slug} — ensures /admin is never captured
+# by the catch-all slug route below.
+app.include_router(admin_router)
+
+
+# ---------------------------------------------------------------------------
+# Public NFC redirect — registered LAST
+# /{slug} is a single-segment catch-all. Must come after all other routes.
+# ---------------------------------------------------------------------------
+
+@app.get("/{slug}")
+def redirect_slug(slug: str, request: Request, db: Session = Depends(get_db)):
+    """Public endpoint — NFC tags point here (e.g. shadz.io/a).
+    Looks up the slug, increments scan_count, then issues a 302 redirect.
+    Returns 404 if the slug is reserved or doesn't exist in the database.
+    """
+    # Guard: never process reserved paths as slugs.
+    # FastAPI route order already prevents this, but this makes it explicit.
+    if slug in RESERVED_SLUGS:
+        raise HTTPException(status_code=404, detail=f"'{slug}' is a reserved path")
+
+    link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
+    if not link:
+        raise HTTPException(status_code=404, detail=f"Slug '{slug}' not found")
+
+    link.scan_count += 1
+    link.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return RedirectResponse(url=link.destination_url, status_code=302)
