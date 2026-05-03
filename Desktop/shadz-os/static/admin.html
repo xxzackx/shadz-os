@@ -283,8 +283,8 @@
         <div class="home-card-arrow">›</div>
       </div>
       <div class="home-card" onclick="show('statsSection')">
-        <div class="home-card-title">Check Stats</div>
-        <div class="home-card-desc">View destination and scan count for a slug</div>
+        <div class="home-card-title">Check Slug Info</div>
+        <div class="home-card-desc">Find all NFC links by client phone number</div>
         <div class="home-card-arrow">›</div>
       </div>
     </div>
@@ -308,6 +308,15 @@
       <label for="c-destUrl">Destination URL</label>
       <input type="url" id="c-destUrl" placeholder="https://example.com" />
 
+      <label for="c-name">Client Name</label>
+      <input type="text" id="c-name" placeholder="John Smith" autocomplete="off" />
+
+      <label for="c-phone">Phone Number</label>
+      <input type="tel" id="c-phone" placeholder="+85512345678" autocomplete="off" />
+
+      <label for="c-notes">Notes</label>
+      <input type="text" id="c-notes" placeholder="Black keychain, first order" autocomplete="off" />
+
       <button class="action-btn" id="c-btn" onclick="createLink()">Create New SHADZ Link</button>
 
       <div id="createResult" class="result-box">
@@ -320,8 +329,28 @@
           <span class="result-value" id="resUrl">—</span>
         </div>
         <div class="result-row">
+          <span class="result-label">Content Type</span>
+          <span class="result-value" id="resType">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Client Name</span>
+          <span class="result-value" id="resName">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Phone</span>
+          <span class="result-value" id="resPhone">—</span>
+        </div>
+        <div class="result-row">
           <span class="result-label">Destination</span>
           <span class="result-value" id="resDest">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Notes</span>
+          <span class="result-value" id="resNotes">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Created</span>
+          <span class="result-value" id="resCreated">—</span>
         </div>
       </div>
 
@@ -345,32 +374,20 @@
       <div id="u-msg" class="msg"></div>
     </div>
 
-    <!-- Stats section -->
+    <!-- Slug info / phone search section -->
     <div id="statsSection" class="section">
       <div class="section-header">
         <button class="back-btn" onclick="goHome()">← Back</button>
-        <span class="section-title">Scan Stats</span>
+        <span class="section-title">Slug Info</span>
       </div>
 
-      <label for="s-slug">Slug</label>
-      <input type="text" id="s-slug" placeholder="a" autocomplete="off" />
+      <label for="s-phone">Phone Number</label>
+      <input type="tel" id="s-phone" placeholder="+85512345678" autocomplete="off" />
 
-      <button class="action-btn" id="s-btn" onclick="checkStats()">Check Stats</button>
+      <button class="action-btn" id="s-btn" onclick="searchSlugInfo()">Search Slug Info</button>
 
-      <div id="statsBox" class="stats-box">
-        <div class="stats-row">
-          <span class="stats-label">Slug</span>
-          <span class="stats-value" id="statSlug">—</span>
-        </div>
-        <div class="stats-row">
-          <span class="stats-label">Destination</span>
-          <span class="stats-value" id="statDest" style="word-break:break-all;text-align:right;max-width:68%">—</span>
-        </div>
-        <div class="stats-row">
-          <span class="stats-label">Total Scans</span>
-          <span class="stats-value gold" id="statScans">—</span>
-        </div>
-      </div>
+      <!-- Results injected here dynamically — one card per matching record -->
+      <div id="searchResults" style="margin-top:1rem"></div>
 
       <div id="s-msg" class="msg"></div>
     </div>
@@ -386,8 +403,8 @@
     function goHome() {
       document.querySelectorAll('.section').forEach(s => s.style.display = 'none');
       document.getElementById('home').style.display = 'flex';
-      document.getElementById('statsBox').style.display = 'none';
       document.getElementById('createResult').style.display = 'none';
+      document.getElementById('searchResults').innerHTML = '';
       ['u-msg', 's-msg', 'c-msg'].forEach(id => {
         const el = document.getElementById(id);
         el.style.display = 'none';
@@ -407,26 +424,43 @@
         return;
       }
 
+      const clientName = document.getElementById('c-name').value.trim();
+      const phone      = document.getElementById('c-phone').value.trim();
+      const notes      = document.getElementById('c-notes').value.trim();
+
       btn.disabled = true;
       btn.textContent = 'Creating…';
 
       try {
+        const body = { content_type: contentType, destination_url: destUrl };
+        if (clientName) body.client_name  = clientName;
+        if (phone)      body.phone_number = phone;
+        if (notes)      body.notes        = notes;
+
         const res  = await fetch('/admin/link', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
-          body: JSON.stringify({ content_type: contentType, destination_url: destUrl }),
+          body: JSON.stringify(body),
         });
         const data = await res.json();
 
         if (res.ok) {
           const nfcUrl = `https://shadz.io/${data.slug}`;
-          document.getElementById('resSlug').textContent = data.slug;
-          document.getElementById('resUrl').textContent  = nfcUrl;
-          document.getElementById('resDest').textContent = data.destination_url;
+          document.getElementById('resSlug').textContent    = data.slug;
+          document.getElementById('resUrl').textContent     = nfcUrl;
+          document.getElementById('resType').textContent    = data.content_type   || '—';
+          document.getElementById('resName').textContent    = data.client_name    || '—';
+          document.getElementById('resPhone').textContent   = data.phone_number   || '—';
+          document.getElementById('resDest').textContent    = data.destination_url;
+          document.getElementById('resNotes').textContent   = data.notes          || '—';
+          document.getElementById('resCreated').textContent = new Date(data.created_at).toLocaleString();
           document.getElementById('createResult').style.display = 'block';
-          // Clear the input so the user can create another
+          // Clear inputs so user can create another link immediately
           document.getElementById('c-destUrl').value = '';
+          document.getElementById('c-name').value    = '';
+          document.getElementById('c-phone').value   = '';
+          document.getElementById('c-notes').value   = '';
           // Hide any previous error
           const msgEl = document.getElementById('c-msg');
           msgEl.style.display = 'none';
@@ -478,35 +512,63 @@
       }
     }
 
-    async function checkStats() {
-      const slug = document.getElementById('s-slug').value.trim();
-      const btn  = document.getElementById('s-btn');
+    // Safely escape HTML to prevent XSS when injecting dynamic content
+    function esc(str) {
+      return String(str ?? '—')
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
 
-      document.getElementById('statsBox').style.display = 'none';
+    function buildResultCard(r) {
+      const rows = [
+        ['Content Type', r.content_type],
+        ['Client Name',  r.client_name],
+        ['Phone',        r.phone_number],
+        ['Slug',         r.slug],
+        ['NFC URL',      r.nfc_url],
+        ['Destination',  r.destination_url],
+        ['Created',      new Date(r.created_at).toLocaleString()],
+        ['Scans',        r.scan_count],
+        ['Notes',        r.notes],
+      ];
+      const rowsHtml = rows.map(([label, val]) => `
+        <div class="stats-row">
+          <span class="stats-label">${esc(label)}</span>
+          <span class="stats-value" style="text-align:right;word-break:break-all;max-width:65%">${esc(val)}</span>
+        </div>`).join('');
+      return `<div class="stats-box" style="display:block;margin-bottom:1rem">${rowsHtml}</div>`;
+    }
+
+    async function searchSlugInfo() {
+      const phone = document.getElementById('s-phone').value.trim();
+      const btn   = document.getElementById('s-btn');
+      const container = document.getElementById('searchResults');
+
+      container.innerHTML = '';
       const msgEl = document.getElementById('s-msg');
       msgEl.style.display = 'none';
 
-      if (!slug) {
-        showMsg('s-msg', 'error', 'Slug is required.');
+      if (!phone) {
+        showMsg('s-msg', 'error', 'Phone number is required.');
         return;
       }
 
       btn.disabled = true;
-      btn.textContent = 'Loading…';
+      btn.textContent = 'Searching…';
 
       try {
-        // credentials: 'same-origin' sends the browser's cached Basic Auth
-        // credentials automatically — no API key needed in the UI.
-        const res  = await fetch(`/admin/link/${encodeURIComponent(slug)}`, {
-          credentials: 'same-origin',
-        });
+        const res  = await fetch(
+          `/admin/links/search?phone_number=${encodeURIComponent(phone)}`,
+          { credentials: 'same-origin' }
+        );
         const data = await res.json();
 
         if (res.ok) {
-          document.getElementById('statSlug').textContent  = data.slug;
-          document.getElementById('statDest').textContent  = data.destination_url;
-          document.getElementById('statScans').textContent = data.scan_count;
-          document.getElementById('statsBox').style.display = 'block';
+          if (data.results.length === 0) {
+            showMsg('s-msg', 'error', 'No records found for that phone number.');
+          } else {
+            container.innerHTML = data.results.map(buildResultCard).join('');
+          }
         } else {
           showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
         }
@@ -514,7 +576,7 @@
         showMsg('s-msg', 'error', 'Network error — is the server running?');
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Check Stats';
+        btn.textContent = 'Search Slug Info';
       }
     }
 

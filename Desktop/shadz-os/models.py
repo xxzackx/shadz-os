@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Integer
+from sqlalchemy import String, DateTime, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from database import Base
 
@@ -37,7 +37,10 @@ class ScanLog(Base):
 
 class RedirectLink(Base):
     """One row per NFC slug (e.g. slug='a' → shadz.io/a).
-    scan_count is incremented on every visitor hit — no separate log table needed for MVP.
+
+    Client ownership fields (content_type, client_name, phone_number, notes)
+    are nullable so that legacy records created before v0.3 are never broken.
+    New records should always populate these fields.
     """
     __tablename__ = "redirect_links"
 
@@ -45,6 +48,14 @@ class RedirectLink(Base):
     slug: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     destination_url: Mapped[str] = mapped_column(String, nullable=False)
     scan_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # ── Client ownership / logging fields (added in v0.3) ──────────────────
+    # All nullable — existing rows without these columns still load fine.
+    content_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    client_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    phone_number: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

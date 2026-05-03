@@ -8,11 +8,12 @@ import platform
 import subprocess
 import psutil
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException, Depends, Security, Request, APIRouter
+from fastapi import FastAPI, HTTPException, Depends, Security, Request, APIRouter, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials, APIKeyHeader
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -21,7 +22,37 @@ from database import Base, engine, get_db
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Shadz OS", version="0.2.0")
+
+def _run_migrations() -> None:
+    """Safe lightweight migration for SQLite.
+
+    Base.metadata.create_all never adds columns to an existing table, so we
+    inspect PRAGMA table_info and ALTER TABLE ADD COLUMN for any column that
+    is missing.  Running this multiple times is harmless — it skips columns
+    that already exist.
+
+    Only touches redirect_links.  No Alembic required.
+    """
+    new_cols = {
+        "content_type": "VARCHAR",
+        "client_name":  "VARCHAR",
+        "phone_number": "VARCHAR",
+        "notes":        "TEXT",
+    }
+    with engine.connect() as conn:
+        rows = conn.execute(text("PRAGMA table_info(redirect_links)")).fetchall()
+        existing = {row[1] for row in rows}   # row[1] = column name
+        for col, col_type in new_cols.items():
+            if col not in existing:
+                conn.execute(text(
+                    f"ALTER TABLE redirect_links ADD COLUMN {col} {col_type}"
+                ))
+        conn.commit()
+
+
+_run_migrations()
+
+app = FastAPI(title="Shadz OS", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -150,6 +181,13 @@ def is_valid_slug(slug: str) -> bool:
     return bool(SLUG_PATTERN.match(slug))
 
 
+def infer_content_type_from_slug(slug: str) -> str | None:
+    """Return the content_type prefix from a valid slug, or None for legacy slugs.
+    Examples:  url-abc123 → 'url'   gift-a8d3f1 → 'gift'   'a' → None
+    """
+    return slug.split("-")[0] if is_valid_slug(slug) else None
+
+
 def generate_slug(content_type: str, db: Session) -> str:
     """Auto-generate a unique slug for the given content_type.
 
@@ -231,23 +269,53 @@ class NFCResponse(BaseModel):
 
 class LinkCreate(BaseModel):
     """Body for POST /admin/link — auto-generates slug from content_type."""
-    content_type: str      # must be one of VALID_CONTENT_TYPES
-    destination_url: str
+    content_type: str           # required — must be one of VALID_CONTENT_TYPES
+    destination_url: str        # required
+    client_name: str | None = None
+    phone_number: str | None = None
+    notes: str | None = None
 
 
 class LinkUpdate(BaseModel):
-    """Body for POST /admin/link/{slug} — updates destination of existing slug."""
-    destination_url: str
+    """Body for POST /admin/link/{slug} — upsert by slug."""
+    destination_url: str        # required
+    content_type: str | None = None   # optional override; inferred from slug if omitted
+    client_name: str | None = None
+    phone_number: str | None = None
+    notes: str | None = None
 
 
 class LinkInfo(BaseModel):
+    """Full detail response for a single redirect link."""
     slug: str
+    content_type: str | None = None
+    client_name: str | None = None
+    phone_number: str | None = None
     destination_url: str
+    notes: str | None = None
     scan_count: int
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class LinkSearchResult(BaseModel):
+    """One item in the phone-number search response."""
+    slug: str
+    content_type: str | None = None
+    client_name: str | None = None
+    phone_number: str | None = None
+    nfc_url: str               # computed: https://shadz.io/{slug}
+    destination_url: str
+    notes: str | None = None
+    scan_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class SearchResponse(BaseModel):
+    results: list[LinkSearchResult]
 
 
 # ---------------------------------------------------------------------------
@@ -387,13 +455,20 @@ def admin_ui():
 @admin_router.post("/link", response_model=LinkInfo, status_code=201)
 def create_link(payload: LinkCreate, db: Session = Depends(get_db)):
     """Create a new redirect link with an auto-generated slug.
-    Body: {"content_type": "url", "destination_url": "https://example.com"}
+    Body: {"content_type":"url","destination_url":"https://...","client_name":"...","phone_number":"...","notes":"..."}
     content_type must be one of: url, gift, video, audio, page
-    Returns the created record including the generated slug.
+    Returns the created record including the generated slug and all logging fields.
     """
-    # generate_slug validates content_type and raises 400 if invalid
+    # generate_slug also validates content_type and raises 400 if invalid
     slug = generate_slug(payload.content_type, db)
-    link = models.RedirectLink(slug=slug, destination_url=payload.destination_url)
+    link = models.RedirectLink(
+        slug=slug,
+        destination_url=payload.destination_url,
+        content_type=payload.content_type,
+        client_name=payload.client_name,
+        phone_number=payload.phone_number,
+        notes=payload.notes,
+    )
     db.add(link)
     db.commit()
     db.refresh(link)
@@ -413,17 +488,25 @@ def get_link(slug: str, db: Session = Depends(get_db)):
 def upsert_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db)):
     """Update or create a redirect link by slug.
 
-    - Slug EXISTS in DB → update destination_url (legacy slugs like 'a' allowed).
-    - Slug NOT in DB + valid format → create new record.
+    - Slug EXISTS in DB → update destination_url and any provided optional fields.
+      Legacy slugs (e.g. 'a') are allowed here — no format check.
+    - Slug NOT in DB + valid format → create new record; content_type inferred from
+      slug prefix unless explicitly provided.
     - Slug NOT in DB + invalid format → 400. Use POST /admin/link to auto-generate.
-
-    Body: {"destination_url": "https://example.com"}
     """
     link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
 
     if link:
-        # Update existing — legacy slugs (e.g. 'a') are allowed here
+        # Update existing record — apply any provided fields
         link.destination_url = payload.destination_url
+        if payload.content_type is not None:
+            link.content_type = payload.content_type
+        if payload.client_name is not None:
+            link.client_name = payload.client_name
+        if payload.phone_number is not None:
+            link.phone_number = payload.phone_number
+        if payload.notes is not None:
+            link.notes = payload.notes
         link.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(link)
@@ -439,8 +522,16 @@ def upsert_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db)):
             ),
         )
 
-    # Valid new slug — create it
-    link = models.RedirectLink(slug=slug, destination_url=payload.destination_url)
+    # Valid new slug — infer content_type from prefix unless caller supplied one
+    resolved_content_type = payload.content_type or infer_content_type_from_slug(slug)
+    link = models.RedirectLink(
+        slug=slug,
+        destination_url=payload.destination_url,
+        content_type=resolved_content_type,
+        client_name=payload.client_name,
+        phone_number=payload.phone_number,
+        notes=payload.notes,
+    )
     db.add(link)
     try:
         db.commit()
@@ -449,6 +540,40 @@ def upsert_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=409, detail=f"Slug '{slug}' already exists")
     return link
+
+
+@admin_router.get("/links/search", response_model=SearchResponse)
+def search_links(
+    phone_number: str = Query(..., description="Phone number to search (partial match)"),
+    db: Session = Depends(get_db),
+):
+    """Search redirect links by phone number.
+    Uses a partial LIKE match so '+855123' matches '+85512345678'.
+    Returns all matching records sorted newest-first.
+    Returns {"results": []} if nothing found — never 404.
+    """
+    links = (
+        db.query(models.RedirectLink)
+        .filter(models.RedirectLink.phone_number.like(f"%{phone_number}%"))
+        .order_by(models.RedirectLink.created_at.desc())
+        .all()
+    )
+    results = [
+        LinkSearchResult(
+            slug=link.slug,
+            content_type=link.content_type,
+            client_name=link.client_name,
+            phone_number=link.phone_number,
+            nfc_url=f"https://shadz.io/{link.slug}",
+            destination_url=link.destination_url,
+            notes=link.notes,
+            scan_count=link.scan_count,
+            created_at=link.created_at,
+            updated_at=link.updated_at,
+        )
+        for link in links
+    ]
+    return SearchResponse(results=results)
 
 
 # ── Legacy NFC admin route (kept for backwards compatibility) ──────────────
