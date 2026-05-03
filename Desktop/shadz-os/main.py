@@ -277,9 +277,15 @@ class LinkCreate(BaseModel):
 
 
 class LinkUpdate(BaseModel):
-    """Body for POST /admin/link/{slug} — upsert by slug."""
-    destination_url: str        # required
-    content_type: str | None = None   # optional override; inferred from slug if omitted
+    """Body for POST /admin/link/{slug} — upsert by slug.
+
+    destination_url is optional so that callers can patch only the client-info
+    fields (client_name, phone_number, notes) without touching the redirect URL.
+    If destination_url is omitted the existing URL is preserved.
+    Required when creating a new slug — the endpoint enforces this at runtime.
+    """
+    destination_url: str | None = None  # optional: keep existing value if omitted
+    content_type: str | None = None     # optional override; inferred from slug if omitted
     client_name: str | None = None
     phone_number: str | None = None
     notes: str | None = None
@@ -488,17 +494,31 @@ def get_link(slug: str, db: Session = Depends(get_db)):
 def upsert_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db)):
     """Update or create a redirect link by slug.
 
-    - Slug EXISTS in DB → update destination_url and any provided optional fields.
-      Legacy slugs (e.g. 'a') are allowed here — no format check.
-    - Slug NOT in DB + valid format → create new record; content_type inferred from
-      slug prefix unless explicitly provided.
-    - Slug NOT in DB + invalid format → 400. Use POST /admin/link to auto-generate.
+    - Slug EXISTS in DB → update any provided fields; omitted fields are left
+      unchanged.  Legacy slugs (e.g. 'a') are allowed — no format check needed.
+    - Slug NOT in DB + valid format → create new record; content_type inferred
+      from slug prefix unless explicitly provided; destination_url required.
+    - Slug NOT in DB + invalid format → 400.  Use POST /admin/link to auto-generate.
+
+    content_type is validated against VALID_CONTENT_TYPES when provided.
+    phone_number is free-form — no format validation.
     """
+    # ── Validate content_type up-front (applies to both update and create paths) ──
+    if payload.content_type is not None and payload.content_type not in VALID_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid content_type '{payload.content_type}'. "
+                f"Must be one of: {', '.join(sorted(VALID_CONTENT_TYPES))}"
+            ),
+        )
+
     link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
 
     if link:
-        # Update existing record — apply any provided fields
-        link.destination_url = payload.destination_url
+        # Update existing record — only touch fields that were explicitly provided
+        if payload.destination_url is not None:
+            link.destination_url = payload.destination_url
         if payload.content_type is not None:
             link.content_type = payload.content_type
         if payload.client_name is not None:
@@ -512,7 +532,7 @@ def upsert_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db)):
         db.refresh(link)
         return link
 
-    # Slug does not exist — enforce naming standard for new creation
+    # ── New slug: enforce naming standard ──────────────────────────────────────
     if not is_valid_slug(slug):
         raise HTTPException(
             status_code=400,
@@ -522,8 +542,23 @@ def upsert_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db)):
             ),
         )
 
-    # Valid new slug — infer content_type from prefix unless caller supplied one
+    # destination_url is required when creating a new slug
+    if not payload.destination_url:
+        raise HTTPException(
+            status_code=400,
+            detail="destination_url is required when creating a new slug",
+        )
+
+    # Infer content_type from slug prefix unless caller supplied one explicitly.
+    # For any slug that passes is_valid_slug(), infer_content_type_from_slug()
+    # always returns a non-None value — the guard below is a safety net.
     resolved_content_type = payload.content_type or infer_content_type_from_slug(slug)
+    if resolved_content_type is None:
+        raise HTTPException(
+            status_code=400,
+            detail="content_type could not be determined — please provide it explicitly",
+        )
+
     link = models.RedirectLink(
         slug=slug,
         destination_url=payload.destination_url,

@@ -260,6 +260,44 @@
     .stats-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
     .stats-value { font-size: 0.95rem; color: var(--text); font-weight: 500; }
     .stats-value.gold { color: var(--gold); font-size: 1.15rem; font-weight: 700; }
+
+    /* ── Edit Info inline form (inside result cards) ── */
+    .edit-form {
+      padding: 0.75rem 1rem 0.5rem;
+      background: var(--surface-2);
+      border-top: 1px solid var(--border-2);
+    }
+
+    .edit-form label { margin-top: 0.25rem; }
+
+    .edit-form input {
+      margin-bottom: 0.65rem;
+    }
+
+    .edit-toggle-row {
+      display: flex;
+      justify-content: center;
+      padding: 0.6rem 1rem;
+      background: var(--surface);
+      border-top: 1px solid var(--border-2);
+    }
+
+    .ghost-btn {
+      background: none;
+      border: 1px solid var(--border-2);
+      color: var(--text-muted);
+      border-radius: 5px;
+      padding: 0.3rem 0.9rem;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+      width: 100%;
+    }
+
+    .ghost-btn:hover { border-color: var(--gold-dim); color: var(--gold); }
   </style>
 </head>
 <body>
@@ -512,14 +550,22 @@
       }
     }
 
-    // Safely escape HTML to prevent XSS when injecting dynamic content
+    // Safely escape HTML to prevent XSS when injecting dynamic content.
+    // Used for display text (null → '—').
     function esc(str) {
       return String(str ?? '—')
         .replace(/&/g,'&amp;').replace(/</g,'&lt;')
         .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
-    function buildResultCard(r) {
+    // Like esc() but maps null/undefined to '' — used for input value attributes.
+    function escVal(str) {
+      return String(str ?? '')
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function buildResultCard(r, index) {
       const rows = [
         ['Content Type', r.content_type],
         ['Client Name',  r.client_name],
@@ -536,7 +582,75 @@
           <span class="stats-label">${esc(label)}</span>
           <span class="stats-value" style="text-align:right;word-break:break-all;max-width:65%">${esc(val)}</span>
         </div>`).join('');
-      return `<div class="stats-box" style="display:block;margin-bottom:1rem">${rowsHtml}</div>`;
+
+      const editForm = `
+        <div id="editForm-${index}" class="edit-form" style="display:none">
+          <label>Client Name</label>
+          <input id="ef-name-${index}"  type="text" value="${escVal(r.client_name)}"  placeholder="Client name"    autocomplete="off" />
+          <label>Phone Number</label>
+          <input id="ef-phone-${index}" type="tel"  value="${escVal(r.phone_number)}" placeholder="+85512345678"   autocomplete="off" />
+          <label>Notes</label>
+          <input id="ef-notes-${index}" type="text" value="${escVal(r.notes)}"        placeholder="Notes"          autocomplete="off" />
+          <button class="action-btn" style="margin-top:0.1rem" onclick="saveInfo('${escVal(r.slug)}', ${index})">Save Info</button>
+          <div id="ef-msg-${index}" class="msg"></div>
+        </div>`;
+
+      const toggleRow = `
+        <div class="edit-toggle-row">
+          <button class="ghost-btn" onclick="toggleEdit(${index})">Edit Info</button>
+        </div>`;
+
+      return `<div class="stats-box" style="display:block;margin-bottom:1rem">${rowsHtml}${toggleRow}${editForm}</div>`;
+    }
+
+    function toggleEdit(index) {
+      const form = document.getElementById(`editForm-${index}`);
+      form.style.display = form.style.display === 'none' ? 'block' : 'none';
+    }
+
+    async function saveInfo(slug, index) {
+      const name  = document.getElementById(`ef-name-${index}`).value.trim();
+      const phone = document.getElementById(`ef-phone-${index}`).value.trim();
+      const notes = document.getElementById(`ef-notes-${index}`).value.trim();
+      const msgEl = document.getElementById(`ef-msg-${index}`);
+      const form  = document.getElementById(`editForm-${index}`);
+      const btn   = form.querySelector('.action-btn');
+
+      // Clear previous message
+      msgEl.style.display = 'none';
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+
+      try {
+        const res  = await fetch(`/admin/link/${encodeURIComponent(slug)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          // Always send all three fields so values can be cleared as well as set
+          body: JSON.stringify({ client_name: name, phone_number: phone, notes: notes }),
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          msgEl.textContent   = 'Info updated.';
+          msgEl.className     = 'msg success';
+          msgEl.style.display = 'block';
+          // Refresh the card list after a short pause so the user can see the message
+          setTimeout(() => searchSlugInfo(), 900);
+        } else {
+          msgEl.textContent   = data.detail || `Error ${res.status}`;
+          msgEl.className     = 'msg error';
+          msgEl.style.display = 'block';
+          btn.disabled    = false;
+          btn.textContent = 'Save Info';
+        }
+      } catch {
+        msgEl.textContent   = 'Network error — is the server running?';
+        msgEl.className     = 'msg error';
+        msgEl.style.display = 'block';
+        btn.disabled    = false;
+        btn.textContent = 'Save Info';
+      }
     }
 
     async function searchSlugInfo() {
@@ -567,7 +681,7 @@
           if (data.results.length === 0) {
             showMsg('s-msg', 'error', 'No records found for that phone number.');
           } else {
-            container.innerHTML = data.results.map(buildResultCard).join('');
+            container.innerHTML = data.results.map((r, i) => buildResultCard(r, i)).join('');
           }
         } else {
           showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
