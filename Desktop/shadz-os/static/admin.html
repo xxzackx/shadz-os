@@ -164,6 +164,48 @@
 
     input:focus { border-color: var(--gold-dim); }
 
+    /* select matches input styling */
+    select {
+      display: block;
+      width: 100%;
+      padding: 0.65rem 0.8rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.88rem;
+      margin-bottom: 1rem;
+      outline: none;
+      appearance: none;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+
+    select:focus { border-color: var(--gold-dim); }
+
+    /* result box shown after slug creation */
+    .result-box {
+      margin-top: 1rem;
+      border: 1px solid var(--gold-dim);
+      border-radius: 6px;
+      overflow: hidden;
+      display: none;
+      background: #120e00;
+    }
+
+    .result-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.8rem 1rem;
+    }
+
+    .result-row + .result-row { border-top: 1px solid var(--border-2); }
+
+    .result-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; flex-shrink: 0; }
+    .result-value { font-size: 0.9rem; color: var(--gold-light); font-weight: 600; text-align: right; word-break: break-all; margin-left: 0.5rem; }
+    .result-value.big { font-size: 1.05rem; color: var(--gold); }
+
     .action-btn {
       width: 100%;
       padding: 0.7rem;
@@ -230,9 +272,14 @@
 
     <!-- Home screen -->
     <div id="home" class="home-grid">
+      <div class="home-card" onclick="show('createSection')">
+        <div class="home-card-title">Create New SHADZ Link</div>
+        <div class="home-card-desc">Generate a new NFC redirect link</div>
+        <div class="home-card-arrow">›</div>
+      </div>
       <div class="home-card" onclick="show('updateSection')">
         <div class="home-card-title">Update Redirect Link</div>
-        <div class="home-card-desc">Change where a slug points</div>
+        <div class="home-card-desc">Change where an existing slug points</div>
         <div class="home-card-arrow">›</div>
       </div>
       <div class="home-card" onclick="show('statsSection')">
@@ -240,6 +287,45 @@
         <div class="home-card-desc">View destination and scan count for a slug</div>
         <div class="home-card-arrow">›</div>
       </div>
+    </div>
+
+    <!-- Create new link section -->
+    <div id="createSection" class="section">
+      <div class="section-header">
+        <button class="back-btn" onclick="goHome()">← Back</button>
+        <span class="section-title">Create New Link</span>
+      </div>
+
+      <label for="c-type">Content Type</label>
+      <select id="c-type">
+        <option value="url">url — Simple redirect</option>
+        <option value="gift">gift — Gift page</option>
+        <option value="video">video — Video link</option>
+        <option value="audio">audio — Audio link</option>
+        <option value="page">page — Memory / landing page</option>
+      </select>
+
+      <label for="c-destUrl">Destination URL</label>
+      <input type="url" id="c-destUrl" placeholder="https://example.com" />
+
+      <button class="action-btn" id="c-btn" onclick="createLink()">Create New SHADZ Link</button>
+
+      <div id="createResult" class="result-box">
+        <div class="result-row">
+          <span class="result-label">Slug</span>
+          <span class="result-value big" id="resSlug">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">NFC URL</span>
+          <span class="result-value" id="resUrl">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Destination</span>
+          <span class="result-value" id="resDest">—</span>
+        </div>
+      </div>
+
+      <div id="c-msg" class="msg"></div>
     </div>
 
     <!-- Update redirect section -->
@@ -301,11 +387,59 @@
       document.querySelectorAll('.section').forEach(s => s.style.display = 'none');
       document.getElementById('home').style.display = 'flex';
       document.getElementById('statsBox').style.display = 'none';
-      ['u-msg', 's-msg'].forEach(id => {
+      document.getElementById('createResult').style.display = 'none';
+      ['u-msg', 's-msg', 'c-msg'].forEach(id => {
         const el = document.getElementById(id);
         el.style.display = 'none';
         el.className = 'msg';
       });
+    }
+
+    async function createLink() {
+      const contentType = document.getElementById('c-type').value;
+      const destUrl     = document.getElementById('c-destUrl').value.trim();
+      const btn         = document.getElementById('c-btn');
+
+      document.getElementById('createResult').style.display = 'none';
+
+      if (!destUrl) {
+        showMsg('c-msg', 'error', 'Destination URL is required.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Creating…';
+
+      try {
+        const res  = await fetch('/admin/link', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ content_type: contentType, destination_url: destUrl }),
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          const nfcUrl = `https://shadz.io/${data.slug}`;
+          document.getElementById('resSlug').textContent = data.slug;
+          document.getElementById('resUrl').textContent  = nfcUrl;
+          document.getElementById('resDest').textContent = data.destination_url;
+          document.getElementById('createResult').style.display = 'block';
+          // Clear the input so the user can create another
+          document.getElementById('c-destUrl').value = '';
+          // Hide any previous error
+          const msgEl = document.getElementById('c-msg');
+          msgEl.style.display = 'none';
+          msgEl.className = 'msg';
+        } else {
+          showMsg('c-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('c-msg', 'error', 'Network error — is the server running?');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Create New SHADZ Link';
+      }
     }
 
     async function updateRedirect() {

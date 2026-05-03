@@ -1,5 +1,8 @@
 import os
+import re
 import time
+import random
+import string
 import secrets
 import platform
 import subprocess
@@ -124,6 +127,56 @@ RESERVED_SLUGS: frozenset[str] = frozenset({
     "openapi.json",
 })
 
+# ---------------------------------------------------------------------------
+# Slug naming system
+# Standard: {content_type}-{6 random lowercase alphanumeric chars}
+# Examples: url-7h2k9x  gift-a8d3f1  video-k9p2mx
+# ---------------------------------------------------------------------------
+
+VALID_CONTENT_TYPES: frozenset[str] = frozenset({"url", "gift", "video", "audio", "page"})
+
+# Compiled once at startup for efficiency
+SLUG_PATTERN = re.compile(r'^(url|gift|video|audio|page)-[a-z0-9]{6}$')
+
+# Characters allowed in the random portion of a slug
+_SLUG_CHARS = string.ascii_lowercase + string.digits  # a-z0-9
+
+
+def is_valid_slug(slug: str) -> bool:
+    """Return True if slug matches the SHADZ naming standard.
+    Legacy slugs (e.g. 'a') return False — they can still be read/updated
+    if they already exist in the database, but cannot be newly created.
+    """
+    return bool(SLUG_PATTERN.match(slug))
+
+
+def generate_slug(content_type: str, db: Session) -> str:
+    """Auto-generate a unique slug for the given content_type.
+
+    - content_type must be one of VALID_CONTENT_TYPES.
+    - Retries up to 10 times to avoid collisions (extremely unlikely).
+    - Raises 500 if all retries are exhausted.
+    """
+    if content_type not in VALID_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid content_type '{content_type}'. "
+                   f"Must be one of: {sorted(VALID_CONTENT_TYPES)}",
+        )
+    for _ in range(10):
+        random_id = ''.join(random.choices(_SLUG_CHARS, k=6))
+        slug = f"{content_type}-{random_id}"
+        exists = db.query(models.RedirectLink).filter(
+            models.RedirectLink.slug == slug
+        ).first()
+        if not exists:
+            return slug
+    raise HTTPException(
+        status_code=500,
+        detail=f"Could not generate a unique slug for '{content_type}' "
+               f"after 10 attempts — please try again",
+    )
+
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -176,7 +229,14 @@ class NFCResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class LinkCreate(BaseModel):
+    """Body for POST /admin/link — auto-generates slug from content_type."""
+    content_type: str      # must be one of VALID_CONTENT_TYPES
+    destination_url: str
+
+
 class LinkUpdate(BaseModel):
+    """Body for POST /admin/link/{slug} — updates destination of existing slug."""
     destination_url: str
 
 
@@ -324,6 +384,22 @@ def admin_ui():
 
 # ── Redirect Engine — admin routes ─────────────────────────────────────────
 
+@admin_router.post("/link", response_model=LinkInfo, status_code=201)
+def create_link(payload: LinkCreate, db: Session = Depends(get_db)):
+    """Create a new redirect link with an auto-generated slug.
+    Body: {"content_type": "url", "destination_url": "https://example.com"}
+    content_type must be one of: url, gift, video, audio, page
+    Returns the created record including the generated slug.
+    """
+    # generate_slug validates content_type and raises 400 if invalid
+    slug = generate_slug(payload.content_type, db)
+    link = models.RedirectLink(slug=slug, destination_url=payload.destination_url)
+    db.add(link)
+    db.commit()
+    db.refresh(link)
+    return link
+
+
 @admin_router.get("/link/{slug}", response_model=LinkInfo)
 def get_link(slug: str, db: Session = Depends(get_db)):
     """Return current destination URL and total scan count for a slug."""
@@ -334,20 +410,44 @@ def get_link(slug: str, db: Session = Depends(get_db)):
 
 
 @admin_router.post("/link/{slug}", response_model=LinkInfo)
-def update_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db)):
-    """Update the destination URL for a slug.
+def upsert_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db)):
+    """Update or create a redirect link by slug.
+
+    - Slug EXISTS in DB → update destination_url (legacy slugs like 'a' allowed).
+    - Slug NOT in DB + valid format → create new record.
+    - Slug NOT in DB + invalid format → 400. Use POST /admin/link to auto-generate.
+
     Body: {"destination_url": "https://example.com"}
     """
     link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
-    if not link:
+
+    if link:
+        # Update existing — legacy slugs (e.g. 'a') are allowed here
+        link.destination_url = payload.destination_url
+        link.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(link)
+        return link
+
+    # Slug does not exist — enforce naming standard for new creation
+    if not is_valid_slug(slug):
         raise HTTPException(
-            status_code=404,
-            detail=f"Slug '{slug}' not found — use seed.py to create it",
+            status_code=400,
+            detail=(
+                f"Slug '{slug}' does not exist and does not match the required format "
+                f"(e.g. url-7h2k9x). Use POST /admin/link to auto-generate a slug."
+            ),
         )
-    link.destination_url = payload.destination_url
-    link.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(link)
+
+    # Valid new slug — create it
+    link = models.RedirectLink(slug=slug, destination_url=payload.destination_url)
+    db.add(link)
+    try:
+        db.commit()
+        db.refresh(link)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=f"Slug '{slug}' already exists")
     return link
 
 
