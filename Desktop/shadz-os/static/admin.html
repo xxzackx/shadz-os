@@ -325,6 +325,21 @@
         <div class="home-card-desc">Find all NFC links by client phone number</div>
         <div class="home-card-arrow">›</div>
       </div>
+      <div class="home-card" onclick="show('mediaUploadSection')">
+        <div class="home-card-title">Upload Media Asset</div>
+        <div class="home-card-desc">Upload video, image, audio or GIF to R2</div>
+        <div class="home-card-arrow">›</div>
+      </div>
+      <div class="home-card" onclick="show('attachSection')">
+        <div class="home-card-title">Attach Media to Slug</div>
+        <div class="home-card-desc">Link a media asset to a media slug</div>
+        <div class="home-card-arrow">›</div>
+      </div>
+      <div class="home-card" onclick="loadStorage(); show('storageSection')">
+        <div class="home-card-title">Storage Manager</div>
+        <div class="home-card-desc">Browse uploaded media assets</div>
+        <div class="home-card-arrow">›</div>
+      </div>
     </div>
 
     <!-- Create new link section -->
@@ -335,16 +350,16 @@
       </div>
 
       <label for="c-type">Content Type</label>
-      <select id="c-type">
-        <option value="url">url — Simple redirect</option>
-        <option value="gift">gift — Gift page</option>
-        <option value="video">video — Video link</option>
-        <option value="audio">audio — Audio link</option>
-        <option value="page">page — Memory / landing page</option>
+      <select id="c-type" onchange="onCreateTypeChange()">
+        <option value="url">url — Redirect Link</option>
+        <option value="media">media — Media Link</option>
+        <option value="page">page — Landing Page</option>
       </select>
 
-      <label for="c-destUrl">Destination URL</label>
-      <input type="url" id="c-destUrl" placeholder="https://example.com" />
+      <div id="c-destUrlWrap">
+        <label for="c-destUrl">Destination URL</label>
+        <input type="url" id="c-destUrl" placeholder="https://example.com" />
+      </div>
 
       <label for="c-name">Client Name</label>
       <input type="text" id="c-name" placeholder="John Smith" autocomplete="off" />
@@ -430,6 +445,99 @@
       <div id="s-msg" class="msg"></div>
     </div>
 
+    <!-- Upload Media Asset section -->
+    <div id="mediaUploadSection" class="section">
+      <div class="section-header">
+        <button class="back-btn" onclick="goHome()">← Back</button>
+        <span class="section-title">Upload Media Asset</span>
+      </div>
+
+      <label for="mu-type">Media Type</label>
+      <select id="mu-type">
+        <option value="video">video</option>
+        <option value="image">image</option>
+        <option value="audio">audio</option>
+        <option value="gif">gif</option>
+      </select>
+
+      <label for="mu-file">File</label>
+      <input type="file" id="mu-file" accept="video/mp4,video/quicktime,video/webm,image/jpeg,image/png,image/webp,image/gif,audio/mpeg,audio/mp4,audio/wav,audio/x-wav,audio/x-m4a" style="cursor:pointer" />
+
+      <button class="action-btn" id="mu-btn" onclick="uploadMedia()" style="margin-top:0.5rem">Upload to R2</button>
+
+      <!-- Progress bar -->
+      <div id="mu-progress-wrap" style="display:none;margin-top:0.75rem">
+        <div style="height:4px;background:var(--border);border-radius:2px;overflow:hidden">
+          <div id="mu-progress-bar" style="height:100%;width:0%;background:var(--gold);transition:width .2s"></div>
+        </div>
+        <div id="mu-progress-label" style="font-size:0.7rem;color:var(--text-muted);margin-top:0.3rem;letter-spacing:.05em">Uploading…</div>
+      </div>
+
+      <!-- Result box after successful upload -->
+      <div id="mu-result" class="result-box">
+        <div class="result-row">
+          <span class="result-label">Asset ID</span>
+          <span class="result-value big" id="mu-resId">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Media Type</span>
+          <span class="result-value" id="mu-resType">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Filename</span>
+          <span class="result-value" id="mu-resFile">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Public URL</span>
+          <span class="result-value" id="mu-resUrl">—</span>
+        </div>
+      </div>
+
+      <div id="mu-msg" class="msg"></div>
+    </div>
+
+    <!-- Attach Media to Slug section -->
+    <div id="attachSection" class="section">
+      <div class="section-header">
+        <button class="back-btn" onclick="goHome()">← Back</button>
+        <span class="section-title">Attach Media to Slug</span>
+      </div>
+
+      <label for="at-slug">Slug (must be media content type)</label>
+      <input type="text" id="at-slug" placeholder="media-abc123" autocomplete="off" />
+
+      <label for="at-assetId">Media Asset ID</label>
+      <input type="number" id="at-assetId" placeholder="1" autocomplete="off" />
+
+      <button class="action-btn" id="at-btn" onclick="attachMedia()">Attach Media</button>
+      <div id="at-msg" class="msg"></div>
+    </div>
+
+    <!-- Storage Manager section -->
+    <div id="storageSection" class="section">
+      <div class="section-header">
+        <button class="back-btn" onclick="goHome()">← Back</button>
+        <span class="section-title">Storage Manager</span>
+      </div>
+
+      <!-- Slug history lookup -->
+      <label for="st-slug">Check Media History by Slug</label>
+      <div style="display:flex;gap:0.5rem;margin-bottom:1rem">
+        <input type="text" id="st-slug" placeholder="media-abc123" autocomplete="off" style="margin-bottom:0;flex:1" />
+        <button class="action-btn" style="width:auto;padding:0.65rem 1rem;margin-top:0;flex-shrink:0" onclick="loadSlugHistory()">Check</button>
+      </div>
+      <div id="st-historyResults" style="margin-bottom:1.25rem"></div>
+
+      <!-- Asset list -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem">
+        <span style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em">All Assets</span>
+        <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadStorage()">Refresh</button>
+      </div>
+      <div id="storageList"></div>
+
+      <div id="st-msg" class="msg"></div>
+    </div>
+
   </div>
 
   <script>
@@ -443,11 +551,21 @@
       document.getElementById('home').style.display = 'flex';
       document.getElementById('createResult').style.display = 'none';
       document.getElementById('searchResults').innerHTML = '';
-      ['u-msg', 's-msg', 'c-msg'].forEach(id => {
+      document.getElementById('storageList').innerHTML = '';
+      document.getElementById('st-historyResults').innerHTML = '';
+      document.getElementById('mu-result').style.display = 'none';
+      document.getElementById('mu-progress-wrap').style.display = 'none';
+      ['u-msg','s-msg','c-msg','mu-msg','at-msg','st-msg'].forEach(id => {
         const el = document.getElementById(id);
-        el.style.display = 'none';
-        el.className = 'msg';
+        if (el) { el.style.display = 'none'; el.className = 'msg'; }
       });
+    }
+
+    // Show/hide destination URL field based on content type selection
+    function onCreateTypeChange() {
+      const ct   = document.getElementById('c-type').value;
+      const wrap = document.getElementById('c-destUrlWrap');
+      wrap.style.display = (ct === 'url') ? 'block' : 'none';
     }
 
     async function createLink() {
@@ -457,8 +575,9 @@
 
       document.getElementById('createResult').style.display = 'none';
 
-      if (!destUrl) {
-        showMsg('c-msg', 'error', 'Destination URL is required.');
+      // destination_url only required for url type
+      if (contentType === 'url' && !destUrl) {
+        showMsg('c-msg', 'error', 'Destination URL is required for url content type.');
         return;
       }
 
@@ -470,10 +589,11 @@
       btn.textContent = 'Creating…';
 
       try {
-        const body = { content_type: contentType, destination_url: destUrl };
-        if (clientName) body.client_name  = clientName;
-        if (phone)      body.phone_number = phone;
-        if (notes)      body.notes        = notes;
+        const body = { content_type: contentType };
+        if (destUrl)    body.destination_url = destUrl;
+        if (clientName) body.client_name     = clientName;
+        if (phone)      body.phone_number    = phone;
+        if (notes)      body.notes           = notes;
 
         const res  = await fetch('/admin/link', {
           method: 'POST',
@@ -490,7 +610,7 @@
           document.getElementById('resType').textContent    = data.content_type   || '—';
           document.getElementById('resName').textContent    = data.client_name    || '—';
           document.getElementById('resPhone').textContent   = data.phone_number   || '—';
-          document.getElementById('resDest').textContent    = data.destination_url;
+          document.getElementById('resDest').textContent    = data.destination_url || '—';
           document.getElementById('resNotes').textContent   = data.notes          || '—';
           document.getElementById('resCreated').textContent = new Date(data.created_at).toLocaleString();
           document.getElementById('createResult').style.display = 'block';
@@ -699,6 +819,291 @@
       el.textContent = text;
       el.className = `msg ${type}`;
       el.style.display = 'block';
+    }
+
+    // ── Media Engine ────────────────────────────────────────────────────────
+
+    // Formats a file size in bytes to a human-readable string
+    function fmtSize(bytes) {
+      if (bytes < 1024)        return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+    }
+
+    async function uploadMedia() {
+      const mediaType = document.getElementById('mu-type').value;
+      const fileInput = document.getElementById('mu-file');
+      const btn       = document.getElementById('mu-btn');
+      const file      = fileInput.files[0];
+
+      document.getElementById('mu-result').style.display = 'none';
+      document.getElementById('mu-progress-wrap').style.display = 'none';
+
+      if (!file) {
+        showMsg('mu-msg', 'error', 'Please choose a file first.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Preparing…';
+
+      try {
+        // ── Step 1: get presigned PUT URL from server ──
+        const urlRes  = await fetch('/admin/media/upload-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            filename:   file.name,
+            media_type: mediaType,
+            mime_type:  file.type,
+            file_size:  file.size,
+          }),
+        });
+        const urlData = await urlRes.json();
+        if (!urlRes.ok) {
+          showMsg('mu-msg', 'error', urlData.detail || `Error ${urlRes.status}`);
+          return;
+        }
+
+        // ── Step 2: PUT file directly to R2 ──
+        btn.textContent = 'Uploading…';
+        const progressWrap  = document.getElementById('mu-progress-wrap');
+        const progressBar   = document.getElementById('mu-progress-bar');
+        const progressLabel = document.getElementById('mu-progress-label');
+        progressWrap.style.display = 'block';
+
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', urlData.upload_url);
+          xhr.setRequestHeader('Content-Type', file.type);
+          xhr.upload.onprogress = e => {
+            if (e.lengthComputable) {
+              const pct = Math.round(e.loaded / e.total * 100);
+              progressBar.style.width   = `${pct}%`;
+              progressLabel.textContent = `${pct}% — ${fmtSize(e.loaded)} / ${fmtSize(e.total)}`;
+            }
+          };
+          xhr.onload  = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`R2 ${xhr.status}`));
+          xhr.onerror = () => reject(new Error('R2 upload failed'));
+          xhr.send(file);
+        });
+
+        progressLabel.textContent = 'Upload complete — confirming…';
+
+        // ── Step 3: confirm upload to server, create MediaAsset row ──
+        const completeRes  = await fetch('/admin/media/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            media_type:        mediaType,
+            storage_key:       urlData.storage_key,
+            public_url:        urlData.public_url,
+            original_filename: file.name,
+            mime_type:         file.type,
+            file_size:         file.size,
+          }),
+        });
+        const completeData = await completeRes.json();
+        if (!completeRes.ok) {
+          showMsg('mu-msg', 'error', completeData.detail || `Error ${completeRes.status}`);
+          return;
+        }
+
+        // Show result
+        document.getElementById('mu-resId').textContent   = completeData.media_asset_id;
+        document.getElementById('mu-resType').textContent = mediaType;
+        document.getElementById('mu-resFile').textContent = file.name;
+        document.getElementById('mu-resUrl').textContent  = completeData.public_url;
+        document.getElementById('mu-result').style.display = 'block';
+        progressWrap.style.display = 'none';
+
+        // Reset file input
+        fileInput.value = '';
+
+        const msgEl = document.getElementById('mu-msg');
+        msgEl.style.display = 'none';
+
+      } catch (err) {
+        showMsg('mu-msg', 'error', err.message || 'Upload failed');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Upload to R2';
+      }
+    }
+
+    async function attachMedia() {
+      const slug    = document.getElementById('at-slug').value.trim();
+      const assetId = document.getElementById('at-assetId').value.trim();
+      const btn     = document.getElementById('at-btn');
+
+      if (!slug || !assetId) {
+        showMsg('at-msg', 'error', 'Slug and Asset ID are required.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Attaching…';
+
+      try {
+        const res  = await fetch('/admin/media/attach', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ slug: slug, media_asset_id: parseInt(assetId, 10) }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showMsg('at-msg', 'success', `Asset ${data.media_asset_id} attached to /${data.slug}`);
+        } else {
+          showMsg('at-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('at-msg', 'error', 'Network error — is the server running?');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Attach Media';
+      }
+    }
+
+    async function loadStorage() {
+      const container = document.getElementById('storageList');
+      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+
+      try {
+        const res  = await fetch('/admin/media/assets', { credentials: 'same-origin' });
+        const data = await res.json();
+
+        if (!res.ok) {
+          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          return;
+        }
+
+        if (data.length === 0) {
+          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No assets yet.</div>';
+          return;
+        }
+
+        container.innerHTML = data.map(a => buildAssetCard(a)).join('');
+      } catch {
+        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+      }
+    }
+
+    function buildAssetCard(a) {
+      const deleted = a.is_deleted
+        ? '<span style="color:#e07070;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em">Deleted</span>'
+        : `<button class="ghost-btn" style="width:auto;padding:.2rem .65rem;font-size:.65rem;color:#e07070;border-color:#5a1e1e"
+              onclick="softDeleteAsset(${a.id})">Delete</button>`;
+      return `
+        <div class="stats-box" style="display:block;margin-bottom:.75rem">
+          <div class="stats-row">
+            <span class="stats-label">ID</span>
+            <span class="stats-value gold">${esc(a.id)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Type</span>
+            <span class="stats-value">${esc(a.media_type)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">File</span>
+            <span class="stats-value" style="word-break:break-all;text-align:right;max-width:65%">${esc(a.original_filename)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Size</span>
+            <span class="stats-value">${esc(fmtSize(a.file_size))}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Active Slugs</span>
+            <span class="stats-value">${esc(a.usage_count)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">URL</span>
+            <span class="stats-value" style="word-break:break-all;text-align:right;max-width:65%">
+              <a href="${esc(a.public_url)}" target="_blank" style="color:var(--gold-light)">${esc(a.public_url)}</a>
+            </span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Created</span>
+            <span class="stats-value">${esc(new Date(a.created_at).toLocaleString())}</span>
+          </div>
+          <div class="stats-row" style="justify-content:flex-end">${deleted}</div>
+        </div>`;
+    }
+
+    async function softDeleteAsset(assetId) {
+      if (!confirm(`Soft-delete asset ${assetId}? It will be hidden but NOT removed from R2.`)) return;
+      try {
+        const res  = await fetch(`/admin/media/assets/${assetId}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showMsg('st-msg', 'success', `Asset ${assetId} soft-deleted.`);
+          loadStorage();
+        } else {
+          showMsg('st-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('st-msg', 'error', 'Network error');
+      }
+    }
+
+    async function loadSlugHistory() {
+      const slug      = document.getElementById('st-slug').value.trim();
+      const container = document.getElementById('st-historyResults');
+
+      if (!slug) {
+        showMsg('st-msg', 'error', 'Enter a slug to check.');
+        return;
+      }
+
+      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted)">Loading…</div>';
+
+      try {
+        const res  = await fetch(`/admin/media/slug/${encodeURIComponent(slug)}`,
+          { credentials: 'same-origin' });
+        const data = await res.json();
+
+        if (!res.ok) {
+          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          return;
+        }
+        if (data.length === 0) {
+          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted)">No media history for this slug.</div>';
+          return;
+        }
+
+        container.innerHTML = data.map(sm => `
+          <div class="stats-box" style="display:block;margin-bottom:.6rem">
+            <div class="stats-row">
+              <span class="stats-label">Asset ID</span>
+              <span class="stats-value">${esc(sm.media_asset_id)}</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Type</span>
+              <span class="stats-value">${esc(sm.media_type)}</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">File</span>
+              <span class="stats-value" style="word-break:break-all;text-align:right;max-width:65%">${esc(sm.original_filename)}</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Status</span>
+              <span class="stats-value" style="color:${sm.is_active ? 'var(--gold)' : 'var(--text-muted)'}">
+                ${sm.is_active ? 'Active' : 'Replaced'}
+              </span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Attached</span>
+              <span class="stats-value">${esc(new Date(sm.created_at).toLocaleString())}</span>
+            </div>
+          </div>`).join('');
+      } catch {
+        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+      }
     }
   </script>
 </body>

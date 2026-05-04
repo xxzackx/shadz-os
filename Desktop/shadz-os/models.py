@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Integer, Text
+from sqlalchemy import String, DateTime, Integer, BigInteger, Text, Boolean, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 from database import Base
 
@@ -65,5 +65,53 @@ class RedirectLink(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+# ── Media Engine v0.1 ────────────────────────────────────────────────────────
+
+class MediaAsset(Base):
+    """One row per uploaded media file stored in R2.
+
+    A single MediaAsset can be linked to many slugs (SlugMedia).  Assets are
+    never auto-deleted from R2; soft-deletion marks the row is_deleted=True.
+    """
+    __tablename__ = "media_assets"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    media_type: Mapped[str] = mapped_column(String, nullable=False)       # video/image/audio/gif
+    storage_provider: Mapped[str] = mapped_column(String, default="r2", nullable=False)
+    storage_key: Mapped[str] = mapped_column(String, nullable=False)      # path inside bucket
+    public_url: Mapped[str] = mapped_column(String, nullable=False)
+    original_filename: Mapped[str] = mapped_column(String, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String, nullable=False)
+    file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)    # bytes
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SlugMedia(Base):
+    """Join between a slug (RedirectLink) and a MediaAsset.
+
+    History is preserved: replacing media creates a new active row and
+    deactivates the old one.  Only one row per slug should have is_active=True.
+    """
+    __tablename__ = "slug_media"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    slug: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    media_asset_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("media_assets.id"), nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
