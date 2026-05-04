@@ -1024,21 +1024,37 @@ def get_slug_media_history(slug: str, db: Session = Depends(get_db)):
 def soft_delete_asset(media_asset_id: int, db: Session = Depends(get_db)):
     """Soft-delete a MediaAsset (marks is_deleted=True; does NOT remove from R2).
 
-    Active slug attachments are deactivated so media slugs using this asset
-    will show the 'Media not ready yet' page until a replacement is attached.
+    Refused if the asset is still linked to any active slugs — callers must
+    replace or detach all active SlugMedia records first.  This prevents one
+    delete from silently breaking many NFC tags (e.g. 100 event keychains
+    sharing the same video).
     """
     asset = db.query(models.MediaAsset).filter(models.MediaAsset.id == media_asset_id).first()
     if not asset:
         raise HTTPException(status_code=404, detail=f"MediaAsset {media_asset_id} not found")
     if asset.is_deleted:
         raise HTTPException(status_code=400, detail=f"MediaAsset {media_asset_id} is already deleted")
-    asset.is_deleted  = True
-    asset.deleted_at  = datetime.now(timezone.utc)
-    # Deactivate any slug attachments that used this asset
-    (db.query(models.SlugMedia)
-       .filter(models.SlugMedia.media_asset_id == media_asset_id,
-               models.SlugMedia.is_active == True)
-       .update({"is_active": False}))
+
+    # Safety check: refuse if any slug is still actively using this asset
+    active_usage = (
+        db.query(func.count(models.SlugMedia.id))
+          .filter(
+              models.SlugMedia.media_asset_id == media_asset_id,
+              models.SlugMedia.is_active == True,
+          )
+          .scalar() or 0
+    )
+    if active_usage > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Media asset is still linked to {active_usage} active slug(s). "
+                f"Replace or detach active slugs before deleting."
+            ),
+        )
+
+    asset.is_deleted = True
+    asset.deleted_at = datetime.now(timezone.utc)
     db.commit()
     return {"success": True, "media_asset_id": media_asset_id}
 
