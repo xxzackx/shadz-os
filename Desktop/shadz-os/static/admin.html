@@ -715,12 +715,53 @@
           <div id="ef-msg-${index}" class="msg"></div>
         </div>`;
 
+      // ── Active Media panel (media slugs only) ──────────────────────────────
+      let activeMediaHtml = '';
+      if (r.content_type === 'media') {
+        if (r.active_media) {
+          const am = r.active_media;
+          activeMediaHtml = `
+            <div style="padding:0.75rem 1rem 0.6rem;background:var(--surface-2);border-top:1px solid var(--border-2)">
+              <div style="font-size:0.65rem;color:var(--gold-dim);text-transform:uppercase;
+                          letter-spacing:.12em;margin-bottom:0.45rem">Active Media</div>
+              <div class="stats-row" style="padding:0.35rem 0">
+                <span class="stats-label">Asset ID</span>
+                <span class="stats-value">${esc(am.media_asset_id)}</span>
+              </div>
+              <div class="stats-row" style="padding:0.35rem 0">
+                <span class="stats-label">Type</span>
+                <span class="stats-value">${esc(am.media_type)}</span>
+              </div>
+              <div class="stats-row" style="padding:0.35rem 0">
+                <span class="stats-label">File</span>
+                <span class="stats-value" style="word-break:break-all;text-align:right;max-width:65%">${esc(am.original_filename)}</span>
+              </div>
+              <div class="stats-row" style="padding:0.35rem 0">
+                <span class="stats-label">URL</span>
+                <span class="stats-value" style="word-break:break-all;text-align:right;max-width:65%">
+                  <a href="${esc(am.public_url)}" target="_blank" style="color:var(--gold-light)">${esc(am.public_url)}</a>
+                </span>
+              </div>
+              <button class="ghost-btn"
+                style="margin-top:0.5rem;color:#e07070;border-color:#5a1e1e"
+                onclick="detachMedia('${escVal(r.slug)}', ${index})">Detach Media</button>
+              <div id="detach-msg-${index}" class="msg"></div>
+            </div>`;
+        } else {
+          activeMediaHtml = `
+            <div style="padding:0.55rem 1rem;background:var(--surface-2);
+                        border-top:1px solid var(--border-2)">
+              <span style="font-size:0.72rem;color:var(--text-muted)">No active media attached</span>
+            </div>`;
+        }
+      }
+
       const toggleRow = `
         <div class="edit-toggle-row">
           <button class="ghost-btn" onclick="toggleEdit(${index})">Edit Info</button>
         </div>`;
 
-      return `<div class="stats-box" style="display:block;margin-bottom:1rem">${rowsHtml}${toggleRow}${editForm}</div>`;
+      return `<div class="stats-box" style="display:block;margin-bottom:1rem">${rowsHtml}${activeMediaHtml}${toggleRow}${editForm}</div>`;
     }
 
     function toggleEdit(index) {
@@ -770,6 +811,36 @@
         msgEl.style.display = 'block';
         btn.disabled    = false;
         btn.textContent = 'Save Info';
+      }
+    }
+
+    async function detachMedia(slug, index) {
+      const msgEl = document.getElementById(`detach-msg-${index}`);
+      msgEl.style.display = 'none';
+
+      try {
+        const res  = await fetch('/admin/media/detach', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ slug }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          msgEl.textContent   = `Asset ${data.detached_media_asset_id} detached.`;
+          msgEl.className     = 'msg success';
+          msgEl.style.display = 'block';
+          // Refresh search results so the card reflects the new state
+          setTimeout(() => searchSlugInfo(), 900);
+        } else {
+          msgEl.textContent   = data.detail || `Error ${res.status}`;
+          msgEl.className     = 'msg error';
+          msgEl.style.display = 'block';
+        }
+      } catch {
+        msgEl.textContent   = 'Network error — is the server running?';
+        msgEl.className     = 'msg error';
+        msgEl.style.display = 'block';
       }
     }
 

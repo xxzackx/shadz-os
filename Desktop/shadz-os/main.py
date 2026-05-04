@@ -467,6 +467,14 @@ class LinkInfo(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ActiveMediaInfo(BaseModel):
+    """Active media attachment for a slug — embedded in search results."""
+    media_asset_id:    int
+    media_type:        str
+    original_filename: str
+    public_url:        str
+
+
 class LinkSearchResult(BaseModel):
     """One item in the phone-number search response."""
     slug: str
@@ -479,6 +487,7 @@ class LinkSearchResult(BaseModel):
     scan_count: int
     created_at: datetime
     updated_at: datetime
+    active_media: ActiveMediaInfo | None = None   # populated for media slugs
 
 
 class SearchResponse(BaseModel):
@@ -547,6 +556,11 @@ class SlugMediaOut(BaseModel):
     public_url:        str
     original_filename: str
     media_type:        str
+
+
+class MediaDetachRequest(BaseModel):
+    """Body for POST /admin/media/detach — unlink active media from a slug."""
+    slug: str
 
 
 # ---------------------------------------------------------------------------
@@ -826,8 +840,29 @@ def search_links(
         .order_by(models.RedirectLink.created_at.desc())
         .all()
     )
-    results = [
-        LinkSearchResult(
+    results = []
+    for link in links:
+        # For media slugs, embed the active media attachment so the UI can
+        # render the active-media panel and detach button without extra calls.
+        active_media = None
+        if link.content_type == "media":
+            sm = (db.query(models.SlugMedia)
+                    .filter(models.SlugMedia.slug == link.slug,
+                            models.SlugMedia.is_active == True)
+                    .first())
+            if sm:
+                asset = db.query(models.MediaAsset).filter(
+                    models.MediaAsset.id == sm.media_asset_id,
+                    models.MediaAsset.is_deleted == False,
+                ).first()
+                if asset:
+                    active_media = ActiveMediaInfo(
+                        media_asset_id=asset.id,
+                        media_type=asset.media_type,
+                        original_filename=asset.original_filename,
+                        public_url=asset.public_url,
+                    )
+        results.append(LinkSearchResult(
             slug=link.slug,
             content_type=link.content_type,
             client_name=link.client_name,
@@ -838,10 +873,48 @@ def search_links(
             scan_count=link.scan_count,
             created_at=link.created_at,
             updated_at=link.updated_at,
-        )
-        for link in links
-    ]
+            active_media=active_media,
+        ))
     return SearchResponse(results=results)
+
+
+# ── Media Engine — admin routes ─────────────────────────────────────────────
+# (detach is added here; remaining media routes follow further below)
+
+@admin_router.post("/media/detach")
+def detach_media(payload: MediaDetachRequest, db: Session = Depends(get_db)):
+    """Deactivate the active media attachment for a slug.
+
+    - Does NOT delete the MediaAsset row.
+    - Does NOT remove the file from R2.
+    - Only sets SlugMedia.is_active = False for the current active record.
+    - After detach the public slug shows 'Media not ready yet' until a new
+      asset is attached via POST /admin/media/attach.
+    """
+    link = db.query(models.RedirectLink).filter(
+        models.RedirectLink.slug == payload.slug
+    ).first()
+    if not link:
+        raise HTTPException(status_code=404, detail=f"Slug '{payload.slug}' not found")
+
+    sm = (db.query(models.SlugMedia)
+            .filter(models.SlugMedia.slug == payload.slug,
+                    models.SlugMedia.is_active == True)
+            .first())
+    if not sm:
+        raise HTTPException(
+            status_code=400,
+            detail="No active media attached to this slug.",
+        )
+
+    detached_asset_id = sm.media_asset_id
+    sm.is_active = False
+    db.commit()
+    return {
+        "success": True,
+        "slug": payload.slug,
+        "detached_media_asset_id": detached_asset_id,
+    }
 
 
 # ── Legacy NFC admin route (kept for backwards compatibility) ──────────────
@@ -859,8 +932,6 @@ def admin_update_nfc(payload: NFCAdminUpdate, db: Session = Depends(get_db)):
     db.refresh(record)
     return record
 
-
-# ── Media Engine — admin routes ─────────────────────────────────────────────
 
 @admin_router.post("/media/upload-url", response_model=UploadUrlResponse)
 def get_upload_url(payload: UploadUrlRequest):
@@ -968,9 +1039,19 @@ def attach_media(payload: MediaAttachRequest, db: Session = Depends(get_db)):
 
 
 @admin_router.get("/media/assets", response_model=list[MediaAssetOut])
-def list_media_assets(db: Session = Depends(get_db)):
-    """Return all MediaAsset records with a usage_count (active slug attachments)."""
-    assets = db.query(models.MediaAsset).order_by(models.MediaAsset.created_at.desc()).all()
+def list_media_assets(
+    include_deleted: bool = Query(False, description="Include soft-deleted assets"),
+    db: Session = Depends(get_db),
+):
+    """Return MediaAsset records with a usage_count (active slug attachments).
+
+    By default only non-deleted assets are returned.
+    Pass ?include_deleted=true to include soft-deleted records.
+    """
+    q = db.query(models.MediaAsset)
+    if not include_deleted:
+        q = q.filter(models.MediaAsset.is_deleted == False)
+    assets = q.order_by(models.MediaAsset.created_at.desc()).all()
     results = []
     for asset in assets:
         usage_count = (db.query(func.count(models.SlugMedia.id))
