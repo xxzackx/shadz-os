@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="SHADZ — A physical-digital technology system. Touch, signal, and unlock infinite worlds." />
+  <title>SHADZ — Touch to Unlock.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & Base ─────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold:        #c9a84c;
+      --gold-bright: #f0c84a;
+      --gold-dim:    #7a5f2a;
+      --gold-glow:   rgba(201,168,76,0.18);
+      --gold-ring:   rgba(201,168,76,0.35);
+      --black:       #050505;
+      --surface-1:   #0d0d0d;
+      --surface-2:   #141414;
+      --surface-3:   #1c1c1c;
+      --border:      rgba(201,168,76,0.15);
+      --border-2:    rgba(201,168,76,0.28);
+      --text-primary:   #f0ece4;
+      --text-secondary: #9a9080;
+      --text-muted:     #5a5248;
+      --artifact-size:  240px;
+      --scene-size:     calc(var(--artifact-size) * 1.85);
+      --radius:         12px;
+      --radius-lg:      20px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      background: var(--black);
+      color: var(--text-primary);
+      line-height: 1.6;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Utility ──────────────────────────────────────────────────────────── */
+    .container {
+      width: 100%;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 2rem;
+    }
+
+    .gold { color: var(--gold); }
+    .gold-bright { color: var(--gold-bright); }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(28px);
+      transition: opacity 0.7s ease, transform 0.7s ease;
+    }
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ── NAV ──────────────────────────────────────────────────────────────── */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.1rem 2rem;
+      background: rgba(5,5,5,0.82);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-logo {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: 0.22em;
+      color: var(--gold);
+      text-decoration: none;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 2rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      font-size: 0.78rem;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      color: var(--text-secondary);
+      text-decoration: none;
+      text-transform: uppercase;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--gold); }
+
+    /* ── HERO ─────────────────────────────────────────────────────────────── */
+    #hero {
+      min-height: 100svh;
+      display: flex;
+      align-items: center;
+      padding: 100px 0 80px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Grid background */
+    #hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(201,168,76,0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(201,168,76,0.035) 1px, transparent 1px);
+      background-size: 70px 70px;
+      mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, black 30%, transparent 100%);
+      -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, black 30%, transparent 100%);
+      pointer-events: none;
+    }
+
+    /* Ambient glow behind artifact */
+    #hero::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      right: calc(50% - var(--scene-size) / 2 - 40px);
+      transform: translateY(-54%);
+      width: calc(var(--scene-size) * 1.2);
+      height: calc(var(--scene-size) * 1.2);
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(201,168,76,0.10) 0%, transparent 68%);
+      pointer-events: none;
+    }
+
+    .hero-inner {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4rem;
+      align-items: center;
+      width: 100%;
+    }
+
+    .hero-copy { position: relative; z-index: 1; }
+
+    .hero-wordmark {
+      font-size: clamp(4rem, 8vw, 7rem);
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      line-height: 0.95;
+      margin-bottom: 1rem;
+      background: linear-gradient(135deg, var(--gold-bright) 10%, var(--gold) 52%, #a07828 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-eyebrow {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 1.4rem;
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+    }
+    .hero-eyebrow::before {
+      content: '';
+      display: inline-block;
+      width: 28px;
+      height: 1px;
+      background: var(--gold);
+      flex-shrink: 0;
+    }
+
+    .hero-title {
+      font-size: clamp(1.5rem, 2.8vw, 2.3rem);
+      font-weight: 600;
+      line-height: 1.2;
+      letter-spacing: -0.01em;
+      margin-bottom: 1.4rem;
+      white-space: nowrap;
+    }
+    .hero-title span {
+      display: inline;
+      background: linear-gradient(135deg, var(--gold-bright) 0%, var(--gold) 55%, #a07828 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-sub {
+      font-size: 1.05rem;
+      font-weight: 300;
+      color: var(--text-secondary);
+      max-width: 420px;
+      margin-bottom: 2.4rem;
+      line-height: 1.7;
+    }
+
+    .hero-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      background: linear-gradient(135deg, var(--gold) 0%, #a07828 100%);
+      color: #050505;
+      font-weight: 700;
+      font-size: 0.82rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      text-decoration: none;
+      padding: 0.85rem 1.9rem;
+      border-radius: 4px;
+      transition: box-shadow 0.25s, transform 0.18s;
+    }
+    .hero-cta:hover {
+      box-shadow: 0 0 28px rgba(201,168,76,0.45);
+      transform: translateY(-2px);
+    }
+    .hero-cta svg { flex-shrink: 0; }
+
+    /* ── Artifact Scene ───────────────────────────────────────────────────── */
+    .artifact-scene {
+      position: relative;
+      z-index: 1;
+      width: var(--scene-size);
+      height: var(--scene-size);
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    /* Scan rings */
+    .scan-ring {
+      position: absolute;
+      border-radius: 50%;
+      border: 1px solid var(--gold-ring);
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .scan-ring {
+        animation: scan-expand 3s ease-out infinite;
+      }
+      .scan-ring:nth-child(2) { animation-delay: 1s; }
+      .scan-ring:nth-child(3) { animation-delay: 2s; }
+    }
+
+    @keyframes scan-expand {
+      0%   { width: var(--artifact-size); height: var(--artifact-size); opacity: 0.7; }
+      100% { width: var(--scene-size); height: var(--scene-size); opacity: 0; }
+    }
+
+    /* Artifact body — circular energy core */
+    .artifact {
+      position: relative;
+      z-index: 2;
+      width: var(--artifact-size);
+      height: var(--artifact-size);
+      border-radius: 50%;
+      background: radial-gradient(circle at center,
+        rgba(201,168,76,0.11) 0%,
+        rgba(201,168,76,0.04) 28%,
+        #0d0c0a 52%,
+        #191610 100%);
+      border: 1px solid var(--border-2);
+      box-shadow:
+        0 0 0 1px rgba(201,168,76,0.06),
+        0 0 0 12px rgba(201,168,76,0.03),
+        0 0 0 28px rgba(201,168,76,0.01),
+        0 12px 56px rgba(0,0,0,0.9),
+        inset 0 0 40px rgba(201,168,76,0.05),
+        inset 0 0 12px rgba(201,168,76,0.09);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .artifact {
+        animation: float-pulse 5s ease-in-out infinite;
+      }
+    }
+
+    @keyframes float-pulse {
+      0%, 100% { transform: translateY(0px);   box-shadow: 0 0 0 1px rgba(201,168,76,0.06), 0 0 0 12px rgba(201,168,76,0.03), 0 12px 56px rgba(0,0,0,0.9), inset 0 0 40px rgba(201,168,76,0.04), 0 0 32px rgba(201,168,76,0.08); }
+      50%       { transform: translateY(-12px); box-shadow: 0 0 0 1px rgba(201,168,76,0.10), 0 0 0 18px rgba(201,168,76,0.05), 0 24px 70px rgba(0,0,0,0.8), inset 0 0 40px rgba(201,168,76,0.08), 0 0 55px rgba(201,168,76,0.16); }
+    }
+
+    /* Inner ring — structural detail */
+    .artifact-ring {
+      position: absolute;
+      width: 58%;
+      height: 58%;
+      border-radius: 50%;
+      border: 1px solid rgba(201,168,76,0.12);
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* Spinning sweep ring — arc reactor feel */
+    .artifact-ring-spin {
+      position: absolute;
+      width: 76%;
+      height: 76%;
+      border-radius: 50%;
+      border: 1px solid transparent;
+      border-top-color: rgba(201,168,76,0.55);
+      border-right-color: rgba(201,168,76,0.18);
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .artifact-ring-spin {
+        animation: ring-rotate 9s linear infinite;
+      }
+    }
+
+    @keyframes ring-rotate {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+
+    /* Crosshair + dotted ring overlay */
+    .artifact-overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 3;
+      opacity: 0.65;
+    }
+
+    .artifact-nfc-icon {
+      width: 54px;
+      height: 54px;
+      opacity: 0.92;
+      position: relative;
+      z-index: 2;
+    }
+
+    .artifact-label {
+      font-size: 0.62rem;
+      font-weight: 600;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: var(--gold-dim);
+    }
+
+    .artifact-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--gold);
+      box-shadow: 0 0 8px var(--gold);
+      margin-top: 4px;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .artifact-dot {
+        animation: dot-pulse 2.2s ease-in-out infinite;
+      }
+    }
+
+    @keyframes dot-pulse {
+      0%, 100% { opacity: 1;   box-shadow: 0 0 8px var(--gold); }
+      50%       { opacity: 0.3; box-shadow: 0 0 2px var(--gold); }
+    }
+
+    /* ── SECTION COMMONS ──────────────────────────────────────────────────── */
+    section {
+      padding: 100px 0;
+    }
+
+    .section-eyebrow {
+      font-size: clamp(0.82rem, 1.8vw, 0.95rem);
+      font-weight: 600;
+      letter-spacing: 0.26em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 1.2rem;
+      text-align: center;
+      opacity: 0.95;
+    }
+
+    .section-title {
+      font-size: clamp(1.9rem, 3.5vw, 2.9rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      text-align: center;
+      line-height: 1.15;
+      margin-bottom: 1rem;
+    }
+
+    .section-sub {
+      font-size: 1rem;
+      color: var(--text-secondary);
+      text-align: center;
+      max-width: 520px;
+      margin: 0 auto 3.5rem;
+      line-height: 1.7;
+    }
+
+    /* ── CONCEPT ──────────────────────────────────────────────────────────── */
+    #concept {
+      background: var(--surface-1);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .concept-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .concept-cell {
+      background: var(--surface-1);
+      padding: 2.2rem 1.8rem;
+      transition: background 0.25s;
+    }
+    .concept-cell:hover { background: var(--surface-2); }
+
+    .concept-icon {
+      width: 38px;
+      height: 38px;
+      margin-bottom: 1.1rem;
+      color: var(--gold);
+    }
+
+    .concept-cell h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 0.55rem;
+      color: var(--text-primary);
+    }
+
+    .concept-cell p {
+      font-size: 0.83rem;
+      color: var(--text-secondary);
+      line-height: 1.65;
+    }
+
+    /* ── SYSTEM CARDS ─────────────────────────────────────────────────────── */
+    #system {
+      background: var(--black);
+    }
+
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.5rem;
+    }
+
+    .sys-card {
+      position: relative;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 2rem;
+      overflow: hidden;
+      transition: border-color 0.25s, box-shadow 0.25s;
+      transform-style: preserve-3d;
+      will-change: transform;
+    }
+    .sys-card:hover {
+      border-color: var(--border-2);
+      box-shadow: 0 8px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(201,168,76,0.07);
+    }
+
+    /* Corner accent */
+    .sys-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 60px;
+      height: 60px;
+      background: linear-gradient(135deg, rgba(201,168,76,0.12) 0%, transparent 60%);
+      border-radius: var(--radius-lg) 0 0 0;
+      pointer-events: none;
+    }
+
+    .card-number {
+      font-size: 0.62rem;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      color: var(--gold-dim);
+      margin-bottom: 1rem;
+    }
+
+    .card-icon {
+      width: 44px;
+      height: 44px;
+      background: rgba(201,168,76,0.08);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 1.2rem;
+      color: var(--gold);
+    }
+
+    .sys-card h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 0.6rem;
+      color: var(--text-primary);
+    }
+
+    .sys-card p {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      line-height: 1.7;
+    }
+
+    .card-tag {
+      display: inline-block;
+      margin-top: 1.2rem;
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--gold);
+      background: rgba(201,168,76,0.08);
+      border: 1px solid rgba(201,168,76,0.18);
+      border-radius: 4px;
+      padding: 0.28rem 0.65rem;
+    }
+
+    /* ── EXPERIENCE FLOW ──────────────────────────────────────────────────── */
+    #flow {
+      background: var(--surface-1);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .flow-steps {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0;
+      position: relative;
+    }
+
+    /* Connecting line */
+    .flow-steps::before {
+      content: '';
+      position: absolute;
+      top: 28px;
+      left: calc(12.5% + 1px);
+      right: calc(12.5% + 1px);
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--gold-dim) 20%, var(--gold-dim) 80%, transparent);
+      pointer-events: none;
+    }
+
+    .flow-step {
+      padding: 0 1.5rem;
+      text-align: center;
+      position: relative;
+    }
+
+    .flow-num {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      border: 1px solid var(--border-2);
+      background: var(--surface-2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 1.4rem;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: var(--gold);
+      position: relative;
+      z-index: 1;
+      transition: background 0.25s, border-color 0.25s, box-shadow 0.25s;
+    }
+    .flow-step:hover .flow-num {
+      background: rgba(201,168,76,0.1);
+      border-color: var(--gold);
+      box-shadow: 0 0 16px rgba(201,168,76,0.2);
+    }
+
+    .flow-step h4 {
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 0.45rem;
+    }
+
+    .flow-step p {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* ── FINAL CTA ────────────────────────────────────────────────────────── */
+    #cta {
+      background: var(--black);
+      text-align: center;
+    }
+
+    .cta-box {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 4rem 3rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface-2);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cta-box::before {
+      content: '';
+      position: absolute;
+      top: -80px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 300px;
+      height: 300px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(201,168,76,0.07) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .cta-box h2 {
+      font-size: clamp(1.7rem, 3vw, 2.5rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 1rem;
+    }
+
+    .cta-box p {
+      font-size: 0.95rem;
+      color: var(--text-secondary);
+      margin-bottom: 2.2rem;
+      line-height: 1.7;
+    }
+
+    .cta-actions {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      background: linear-gradient(135deg, var(--gold) 0%, #a07828 100%);
+      color: #050505;
+      font-weight: 700;
+      font-size: 0.88rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      text-decoration: none;
+      padding: 1rem 2.4rem;
+      border-radius: 4px;
+      transition: box-shadow 0.25s, transform 0.18s;
+      border: none;
+      cursor: pointer;
+    }
+    .btn-primary:hover {
+      box-shadow: 0 0 28px rgba(201,168,76,0.4);
+      transform: translateY(-2px);
+    }
+
+    .btn-ghost {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: transparent;
+      color: var(--gold);
+      font-weight: 600;
+      font-size: 0.8rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      text-decoration: none;
+      padding: 0.82rem 1.8rem;
+      border-radius: 4px;
+      border: 1px solid var(--border-2);
+      transition: background 0.25s, border-color 0.25s, transform 0.18s;
+      cursor: pointer;
+    }
+    .btn-ghost:hover {
+      background: rgba(201,168,76,0.07);
+      border-color: var(--gold);
+      transform: translateY(-2px);
+    }
+
+    /* ── FOOTER ───────────────────────────────────────────────────────────── */
+    footer {
+      background: var(--surface-1);
+      border-top: 1px solid var(--border);
+      padding: 2.8rem 0;
+    }
+
+    .footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1.2rem;
+    }
+
+    .footer-brand {
+      font-size: 0.95rem;
+      font-weight: 700;
+      letter-spacing: 0.2em;
+      color: var(--gold);
+    }
+
+    .footer-meta {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+    }
+
+    /* ── RESPONSIVE ───────────────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      :root { --artifact-size: 190px; }
+
+      .hero-inner {
+        grid-template-columns: 1fr;
+        text-align: center;
+        gap: 3rem;
+      }
+
+      .hero-inner > :first-child { order: 2; }
+      .hero-inner > :last-child  { order: 1; }
+
+      .hero-eyebrow { justify-content: center; }
+
+      .hero-title { white-space: normal; }
+
+      .hero-sub { margin: 0 auto 2.4rem; }
+
+      #hero::after { display: none; }
+
+      .concept-grid { grid-template-columns: 1fr; }
+
+      .cards-grid { grid-template-columns: 1fr; }
+
+      .flow-steps {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 2rem 0;
+      }
+
+      .flow-steps::before {
+        top: 28px;
+        left: calc(25% + 1px);
+        right: 50%;
+        background: none;
+      }
+
+      .footer-inner { justify-content: center; text-align: center; }
+
+      nav { padding: 1rem 1.2rem; }
+      .nav-links { gap: 1.2rem; }
+    }
+
+    @media (max-width: 540px) {
+      :root { --artifact-size: 160px; }
+
+      section { padding: 72px 0; }
+
+      .container { padding: 0 1.2rem; }
+
+      .concept-cell { padding: 1.6rem 1.2rem; }
+
+      .cta-box { padding: 2.4rem 1.5rem; }
+
+      .flow-steps { grid-template-columns: 1fr; }
+
+      .flow-steps::before { display: none; }
+
+      .nav-links { display: none; }
+    }
+
+    @media (max-width: 380px) {
+      :root { --artifact-size: 130px; }
+
+      .hero-title { font-size: 2.2rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── NAV ─────────────────────────────────────────────────────────────── -->
+  <nav>
+    <a href="/" class="nav-logo">SHADZ</a>
+    <ul class="nav-links">
+      <li><a href="#concept">Concept</a></li>
+      <li><a href="#system">System</a></li>
+      <li><a href="#flow">Feature</a></li>
+      <li><a href="#cta">Start</a></li>
+    </ul>
+  </nav>
+
+  <!-- ── HERO ────────────────────────────────────────────────────────────── -->
+  <section id="hero">
+    <div class="container">
+      <div class="hero-inner">
+
+        <div class="hero-copy reveal">
+          <div class="hero-wordmark">SHADZ</div>
+          <div class="hero-eyebrow">OBJECTS. SIGNALS. WORLDS.</div>
+          <h1 class="hero-title">Touch to <span>Unlock.</span></h1>
+          <p class="hero-sub">
+            Simple actions. Infinite worlds.<br>
+            One touch. The world responds.
+          </p>
+          <a href="#cta" class="hero-cta">
+            Start with one touch.
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h8M7 3l4 4-4 4"/></svg>
+          </a>
+        </div>
+
+        <!-- Artifact -->
+        <div class="artifact-scene reveal" style="transition-delay:0.15s">
+          <div class="scan-ring"></div>
+          <div class="scan-ring"></div>
+          <div class="scan-ring"></div>
+          <div class="artifact">
+            <!-- Crosshair + dotted ring overlay -->
+            <svg class="artifact-overlay" viewBox="0 0 240 240" fill="none">
+              <circle cx="120" cy="120" r="90" stroke="#c9a84c" stroke-width="0.5" stroke-dasharray="3 9" opacity="0.22"/>
+              <line x1="120" y1="24" x2="120" y2="56" stroke="#c9a84c" stroke-width="1" stroke-linecap="round" opacity="0.45"/>
+              <line x1="120" y1="184" x2="120" y2="216" stroke="#c9a84c" stroke-width="1" stroke-linecap="round" opacity="0.45"/>
+              <line x1="24" y1="120" x2="56" y2="120" stroke="#c9a84c" stroke-width="1" stroke-linecap="round" opacity="0.45"/>
+              <line x1="184" y1="120" x2="216" y2="120" stroke="#c9a84c" stroke-width="1" stroke-linecap="round" opacity="0.45"/>
+              <line x1="68" y1="68" x2="78" y2="78" stroke="#c9a84c" stroke-width="0.5" opacity="0.2"/>
+              <line x1="172" y1="68" x2="162" y2="78" stroke="#c9a84c" stroke-width="0.5" opacity="0.2"/>
+              <line x1="68" y1="172" x2="78" y2="162" stroke="#c9a84c" stroke-width="0.5" opacity="0.2"/>
+              <line x1="172" y1="172" x2="162" y2="162" stroke="#c9a84c" stroke-width="0.5" opacity="0.2"/>
+            </svg>
+            <!-- Spinning sweep ring -->
+            <div class="artifact-ring-spin"></div>
+            <!-- Static inner ring -->
+            <div class="artifact-ring"></div>
+            <!-- SHADZ core activation icon -->
+            <svg class="artifact-nfc-icon" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M17 15.5a13 13 0 1 0 18 0" stroke="#c9a84c" stroke-width="2" stroke-linecap="round"/>
+              <line x1="26" y1="9" x2="26" y2="26" stroke="#c9a84c" stroke-width="2" stroke-linecap="round"/>
+              <circle cx="26" cy="26" r="2.5" fill="#c9a84c" opacity="0.85"/>
+            </svg>
+            <div class="artifact-label">SHADZ</div>
+            <div class="artifact-dot"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── CONCEPT ─────────────────────────────────────────────────────────── -->
+  <section id="concept">
+    <div class="container">
+      <p class="section-eyebrow reveal">The Concept</p>
+      <h2 class="section-title reveal" style="transition-delay:0.08s">
+        Own the system behind the touch.
+      </h2>
+      <p class="section-sub reveal" style="transition-delay:0.14s">
+        SHADZ builds controlled digital layers for products, spaces, media, automation,
+        and interactive experiences — activated through simple real-world actions.
+      </p>
+
+      <div class="concept-grid reveal" style="transition-delay:0.2s">
+
+        <div class="concept-cell">
+          <svg class="concept-icon" viewBox="0 0 38 38" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="6" y="6" width="26" height="26" rx="2"/>
+            <line x1="19" y1="6" x2="19" y2="32"/>
+            <line x1="6" y1="19" x2="32" y2="19"/>
+          </svg>
+          <h3>Private System</h3>
+          <p>A controlled layer built around your brand, product, or experience — owned and operated by you.</p>
+        </div>
+
+        <div class="concept-cell">
+          <svg class="concept-icon" viewBox="0 0 38 38" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="19" cy="19" r="6"/>
+            <line x1="19" y1="6" x2="19" y2="13"/>
+            <line x1="19" y1="25" x2="19" y2="32"/>
+            <line x1="6" y1="19" x2="13" y2="19"/>
+            <line x1="25" y1="19" x2="32" y2="19"/>
+          </svg>
+          <h3>Physical Trigger</h3>
+          <p>A touch, scan, or moment becomes the entry point — connecting the physical world to a digital response instantly.</p>
+        </div>
+
+        <div class="concept-cell">
+          <svg class="concept-icon" viewBox="0 0 38 38" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="19" cy="19" r="12"/>
+            <ellipse cx="19" cy="19" rx="5.5" ry="12"/>
+            <line x1="7" y1="19" x2="31" y2="19"/>
+          </svg>
+          <h3>Digital World</h3>
+          <p>Media, pages, identity, automation, and interactive content respond instantly — and evolve as your system grows.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── SYSTEM CARDS ─────────────────────────────────────────────────────── -->
+  <section id="system">
+    <div class="container">
+      <p class="section-eyebrow reveal">THE OPERATING LAYER</p>
+      <h2 class="section-title reveal" style="transition-delay:0.08s">
+        Behind the system.
+      </h2>
+      <p class="section-sub reveal" style="transition-delay:0.14s">
+        SHADZ connects signals, content, pages, automation, and identity into
+        one controlled environment — built to expand beyond a single product.
+      </p>
+
+      <div class="cards-grid">
+
+        <div class="sys-card reveal" data-tilt style="transition-delay:0.05s">
+          <div class="card-number">01</div>
+          <div class="card-icon">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="3"/>
+              <path d="M7 7a6 6 0 0 0 0 8"/><path d="M15 7a6 6 0 0 1 0 8"/>
+              <path d="M4.5 4.5a9.5 9.5 0 0 0 0 13"/><path d="M17.5 4.5a9.5 9.5 0 0 1 0 13"/>
+            </svg>
+          </div>
+          <h3>Signal Layer</h3>
+          <p>Physical actions trigger controlled digital responses. Every interaction routes through a dynamic signal engine — updated, retargeted, or transformed at any time.</p>
+          <span class="card-tag">Physical to Digital</span>
+        </div>
+
+        <div class="sys-card reveal" data-tilt style="transition-delay:0.1s">
+          <div class="card-number">02</div>
+          <div class="card-icon">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5,3 17,11 5,19"/>
+            </svg>
+          </div>
+          <h3>Media Worlds</h3>
+          <p>Unlock video, audio, visuals, messages, and private content spaces — delivered through a rich, branded experience the moment a connection is made.</p>
+          <span class="card-tag">Unlock &amp; Play</span>
+        </div>
+
+        <div class="sys-card reveal" data-tilt style="transition-delay:0.15s">
+          <div class="card-number">03</div>
+          <div class="card-icon">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7" rx="1"/>
+              <rect x="12" y="3" width="7" height="7" rx="1"/>
+              <rect x="3" y="12" width="7" height="7" rx="1"/>
+              <rect x="12" y="12" width="7" height="7" rx="1"/>
+            </svg>
+          </div>
+          <h3>Interactive Pages</h3>
+          <p>Custom landing experiences, mini-sites, launches, memories, and campaigns — each one a private digital space opened by a single touch.</p>
+          <span class="card-tag">Custom Worlds</span>
+        </div>
+
+        <div class="sys-card reveal" data-tilt style="transition-delay:0.2s">
+          <div class="card-number">04</div>
+          <div class="card-icon">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 3v4M11 15v4M3 11h4M15 11h4"/>
+              <circle cx="11" cy="11" r="3"/>
+            </svg>
+          </div>
+          <h3>Automation Layer</h3>
+          <p>Connect interactions to workflows, alerts, AI responses, data capture, and future systems — making every touch a trigger for something larger.</p>
+          <span class="card-tag">Always Evolving</span>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── EXPERIENCE FLOW ──────────────────────────────────────────────────── -->
+  <section id="flow">
+    <div class="container">
+      <p class="section-eyebrow reveal">WHAT YOU NEED</p>
+      <h2 class="section-title reveal" style="transition-delay:0.08s">
+        Touch becomes command.
+      </h2>
+      <p class="section-sub reveal" style="transition-delay:0.14s">
+        No app. No friction. One interaction can unlock media, launch pages,
+        trigger automation, or open a private digital space.
+      </p>
+
+      <div class="flow-steps">
+
+        <div class="flow-step reveal" style="transition-delay:0.05s">
+          <div class="flow-num">01</div>
+          <h4>Touch</h4>
+          <p>Any object, surface, or moment becomes a point of interaction.</p>
+        </div>
+
+        <div class="flow-step reveal" style="transition-delay:0.12s">
+          <div class="flow-num">02</div>
+          <h4>Signal</h4>
+          <p>A touch sends a signal to the SHADZ system — instantly, no app required.</p>
+        </div>
+
+        <div class="flow-step reveal" style="transition-delay:0.19s">
+          <div class="flow-num">03</div>
+          <h4>Unlock</h4>
+          <p>SHADZ resolves the signal and activates the connected world in real time.</p>
+        </div>
+
+        <div class="flow-step reveal" style="transition-delay:0.26s">
+          <div class="flow-num">04</div>
+          <h4>Evolve</h4>
+          <p>The world responds — and can be changed, updated, or expanded at any time.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── FINAL CTA ────────────────────────────────────────────────────────── -->
+  <section id="cta">
+    <div class="container">
+      <div class="cta-box reveal">
+        <h2>Your system<br><span class="gold">starts here.</span></h2>
+        <p>
+          Bring the idea. SHADZ turns it into your digital system.
+        </p>
+        <div class="cta-actions">
+          <a href="#concept" class="btn-primary">
+            Start with one touch.
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h8M7 3l4 4-4 4"/></svg>
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── FOOTER ───────────────────────────────────────────────────────────── -->
+  <footer>
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-brand">SHADZ</div>
+        <div class="footer-meta">© 2026 SHADZ. Physical · Digital · System.</div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // ── Scroll Reveal ──────────────────────────────────────────────────────
+    (function () {
+      const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      if (prefersReduced) {
+        document.querySelectorAll('.reveal').forEach(el => {
+          el.classList.add('visible');
+          el.style.transition = 'none';
+        });
+        return;
+      }
+
+      const io = new IntersectionObserver(
+        (entries) => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add('visible');
+              io.unobserve(entry.target);
+            }
+          });
+        },
+        { threshold: 0.12, rootMargin: '0px 0px -40px 0px' }
+      );
+
+      document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+    })();
+
+    // ── Card Tilt ──────────────────────────────────────────────────────────
+    (function () {
+      const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const hasHover      = window.matchMedia('(hover: hover)').matches;
+
+      if (prefersReduced || !hasHover) return;
+
+      const STRENGTH = 8; // max deg tilt
+
+      document.querySelectorAll('[data-tilt]').forEach(card => {
+        card.addEventListener('mousemove', (e) => {
+          const rect = card.getBoundingClientRect();
+          const cx   = rect.left + rect.width  / 2;
+          const cy   = rect.top  + rect.height / 2;
+          const dx   = (e.clientX - cx) / (rect.width  / 2);
+          const dy   = (e.clientY - cy) / (rect.height / 2);
+          const rotX = (-dy * STRENGTH).toFixed(2);
+          const rotY = ( dx * STRENGTH).toFixed(2);
+          card.style.transform = `perspective(700px) rotateX(${rotX}deg) rotateY(${rotY}deg) scale3d(1.02,1.02,1.02)`;
+        });
+
+        card.addEventListener('mouseleave', () => {
+          card.style.transform = '';
+        });
+      });
+    })();
+
+    // ── Nav shrink on scroll ───────────────────────────────────────────────
+    (function () {
+      const nav = document.querySelector('nav');
+      window.addEventListener('scroll', () => {
+        nav.style.padding = window.scrollY > 60 ? '0.65rem 2rem' : '';
+      }, { passive: true });
+    })();
+  </script>
+
+</body>
+</html>

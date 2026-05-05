@@ -573,6 +573,12 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/", include_in_schema=False)
+def home():
+    """SHADZ public front page."""
+    return FileResponse("static/index.html")
+
+
 # ---------------------------------------------------------------------------
 # Legacy internal routes — X-API-Key protected
 # These predate the Admin Core and are used by internal tooling.
