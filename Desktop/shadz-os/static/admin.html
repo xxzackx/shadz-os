@@ -36,6 +36,8 @@
       max-width: 400px;
     }
 
+    .panel.wide { max-width: 1100px; }
+
     /* ── Wordmark ── */
     .wordmark {
       text-align: center;
@@ -368,6 +370,25 @@
 
     /* ── Utility: soft-deleted badge ── */
     .badge-deleted { color: #e07070; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; }
+
+    /* ── Responsive card grid (Slug Info + Storage Manager) ── */
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+      align-items: start;
+    }
+
+    .card-grid .stats-box { margin-top: 0; }
+
+    @media (max-width: 900px) {
+      .card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 600px) {
+      .card-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -531,7 +552,7 @@
       <button class="action-btn" id="s-btn" onclick="searchSlugInfo()">Search Slug Info</button>
 
       <!-- Results injected here dynamically — one card per matching record -->
-      <div id="searchResults" style="margin-top:1rem"></div>
+      <div id="searchResults" class="card-grid"></div>
 
       <div id="s-msg" class="msg"></div>
     </div>
@@ -624,7 +645,7 @@
         <span style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em">All Assets</span>
         <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadStorage()">Refresh</button>
       </div>
-      <div id="storageList"></div>
+      <div id="storageList" class="card-grid"></div>
 
       <div id="st-msg" class="msg"></div>
     </div>
@@ -632,14 +653,18 @@
   </div>
 
   <script>
+    const GRID_SECTIONS = new Set(['statsSection', 'storageSection']);
+
     function show(sectionId) {
       document.getElementById('home').style.display = 'none';
       document.getElementById(sectionId).style.display = 'block';
+      document.querySelector('.panel').classList.toggle('wide', GRID_SECTIONS.has(sectionId));
     }
 
     function goHome() {
       document.querySelectorAll('.section').forEach(s => s.style.display = 'none');
       document.getElementById('home').style.display = 'flex';
+      document.querySelector('.panel').classList.remove('wide');
       document.getElementById('createResult').style.display = 'none';
       document.getElementById('searchResults').innerHTML = '';
       document.getElementById('storageList').innerHTML = '';
@@ -854,7 +879,7 @@
           <button class="ghost-btn" onclick="toggleEdit(${index})">Edit Info</button>
         </div>`;
 
-      return `<div class="stats-box" style="display:block;margin-bottom:1rem">${rowsHtml}${activeMediaHtml}${toggleRow}${editForm}</div>`;
+      return `<div class="stats-box" style="display:block">${rowsHtml}${activeMediaHtml}${toggleRow}${editForm}</div>`;
     }
 
     function toggleEdit(index) {
@@ -1160,7 +1185,7 @@
         ? '<span class="badge-deleted">Deleted</span>'
         : `<button class="ghost-btn sm danger" onclick="softDeleteAsset(${a.id})">Delete</button>`;
       return `
-        <div class="stats-box" style="display:block;margin-bottom:.75rem">
+        <div class="stats-box" style="display:block">
           <div class="stats-row">
             <span class="stats-label">ID</span>
             <span class="stats-value gold">${esc(a.id)}</span>
