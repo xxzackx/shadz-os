@@ -131,8 +131,7 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 
 ## Current Priorities
 
-1. DevOps Memory Pack v0.1 — documentation (in progress)
-2. Analytics / scan tracking chart
-3. Further admin dashboard UI polish
-4. Proper UI login/logout system
-5. Role-based admin security
+1. Analytics / scan tracking chart
+2. Further admin dashboard UI polish
+3. Proper UI login/logout system
+4. Role-based admin security

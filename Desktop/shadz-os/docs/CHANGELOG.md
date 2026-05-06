@@ -2,6 +2,33 @@
 
 ---
 
+## Front Page v0.1.1 — CTA Contact Patch
+
+**Date:** 2026-05-07
+**Commit:** `23aba99`
+**Status:** Complete, deployed, browser-verified
+
+**Summary:**
+Final front page CTA button linked to Telegram contact. Previously pointed to `#concept` (a page anchor), which prevented potential clients from making contact.
+
+**Changes:**
+- Final CTA `.btn-primary` inside `#cta` section: `href="#concept"` → `href="https://t.me/xshadzx"` with `target="_blank" rel="noopener noreferrer"`
+- Hero CTA (`class="hero-cta"`) remains `href="#cta"` — scrolls visitors to the final CTA section as intended
+- Navbar links unchanged
+
+**Verification:**
+- Front page responds `200`
+- Served HTML contains `t.me/xshadzx`
+- `/health` returns `{"status":"ok"}`
+- `/admin` still requires authentication
+- Browser test confirmed final CTA opens Telegram correctly
+
+**Touched:** `static/index.html` only
+**Backend:** untouched
+**Endpoints:** untouched
+
+---
+
 ## v0.2.2 — Admin UI Result Card Redesign
 
 **Date:** 2026-05-07
