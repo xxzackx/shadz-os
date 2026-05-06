@@ -374,19 +374,34 @@
     /* ── Responsive card grid (Slug Info + Storage Manager) ── */
     .card-grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 1rem;
       margin-top: 1rem;
-      align-items: start;
+      align-items: stretch;
     }
 
     .card-grid .stats-box { margin-top: 0; }
 
-    @media (max-width: 900px) {
-      .card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    /* ── Slug Info result cards: flex column, equal height, bottom-pinned actions ── */
+    #searchResults .stats-box {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
     }
 
-    @media (max-width: 600px) {
+    /* ── Expands to push action zone to bottom of each card ── */
+    .card-body { flex: 1; }
+
+    /* ── Single-line truncation for long values inside Slug Info cards ── */
+    #searchResults .value-overflow {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      word-break: normal;
+      max-width: 58%;
+    }
+
+    @media (max-width: 700px) {
       .card-grid { grid-template-columns: 1fr; }
     }
   </style>
@@ -855,11 +870,10 @@
                 <span class="stats-label">File</span>
                 <span class="stats-value value-overflow">${esc(am.original_filename)}</span>
               </div>
-              <div class="compact-row">
-                <span class="stats-label">URL</span>
-                <span class="stats-value value-overflow">
-                  <a href="${esc(am.public_url)}" target="_blank" style="color:var(--gold-light)">${esc(am.public_url)}</a>
-                </span>
+              <div class="compact-row" style="justify-content:flex-end;padding-top:0.2rem">
+                <a href="${esc(am.public_url)}" target="_blank"
+                   style="font-size:0.65rem;color:var(--gold-dim);letter-spacing:.08em;text-transform:uppercase;text-decoration:none"
+                   onmouseover="this.style.color='var(--gold)'" onmouseout="this.style.color='var(--gold-dim)'">Open Media ↗</a>
               </div>
               <button class="ghost-btn danger"
                 style="margin-top:0.5rem"
@@ -879,7 +893,7 @@
           <button class="ghost-btn" onclick="toggleEdit(${index})">Edit Info</button>
         </div>`;
 
-      return `<div class="stats-box" style="display:block">${rowsHtml}${activeMediaHtml}${toggleRow}${editForm}</div>`;
+      return `<div class="stats-box"><div class="card-body">${rowsHtml}</div>${activeMediaHtml}${toggleRow}${editForm}</div>`;
     }
 
     function toggleEdit(index) {
