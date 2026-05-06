@@ -58,6 +58,34 @@
       margin-top: 0.3rem;
     }
 
+    /* ── Module group headers (home screen) ── */
+    .module-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .module-header-label {
+      font-size: 0.58rem;
+      font-weight: 700;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--gold-dim);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .module-header-line {
+      flex: 1;
+      height: 1px;
+      background: var(--border-2);
+    }
+
+    .module-group + .module-group {
+      margin-top: 0.5rem;
+    }
+
     /* ── Cards (home screen) ── */
     .home-grid {
       display: flex;
@@ -245,14 +273,15 @@
       border-radius: 6px;
       overflow: hidden;
       display: none;
+      background: var(--surface);
     }
 
+    /* background now lives on .stats-box; .stats-row provides layout only */
     .stats-row {
       display: flex;
       justify-content: space-between;
       align-items: center;
       padding: 0.8rem 1rem;
-      background: var(--surface);
     }
 
     .stats-row + .stats-row { border-top: 1px solid var(--border); }
@@ -298,6 +327,47 @@
     }
 
     .ghost-btn:hover { border-color: var(--gold-dim); color: var(--gold); }
+
+    /* ── Ghost button modifiers ── */
+    .ghost-btn.danger               { color: #e07070; border-color: #5a1e1e; }
+    .ghost-btn.danger:hover         { color: #f09090; border-color: #7a2e2e; }
+    .ghost-btn.sm                   { width: auto; padding: 0.2rem 0.65rem; font-size: 0.65rem; }
+
+    /* ── Utility: sub-panel container (active media, empty-state blocks) ── */
+    .inset-panel {
+      padding: 0.75rem 1rem 0.6rem;
+      background: var(--surface-2);
+      border-top: 1px solid var(--border-2);
+    }
+
+    /* ── Utility: compact section label inside inset panels ── */
+    .panel-label {
+      font-size: 0.65rem;
+      color: var(--gold-dim);
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      margin-bottom: 0.45rem;
+    }
+
+    /* ── Utility: compact data row (tighter padding, used inside inset panels) ── */
+    .compact-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.35rem 0;
+    }
+
+    .compact-row + .compact-row { border-top: 1px solid var(--border-2); }
+
+    /* ── Utility: long text values that may overflow ── */
+    .value-overflow {
+      word-break: break-all;
+      text-align: right;
+      max-width: 65%;
+    }
+
+    /* ── Utility: soft-deleted badge ── */
+    .badge-deleted { color: #e07070; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; }
   </style>
 </head>
 <body>
@@ -310,36 +380,57 @@
 
     <!-- Home screen -->
     <div id="home" class="home-grid">
-      <div class="home-card" onclick="show('createSection')">
-        <div class="home-card-title">Create New SHADZ Link</div>
-        <div class="home-card-desc">Generate a new NFC redirect link</div>
-        <div class="home-card-arrow">›</div>
+
+      <!-- Module A: Link Engine -->
+      <div class="module-group">
+        <div class="module-header">
+          <span class="module-header-label">Link Engine</span>
+          <div class="module-header-line"></div>
+        </div>
+        <div class="home-grid">
+          <div class="home-card" onclick="show('createSection')">
+            <div class="home-card-title">Create New SHADZ Link</div>
+            <div class="home-card-desc">Generate a new NFC redirect link</div>
+            <div class="home-card-arrow">›</div>
+          </div>
+          <div class="home-card" onclick="show('updateSection')">
+            <div class="home-card-title">Update Redirect Link</div>
+            <div class="home-card-desc">Change where an existing slug points</div>
+            <div class="home-card-arrow">›</div>
+          </div>
+          <div class="home-card" onclick="show('statsSection')">
+            <div class="home-card-title">Check Slug Info</div>
+            <div class="home-card-desc">Find all NFC links by client phone number</div>
+            <div class="home-card-arrow">›</div>
+          </div>
+        </div>
       </div>
-      <div class="home-card" onclick="show('updateSection')">
-        <div class="home-card-title">Update Redirect Link</div>
-        <div class="home-card-desc">Change where an existing slug points</div>
-        <div class="home-card-arrow">›</div>
+
+      <!-- Module B: Media Engine -->
+      <div class="module-group">
+        <div class="module-header">
+          <span class="module-header-label">Media Engine</span>
+          <div class="module-header-line"></div>
+        </div>
+        <div class="home-grid">
+          <div class="home-card" onclick="show('mediaUploadSection')">
+            <div class="home-card-title">Upload Media Asset</div>
+            <div class="home-card-desc">Upload video, image, audio or GIF to R2</div>
+            <div class="home-card-arrow">›</div>
+          </div>
+          <div class="home-card" onclick="show('attachSection')">
+            <div class="home-card-title">Attach Media to Slug</div>
+            <div class="home-card-desc">Link a media asset to a media slug</div>
+            <div class="home-card-arrow">›</div>
+          </div>
+          <div class="home-card" onclick="loadStorage(); show('storageSection')">
+            <div class="home-card-title">Storage Manager</div>
+            <div class="home-card-desc">Browse uploaded media assets</div>
+            <div class="home-card-arrow">›</div>
+          </div>
+        </div>
       </div>
-      <div class="home-card" onclick="show('statsSection')">
-        <div class="home-card-title">Check Slug Info</div>
-        <div class="home-card-desc">Find all NFC links by client phone number</div>
-        <div class="home-card-arrow">›</div>
-      </div>
-      <div class="home-card" onclick="show('mediaUploadSection')">
-        <div class="home-card-title">Upload Media Asset</div>
-        <div class="home-card-desc">Upload video, image, audio or GIF to R2</div>
-        <div class="home-card-arrow">›</div>
-      </div>
-      <div class="home-card" onclick="show('attachSection')">
-        <div class="home-card-title">Attach Media to Slug</div>
-        <div class="home-card-desc">Link a media asset to a media slug</div>
-        <div class="home-card-arrow">›</div>
-      </div>
-      <div class="home-card" onclick="loadStorage(); show('storageSection')">
-        <div class="home-card-title">Storage Manager</div>
-        <div class="home-card-desc">Browse uploaded media assets</div>
-        <div class="home-card-arrow">›</div>
-      </div>
+
     </div>
 
     <!-- Create new link section -->
@@ -554,10 +645,14 @@
       document.getElementById('storageList').innerHTML = '';
       document.getElementById('st-historyResults').innerHTML = '';
       document.getElementById('mu-result').style.display = 'none';
+      // Reset upload progress UI so it never shows stale state on re-entry
       document.getElementById('mu-progress-wrap').style.display = 'none';
-      ['u-msg','s-msg','c-msg','mu-msg','at-msg','st-msg'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) { el.style.display = 'none'; el.className = 'msg'; }
+      document.getElementById('mu-progress-bar').style.width = '0%';
+      document.getElementById('mu-progress-label').textContent = 'Uploading…';
+      // Reset all message elements without maintaining a manual ID list
+      document.querySelectorAll('.msg').forEach(el => {
+        el.style.display = 'none';
+        el.className = 'msg';
       });
     }
 
@@ -700,7 +795,7 @@
       const rowsHtml = rows.map(([label, val]) => `
         <div class="stats-row">
           <span class="stats-label">${esc(label)}</span>
-          <span class="stats-value" style="text-align:right;word-break:break-all;max-width:65%">${esc(val)}</span>
+          <span class="stats-value value-overflow">${esc(val)}</span>
         </div>`).join('');
 
       const editForm = `
@@ -721,36 +816,34 @@
         if (r.active_media) {
           const am = r.active_media;
           activeMediaHtml = `
-            <div style="padding:0.75rem 1rem 0.6rem;background:var(--surface-2);border-top:1px solid var(--border-2)">
-              <div style="font-size:0.65rem;color:var(--gold-dim);text-transform:uppercase;
-                          letter-spacing:.12em;margin-bottom:0.45rem">Active Media</div>
-              <div class="stats-row" style="padding:0.35rem 0">
+            <div class="inset-panel">
+              <div class="panel-label">Active Media</div>
+              <div class="compact-row">
                 <span class="stats-label">Asset ID</span>
                 <span class="stats-value">${esc(am.media_asset_id)}</span>
               </div>
-              <div class="stats-row" style="padding:0.35rem 0">
+              <div class="compact-row">
                 <span class="stats-label">Type</span>
                 <span class="stats-value">${esc(am.media_type)}</span>
               </div>
-              <div class="stats-row" style="padding:0.35rem 0">
+              <div class="compact-row">
                 <span class="stats-label">File</span>
-                <span class="stats-value" style="word-break:break-all;text-align:right;max-width:65%">${esc(am.original_filename)}</span>
+                <span class="stats-value value-overflow">${esc(am.original_filename)}</span>
               </div>
-              <div class="stats-row" style="padding:0.35rem 0">
+              <div class="compact-row">
                 <span class="stats-label">URL</span>
-                <span class="stats-value" style="word-break:break-all;text-align:right;max-width:65%">
+                <span class="stats-value value-overflow">
                   <a href="${esc(am.public_url)}" target="_blank" style="color:var(--gold-light)">${esc(am.public_url)}</a>
                 </span>
               </div>
-              <button class="ghost-btn"
-                style="margin-top:0.5rem;color:#e07070;border-color:#5a1e1e"
+              <button class="ghost-btn danger"
+                style="margin-top:0.5rem"
                 onclick="detachMedia('${escVal(r.slug)}', ${index})">Detach Media</button>
               <div id="detach-msg-${index}" class="msg"></div>
             </div>`;
         } else {
           activeMediaHtml = `
-            <div style="padding:0.55rem 1rem;background:var(--surface-2);
-                        border-top:1px solid var(--border-2)">
+            <div class="inset-panel" style="padding:0.55rem 1rem">
               <span style="font-size:0.72rem;color:var(--text-muted)">No active media attached</span>
             </div>`;
         }
@@ -1064,9 +1157,8 @@
 
     function buildAssetCard(a) {
       const deleted = a.is_deleted
-        ? '<span style="color:#e07070;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em">Deleted</span>'
-        : `<button class="ghost-btn" style="width:auto;padding:.2rem .65rem;font-size:.65rem;color:#e07070;border-color:#5a1e1e"
-              onclick="softDeleteAsset(${a.id})">Delete</button>`;
+        ? '<span class="badge-deleted">Deleted</span>'
+        : `<button class="ghost-btn sm danger" onclick="softDeleteAsset(${a.id})">Delete</button>`;
       return `
         <div class="stats-box" style="display:block;margin-bottom:.75rem">
           <div class="stats-row">
@@ -1079,7 +1171,7 @@
           </div>
           <div class="stats-row">
             <span class="stats-label">File</span>
-            <span class="stats-value" style="word-break:break-all;text-align:right;max-width:65%">${esc(a.original_filename)}</span>
+            <span class="stats-value value-overflow">${esc(a.original_filename)}</span>
           </div>
           <div class="stats-row">
             <span class="stats-label">Size</span>
@@ -1091,7 +1183,7 @@
           </div>
           <div class="stats-row">
             <span class="stats-label">URL</span>
-            <span class="stats-value" style="word-break:break-all;text-align:right;max-width:65%">
+            <span class="stats-value value-overflow">
               <a href="${esc(a.public_url)}" target="_blank" style="color:var(--gold-light)">${esc(a.public_url)}</a>
             </span>
           </div>
@@ -1159,7 +1251,7 @@
             </div>
             <div class="stats-row">
               <span class="stats-label">File</span>
-              <span class="stats-value" style="word-break:break-all;text-align:right;max-width:65%">${esc(sm.original_filename)}</span>
+              <span class="stats-value value-overflow">${esc(sm.original_filename)}</span>
             </div>
             <div class="stats-row">
               <span class="stats-label">Status</span>
