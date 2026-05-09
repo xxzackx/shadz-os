@@ -5,7 +5,7 @@
 ## Front Page v0.1.2 — Hero Logo Core Patch
 
 **Date:** 2026-05-10
-**Status:** Complete, mobile-approved
+**Status:** Complete, deployed, mobile-approved
 
 **Summary:**
 Replaced the CSS circular artifact in the hero section with two separate production assets: a floating animated core emblem and a stable SHADZ wordmark. Hero copy and CTA are unchanged.
@@ -26,7 +26,19 @@ Replaced the CSS circular artifact in the hero section with two separate product
 - `static/assets/shadz-logo-core.png`
 - `static/assets/shadz-wordmark.png`
 
-**Touched:** `static/index.html`, `static/assets/` (new files only)
+**Production deploy note:**
+Nginx on VPS required a new `location ^~ /static/` block to serve the hero assets directly. Added manually to the HTTPS server block:
+```
+location ^~ /static/ {
+    alias /opt/shadz-os/Desktop/shadz-os/static/;
+    try_files $uri =404;
+    access_log off;
+    expires 7d;
+}
+```
+Both assets confirmed live — `/static/assets/shadz-logo-core.png` and `/static/assets/shadz-wordmark.png` return `200`.
+
+**Touched:** `static/index.html`, `static/assets/` (new files only), Nginx config (VPS only, manual)
 **Backend:** untouched
 **Admin:** untouched
 **Endpoints:** untouched
