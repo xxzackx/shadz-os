@@ -129,6 +129,20 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 
 ---
 
+## Front Page Hero State
+
+**SHADZ Front Page v0.1.2 — Hero Logo Core Patch** — Complete
+
+- Hero visual replaced with final S-core emblem (`static/assets/shadz-logo-core.png`) + separate SHADZ wordmark layer (`static/assets/shadz-wordmark.png`)
+- Core is animated/floating (CSS keyframe + subtle JS cursor tilt on hover)
+- Wordmark is stable/static — no float animation
+- Assets are true transparent PNGs stored under `static/assets/`
+- Front page remains lightweight CSS + vanilla JS — no Three.js or heavy dependencies
+- Mobile-first layout approved: logo stacks above hero copy, wordmark tightly grouped below core
+- Backend / admin / redirect / media systems unchanged
+
+---
+
 ## Current Priorities
 
 1. Analytics / scan tracking chart

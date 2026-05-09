@@ -17,7 +17,7 @@
       --gold-bright: #f0c84a;
       --gold-dim:    #7a5f2a;
       --gold-glow:   rgba(201,168,76,0.18);
-      --gold-ring:   rgba(201,168,76,0.35);
+      --gold-ring:   rgba(201,168,76,0.16);
       --black:       #050505;
       --surface-1:   #0d0d0d;
       --surface-2:   #141414;
@@ -28,7 +28,9 @@
       --text-secondary: #9a9080;
       --text-muted:     #5a5248;
       --artifact-size:  240px;
-      --scene-size:     calc(var(--artifact-size) * 1.85);
+      --logo-size:      280px;
+      --wordmark-size:  360px;
+      --scene-size:     calc(var(--artifact-size) * 1.65);
       --radius:         12px;
       --radius-lg:      20px;
     }
@@ -155,18 +157,6 @@
 
     .hero-copy { position: relative; z-index: 1; }
 
-    .hero-wordmark {
-      font-size: clamp(4rem, 8vw, 7rem);
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      line-height: 0.95;
-      margin-bottom: 1rem;
-      background: linear-gradient(135deg, var(--gold-bright) 10%, var(--gold) 52%, #a07828 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-
     .hero-eyebrow {
       font-size: 0.7rem;
       font-weight: 600;
@@ -233,8 +223,17 @@
     }
     .hero-cta svg { flex-shrink: 0; }
 
-    /* ── Artifact Scene ───────────────────────────────────────────────────── */
-    .artifact-scene {
+    /* ── Logo Wrap ────────────────────────────────────────────────────────── */
+    .logo-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      flex-shrink: 0;
+    }
+
+    /* ── Logo Scene ───────────────────────────────────────────────────────── */
+    .logo-scene {
       position: relative;
       z-index: 1;
       width: var(--scene-size);
@@ -244,6 +243,8 @@
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
+      overflow: hidden;
+      transform-style: preserve-3d;
     }
 
     /* Scan rings */
@@ -255,135 +256,111 @@
 
     @media (prefers-reduced-motion: no-preference) {
       .scan-ring {
-        animation: scan-expand 3s ease-out infinite;
+        animation: scan-expand 6s ease-out infinite;
       }
-      .scan-ring:nth-child(2) { animation-delay: 1s; }
-      .scan-ring:nth-child(3) { animation-delay: 2s; }
+      .scan-ring:nth-child(2) { animation-delay: 2s; }
+      .scan-ring:nth-child(3) { animation-delay: 4s; }
     }
 
     @keyframes scan-expand {
-      0%   { width: var(--artifact-size); height: var(--artifact-size); opacity: 0.7; }
+      0%   { width: var(--artifact-size); height: var(--artifact-size); opacity: 0.45; }
       100% { width: var(--scene-size); height: var(--scene-size); opacity: 0; }
     }
 
-    /* Artifact body — circular energy core */
-    .artifact {
+    /* Ambient glow disc behind logo */
+    .logo-glow {
+      position: absolute;
+      z-index: 1;
+      width: calc(var(--logo-size) * 1.35);
+      height: calc(var(--logo-size) * 1.35);
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(201,168,76,0.09) 0%, transparent 68%);
+      pointer-events: none;
+    }
+
+    /* Logo image */
+    .logo-img {
       position: relative;
       z-index: 2;
-      width: var(--artifact-size);
-      height: var(--artifact-size);
-      border-radius: 50%;
-      background: radial-gradient(circle at center,
-        rgba(201,168,76,0.11) 0%,
-        rgba(201,168,76,0.04) 28%,
-        #0d0c0a 52%,
-        #191610 100%);
-      border: 1px solid var(--border-2);
-      box-shadow:
-        0 0 0 1px rgba(201,168,76,0.06),
-        0 0 0 12px rgba(201,168,76,0.03),
-        0 0 0 28px rgba(201,168,76,0.01),
-        0 12px 56px rgba(0,0,0,0.9),
-        inset 0 0 40px rgba(201,168,76,0.05),
-        inset 0 0 12px rgba(201,168,76,0.09);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 0.5rem;
+      width: var(--logo-size);
+      height: auto;
+      display: block;
+      user-select: none;
+      -webkit-user-drag: none;
+      filter: drop-shadow(0 0 16px rgba(201,168,76,0.10)) drop-shadow(0 12px 40px rgba(0,0,0,0.60));
     }
 
-    @media (prefers-reduced-motion: no-preference) {
-      .artifact {
-        animation: float-pulse 5s ease-in-out infinite;
-      }
+    /* Wordmark image — stable, no float */
+    .wordmark-img {
+      width: var(--wordmark-size);
+      height: auto;
+      display: block;
+      user-select: none;
+      -webkit-user-drag: none;
+      opacity: 0.85;
+      filter: drop-shadow(0 0 10px rgba(201,168,76,0.07));
+      margin-top: calc((var(--scene-size) - var(--logo-size)) / -2 + 0.4rem);
+      transform: scaleY(1.12);
+      transform-origin: top center;
     }
 
-    @keyframes float-pulse {
-      0%, 100% { transform: translateY(0px);   box-shadow: 0 0 0 1px rgba(201,168,76,0.06), 0 0 0 12px rgba(201,168,76,0.03), 0 12px 56px rgba(0,0,0,0.9), inset 0 0 40px rgba(201,168,76,0.04), 0 0 32px rgba(201,168,76,0.08); }
-      50%       { transform: translateY(-12px); box-shadow: 0 0 0 1px rgba(201,168,76,0.10), 0 0 0 18px rgba(201,168,76,0.05), 0 24px 70px rgba(0,0,0,0.8), inset 0 0 40px rgba(201,168,76,0.08), 0 0 55px rgba(201,168,76,0.16); }
-    }
-
-    /* Inner ring — structural detail */
-    .artifact-ring {
+    /* Light sweep pass */
+    .logo-scene::after {
+      content: '';
       position: absolute;
-      width: 58%;
-      height: 58%;
-      border-radius: 50%;
-      border: 1px solid rgba(201,168,76,0.12);
-      pointer-events: none;
-      z-index: 1;
-    }
-
-    /* Spinning sweep ring — arc reactor feel */
-    .artifact-ring-spin {
-      position: absolute;
-      width: 76%;
-      height: 76%;
-      border-radius: 50%;
-      border: 1px solid transparent;
-      border-top-color: rgba(201,168,76,0.55);
-      border-right-color: rgba(201,168,76,0.18);
-      pointer-events: none;
-      z-index: 1;
-    }
-
-    @media (prefers-reduced-motion: no-preference) {
-      .artifact-ring-spin {
-        animation: ring-rotate 9s linear infinite;
-      }
-    }
-
-    @keyframes ring-rotate {
-      from { transform: rotate(0deg); }
-      to   { transform: rotate(360deg); }
-    }
-
-    /* Crosshair + dotted ring overlay */
-    .artifact-overlay {
-      position: absolute;
-      inset: 0;
-      width: 100%;
+      top: 0;
+      left: 0;
+      width: 50%;
       height: 100%;
+      background: linear-gradient(
+        115deg,
+        transparent 15%,
+        rgba(201,168,76,0.05) 42%,
+        rgba(240,200,74,0.10) 50%,
+        rgba(201,168,76,0.05) 58%,
+        transparent 85%
+      );
+      transform: translateX(-120%);
+      z-index: 4;
       pointer-events: none;
-      z-index: 3;
-      opacity: 0.65;
-    }
-
-    .artifact-nfc-icon {
-      width: 54px;
-      height: 54px;
-      opacity: 0.92;
-      position: relative;
-      z-index: 2;
-    }
-
-    .artifact-label {
-      font-size: 0.62rem;
-      font-weight: 600;
-      letter-spacing: 0.28em;
-      text-transform: uppercase;
-      color: var(--gold-dim);
-    }
-
-    .artifact-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--gold);
-      box-shadow: 0 0 8px var(--gold);
-      margin-top: 4px;
     }
 
     @media (prefers-reduced-motion: no-preference) {
-      .artifact-dot {
-        animation: dot-pulse 2.2s ease-in-out infinite;
+      .logo-img {
+        animation: logo-float 6s ease-in-out infinite;
+      }
+
+      .logo-glow {
+        animation: glow-breathe 6s ease-in-out infinite;
+      }
+
+      .logo-scene::after {
+        animation: logo-sweep 12s ease-in-out infinite;
+        animation-delay: 3s;
       }
     }
 
-    @keyframes dot-pulse {
-      0%, 100% { opacity: 1;   box-shadow: 0 0 8px var(--gold); }
-      50%       { opacity: 0.3; box-shadow: 0 0 2px var(--gold); }
+    @keyframes logo-float {
+      0%, 100% {
+        transform: translateY(0px);
+        filter: drop-shadow(0 0 16px rgba(201,168,76,0.08)) drop-shadow(0 12px 40px rgba(0,0,0,0.60));
+      }
+      50% {
+        transform: translateY(-10px);
+        filter: drop-shadow(0 0 28px rgba(201,168,76,0.18)) drop-shadow(0 20px 50px rgba(0,0,0,0.48));
+      }
+    }
+
+    @keyframes glow-breathe {
+      0%, 100% { opacity: 0.55; transform: scale(1); }
+      50%       { opacity: 0.95; transform: scale(1.06); }
+    }
+
+    @keyframes logo-sweep {
+      0%        { transform: translateX(-120%); opacity: 0; }
+      6%        { opacity: 1; }
+      48%       { transform: translateX(280%);  opacity: 0.40; }
+      49%, 100% { transform: translateX(280%);  opacity: 0; }
     }
 
     /* ── SECTION COMMONS ──────────────────────────────────────────────────── */
@@ -747,12 +724,12 @@
 
     /* ── RESPONSIVE ───────────────────────────────────────────────────────── */
     @media (max-width: 768px) {
-      :root { --artifact-size: 190px; }
+      :root { --artifact-size: 190px; --logo-size: 195px; --wordmark-size: 285px; }
 
       .hero-inner {
         grid-template-columns: 1fr;
         text-align: center;
-        gap: 3rem;
+        gap: 1.5rem;
       }
 
       .hero-inner > :first-child { order: 2; }
@@ -789,7 +766,7 @@
     }
 
     @media (max-width: 540px) {
-      :root { --artifact-size: 160px; }
+      :root { --artifact-size: 160px; --logo-size: 162px; --wordmark-size: 240px; }
 
       section { padding: 72px 0; }
 
@@ -807,7 +784,7 @@
     }
 
     @media (max-width: 380px) {
-      :root { --artifact-size: 130px; }
+      :root { --artifact-size: 130px; --logo-size: 130px; --wordmark-size: 195px; }
 
       .hero-title { font-size: 2.2rem; }
     }
@@ -832,7 +809,6 @@
       <div class="hero-inner">
 
         <div class="hero-copy reveal">
-          <div class="hero-wordmark">SHADZ</div>
           <div class="hero-eyebrow">OBJECTS. SIGNALS. WORLDS.</div>
           <h1 class="hero-title">Touch to <span>Unlock.</span></h1>
           <p class="hero-sub">
@@ -845,37 +821,16 @@
           </a>
         </div>
 
-        <!-- Artifact -->
-        <div class="artifact-scene reveal" style="transition-delay:0.15s">
-          <div class="scan-ring"></div>
-          <div class="scan-ring"></div>
-          <div class="scan-ring"></div>
-          <div class="artifact">
-            <!-- Crosshair + dotted ring overlay -->
-            <svg class="artifact-overlay" viewBox="0 0 240 240" fill="none">
-              <circle cx="120" cy="120" r="90" stroke="#c9a84c" stroke-width="0.5" stroke-dasharray="3 9" opacity="0.22"/>
-              <line x1="120" y1="24" x2="120" y2="56" stroke="#c9a84c" stroke-width="1" stroke-linecap="round" opacity="0.45"/>
-              <line x1="120" y1="184" x2="120" y2="216" stroke="#c9a84c" stroke-width="1" stroke-linecap="round" opacity="0.45"/>
-              <line x1="24" y1="120" x2="56" y2="120" stroke="#c9a84c" stroke-width="1" stroke-linecap="round" opacity="0.45"/>
-              <line x1="184" y1="120" x2="216" y2="120" stroke="#c9a84c" stroke-width="1" stroke-linecap="round" opacity="0.45"/>
-              <line x1="68" y1="68" x2="78" y2="78" stroke="#c9a84c" stroke-width="0.5" opacity="0.2"/>
-              <line x1="172" y1="68" x2="162" y2="78" stroke="#c9a84c" stroke-width="0.5" opacity="0.2"/>
-              <line x1="68" y1="172" x2="78" y2="162" stroke="#c9a84c" stroke-width="0.5" opacity="0.2"/>
-              <line x1="172" y1="172" x2="162" y2="162" stroke="#c9a84c" stroke-width="0.5" opacity="0.2"/>
-            </svg>
-            <!-- Spinning sweep ring -->
-            <div class="artifact-ring-spin"></div>
-            <!-- Static inner ring -->
-            <div class="artifact-ring"></div>
-            <!-- SHADZ core activation icon -->
-            <svg class="artifact-nfc-icon" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M17 15.5a13 13 0 1 0 18 0" stroke="#c9a84c" stroke-width="2" stroke-linecap="round"/>
-              <line x1="26" y1="9" x2="26" y2="26" stroke="#c9a84c" stroke-width="2" stroke-linecap="round"/>
-              <circle cx="26" cy="26" r="2.5" fill="#c9a84c" opacity="0.85"/>
-            </svg>
-            <div class="artifact-label">SHADZ</div>
-            <div class="artifact-dot"></div>
+        <!-- Logo Visual -->
+        <div class="logo-wrap reveal" style="transition-delay:0.15s">
+          <div class="logo-scene">
+            <div class="scan-ring"></div>
+            <div class="scan-ring"></div>
+            <div class="scan-ring"></div>
+            <div class="logo-glow"></div>
+            <img class="logo-img" src="/static/assets/shadz-logo-core.png" alt="SHADZ core" draggable="false" />
           </div>
+          <img class="wordmark-img" src="/static/assets/shadz-wordmark.png" alt="SHADZ" draggable="false" />
         </div>
 
       </div>
@@ -1126,6 +1081,29 @@
         card.addEventListener('mouseleave', () => {
           card.style.transform = '';
         });
+      });
+    })();
+
+    // ── Logo Tilt ──────────────────────────────────────────────────────────
+    (function () {
+      const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const hasHover       = window.matchMedia('(hover: hover)').matches;
+      if (prefersReduced || !hasHover) return;
+      const STRENGTH = 6;
+      const scene = document.querySelector('.logo-scene');
+      if (!scene) return;
+      scene.addEventListener('mousemove', (e) => {
+        const rect = scene.getBoundingClientRect();
+        const cx   = rect.left + rect.width  / 2;
+        const cy   = rect.top  + rect.height / 2;
+        const dx   = (e.clientX - cx) / (rect.width  / 2);
+        const dy   = (e.clientY - cy) / (rect.height / 2);
+        const rotX = (-dy * STRENGTH).toFixed(2);
+        const rotY = ( dx * STRENGTH).toFixed(2);
+        scene.style.transform = `perspective(700px) rotateX(${rotX}deg) rotateY(${rotY}deg)`;
+      });
+      scene.addEventListener('mouseleave', () => {
+        scene.style.transform = '';
       });
     })();
 

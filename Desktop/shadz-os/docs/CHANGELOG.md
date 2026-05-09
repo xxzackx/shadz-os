@@ -2,6 +2,37 @@
 
 ---
 
+## Front Page v0.1.2 — Hero Logo Core Patch
+
+**Date:** 2026-05-10
+**Status:** Complete, mobile-approved
+
+**Summary:**
+Replaced the CSS circular artifact in the hero section with two separate production assets: a floating animated core emblem and a stable SHADZ wordmark. Hero copy and CTA are unchanged.
+
+**Changes:**
+- Removed old CSS `.hero-wordmark` large "SHADZ" text from hero copy column
+- Added `<img class="logo-img">` — `static/assets/shadz-logo-core.png` (transparent PNG, floating/animated)
+- Added `<img class="wordmark-img">` — `static/assets/shadz-wordmark.png` (transparent PNG, stable/static)
+- Core emblem: CSS float keyframe + subtle JS cursor tilt on hover (`hover: hover` gated)
+- Wordmark: no float animation; `scaleY(1.12)` for stronger vertical presence; tightly grouped below core via negative `margin-top` calc
+- Introduced `--logo-size` CSS custom property (decoupled from `--artifact-size` used by scan rings)
+- Tuned all responsive breakpoints: desktop 280px core / 360px wordmark, tablet 195px / 285px, 540px 162px / 240px, 380px 130px / 195px
+- Reduced mobile `.hero-inner` gap from `3rem` to `1.5rem` to tighten wordmark-to-eyebrow spacing
+- `prefers-reduced-motion` gates all CSS animations; `hover: hover` gates JS tilt
+- Mobile hero layout approved (logo above copy, single-column stack)
+
+**Assets added:**
+- `static/assets/shadz-logo-core.png`
+- `static/assets/shadz-wordmark.png`
+
+**Touched:** `static/index.html`, `static/assets/` (new files only)
+**Backend:** untouched
+**Admin:** untouched
+**Endpoints:** untouched
+
+---
+
 ## Front Page v0.1.1 — CTA Contact Patch
 
 **Date:** 2026-05-07
