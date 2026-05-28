@@ -4,6 +4,18 @@ Rules and operating procedure for all Claude Code sessions on this project.
 
 ---
 
+## Canonical Claude Code Rules
+
+The root-level `CLAUDE.md` file is now the canonical operating rules file for Claude Code in the SHADZ project.
+
+Claude Code must read and follow `CLAUDE.md` before making non-trivial changes.
+
+The SHADZ execution pattern remains:
+
+Inspect → Plan → Write → Diff → Verify → Commit → Deploy only when approved.
+
+---
+
 ## Core Sequence
 
 Every task follows this order without exception:

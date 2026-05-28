@@ -2,6 +2,33 @@
 
 ---
 
+## 2026-05-28 — Add Claude Code operating rules
+
+**Status:** Complete
+
+**Summary:**
+Added root-level `CLAUDE.md` containing the SHADZ Claude Code operating rules.
+
+The rules enforce:
+- production safety first
+- think before coding
+- simplicity first
+- surgical changes
+- goal-driven execution
+- read before write
+- checkpointing
+- codebase convention matching
+- fail-loud reporting
+
+This is documentation/workflow only. No runtime code, backend, frontend, database, Nginx, service, or deployment changes.
+
+**Touched:** `CLAUDE.md` (new), `docs/CLAUDE_WORKFLOW.md`, `docs/PROJECT_STATE.md`, `docs/CHANGELOG.md`
+**Backend:** untouched
+**Frontend:** untouched
+**Endpoints:** untouched
+
+---
+
 ## Front Page v0.1.2 — Hero Logo Core Patch
 
 **Date:** 2026-05-10

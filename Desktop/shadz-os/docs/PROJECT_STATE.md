@@ -145,6 +145,21 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 
 ---
 
+## DevOps / Claude Code Rules
+
+A root-level `CLAUDE.md` file now defines the mandatory operating rules for Claude Code in this project.
+
+Purpose:
+- reduce implementation mistakes
+- avoid overengineering
+- enforce read-before-write
+- enforce surgical changes
+- require verification before claiming completion
+- prevent silent skipped tests or hidden uncertainty
+- protect the live SHADZ production system
+
+---
+
 ## Current Priorities
 
 1. Analytics / scan tracking chart
