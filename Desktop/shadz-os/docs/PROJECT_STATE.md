@@ -80,10 +80,13 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 - Create new SHADZ links (slug + client info)
 - Update redirect destination for a slug
 - Check Slug Info by phone/contact number
+  - Destination row: View Full (inline expand) + Open ↗ (new tab) — v0.2.3
 - Edit client info (name, phone, notes)
 - Upload media assets to R2
 - Attach / detach media assets to media slugs
 - Storage Manager (browse all assets)
+
+**Admin UI version:** v0.2.3 — Phase 1 Destination View Patch (commit `d383b84`, deployed 2026-05-31)
 
 ---
 
@@ -162,7 +165,24 @@ Purpose:
 
 ## Current Priorities
 
+### Next: Admin UI v0.2.3 Phase 2 — Link Lifecycle Control
+
+- Soft archive/disable slugs (no hard delete)
+- Archived/disabled slugs must be recoverable
+- Admin Check Slug Info defaults to active slugs only
+- Show Archived option/list
+- Single restore
+- Bulk restore
+- Bulk archive/disable
+- Public expired/archived slug page copy:
+  ```
+  This SHADZ experience has expired.
+  Contact the us to reactivate.
+  ```
+- Expired page includes button linking to `https://t.me/xshadzx`
+
+### Backlog
+
 1. Analytics / scan tracking chart
-2. Further admin dashboard UI polish
-3. Proper UI login/logout system
-4. Role-based admin security
+2. Proper UI login/logout system
+3. Role-based admin security

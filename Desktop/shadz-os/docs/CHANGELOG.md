@@ -2,6 +2,44 @@
 
 ---
 
+## Admin UI v0.2.3 — Phase 1 Destination View Patch
+
+**Date:** 2026-05-31
+**Commit:** `d383b84`
+**Status:** Complete, deployed
+
+**Summary:**
+Destination row in Check Slug Info result cards replaced with a custom interactive row.
+Previously rendered as plain truncated text. Now shows View Full and Open ↗ actions.
+
+**Changes:**
+- Removed `Destination` from the generic `rows` array in `buildResultCard()`
+- Split rows into `rowsBefore` (Content Type → NFC URL) and `rowsAfter` (Created → Notes)
+- Custom `destinationRowHtml` inserted between the two halves — original row order preserved
+- View Full: toggles an inline expanded panel showing the full `destination_url` with `word-break:break-all`
+- Open ↗: opens `destination_url` in a new tab (`target="_blank" rel="noopener noreferrer"`)
+- Open only renders clickable if `destination_url` matches `^https?://`; otherwise renders as a disabled `<span>`
+- Empty/null `destination_url`: View Full shows "Not set"; Open is disabled
+- Added `toggleDest(index)` helper with null guard (`if (!el) return`)
+- No Copy button added
+
+**Destination row order confirmed:**
+Content Type → Client Name → Phone → Slug → NFC URL → **Destination** → Created → Scans → Notes
+
+**Deployment:**
+- Deployed on VPS via `git pull origin master` in `/opt/shadz-os/Desktop/shadz-os`
+- No service restart required (static file change only)
+- No Nginx changes required
+
+**Touched:** `static/admin.html` only
+**Backend:** untouched
+**Database:** untouched
+**Auth:** untouched
+**Media logic:** untouched
+**Nginx:** untouched
+
+---
+
 ## 2026-05-28 — Add Claude Code operating rules
 
 **Status:** Complete
