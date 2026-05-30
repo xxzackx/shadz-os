@@ -821,22 +821,49 @@
     }
 
     function buildResultCard(r, index) {
-      const rows = [
+      const rowMapFn = ([label, val]) => `
+        <div class="stats-row">
+          <span class="stats-label">${esc(label)}</span>
+          <span class="stats-value value-overflow">${esc(val)}</span>
+        </div>`;
+
+      const rowsBefore = [
         ['Content Type', r.content_type],
         ['Client Name',  r.client_name],
         ['Phone',        r.phone_number],
         ['Slug',         r.slug],
         ['NFC URL',      r.nfc_url],
-        ['Destination',  r.destination_url],
+      ];
+      const rowsAfter = [
         ['Created',      new Date(r.created_at).toLocaleString()],
         ['Scans',        r.scan_count],
         ['Notes',        r.notes],
       ];
-      const rowsHtml = rows.map(([label, val]) => `
+      const rowsBeforeHtml = rowsBefore.map(rowMapFn).join('');
+      const rowsAfterHtml  = rowsAfter.map(rowMapFn).join('');
+
+      // ── Destination row: View Full + Open ──────────────────────────────────
+      const hasDest    = !!(r.destination_url);
+      const isValidUrl = hasDest && /^https?:\/\//.test(r.destination_url);
+      const destFullContent = hasDest
+        ? esc(r.destination_url)
+        : `<span style="color:var(--text-muted)">Not set</span>`;
+      const openBtnHtml = isValidUrl
+        ? `<a href="${escVal(r.destination_url)}" target="_blank" rel="noopener noreferrer"
+              class="ghost-btn sm" style="text-decoration:none;display:inline-block">Open ↗</a>`
+        : `<span class="ghost-btn sm" style="opacity:0.35;cursor:not-allowed">Open ↗</span>`;
+      const destinationRowHtml = `
         <div class="stats-row">
-          <span class="stats-label">${esc(label)}</span>
-          <span class="stats-value value-overflow">${esc(val)}</span>
-        </div>`).join('');
+          <span class="stats-label">Destination</span>
+          <span style="display:flex;gap:0.4rem;align-items:center">
+            <button type="button" class="ghost-btn sm" onclick="toggleDest(${index})">View Full</button>
+            ${openBtnHtml}
+          </span>
+        </div>
+        <div id="dest-full-${index}" style="display:none;padding:0.5rem 1rem 0.4rem;
+             background:var(--surface-2);border-top:1px solid var(--border-2)">
+          <span style="font-size:0.78rem;color:var(--gold-light);word-break:break-all;line-height:1.5">${destFullContent}</span>
+        </div>`;
 
       const editForm = `
         <div id="editForm-${index}" class="edit-form" style="display:none">
@@ -893,12 +920,18 @@
           <button class="ghost-btn" onclick="toggleEdit(${index})">Edit Info</button>
         </div>`;
 
-      return `<div class="stats-box"><div class="card-body">${rowsHtml}</div>${activeMediaHtml}${toggleRow}${editForm}</div>`;
+      return `<div class="stats-box"><div class="card-body">${rowsBeforeHtml}${destinationRowHtml}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${editForm}</div>`;
     }
 
     function toggleEdit(index) {
       const form = document.getElementById(`editForm-${index}`);
       form.style.display = form.style.display === 'none' ? 'block' : 'none';
+    }
+
+    function toggleDest(index) {
+      const el = document.getElementById(`dest-full-${index}`);
+      if (!el) return;
+      el.style.display = el.style.display === 'none' ? 'block' : 'none';
     }
 
     async function saveInfo(slug, index) {
