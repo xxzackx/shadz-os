@@ -132,6 +132,7 @@ Expected results:
 
 ## Deployment Procedure
 
+**Standard deploy** (no schema changes):
 ```bash
 # On VPS
 cd /opt/shadz-os/Desktop/shadz-os
@@ -139,6 +140,19 @@ git pull origin master
 sudo systemctl restart shadz.service
 sudo systemctl status shadz.service
 ```
+
+**Schema-changing deploy** (new migration columns added):
+```bash
+# On VPS — back up DB first, then deploy
+cd /opt/shadz-os/Desktop/shadz-os
+cp shadz.db shadz.db.bak-$(date +%Y%m%d-%H%M%S)
+git pull origin master
+sudo systemctl restart shadz.service
+sudo systemctl status shadz.service
+```
+
+Always create a timestamped DB backup before any deploy that adds migration columns.
+The migration runs automatically at app startup — no manual SQL needed.
 
 Nginx does not need to restart for application code changes.
 Nginx restart is only needed for Nginx config changes.

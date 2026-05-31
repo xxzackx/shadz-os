@@ -2,6 +2,94 @@
 
 ---
 
+## Hotfix 4.1 — Expired Page Copy + No-Cache Headers
+
+**Date:** 2026-05-31
+**Commit:** `5a744ae`
+**Status:** Complete, deployed, production-verified
+
+**Problem:**
+After restoring an archived slug, browser could still show the expired page because the 410 response had no cache headers. Expired page copy also had two copy errors: "THE SHADZ experience..." and "Contact the us...".
+
+**Changes:**
+- Expired page copy corrected to exactly:
+  ```
+  SHADZ EXPERIENCE HAS EXPIRED.
+  CONTACT US TO REACTIVATE.
+  ```
+- Archived slug `410` response now sends no-cache headers:
+  - `Cache-Control: no-store, no-cache, must-revalidate, max-age=0`
+  - `Pragma: no-cache`
+  - `Expires: 0`
+- Telegram link (`https://t.me/xshadzx`) unchanged
+- Status code `410 Gone` unchanged
+
+**Root cause of browser-cache issue:**
+Pre-hotfix, the 410 response carried no cache directives. Browser/proxy cached the expired page. After restore, the backend was correct (DB `is_archived=0`, curl returned `302`) but the browser served stale 410 HTML. No-cache headers prevent this going forward.
+
+**Production deploy:**
+- VPS pulled `5a744ae` via `git pull origin master`
+- `shadz.service` restarted
+- Verified: archived slug returns `HTTP/1.1 410 Gone` with correct no-cache headers and corrected copy
+- Verified: full cycle (archive → expired page → restore → correct redirect) works in fresh browser
+
+**Touched:** `main.py` only
+**Frontend:** untouched
+**Database:** untouched
+**Nginx:** untouched
+
+---
+
+## Phase 2 — Link Lifecycle Control
+
+**Date:** 2026-05-31
+**Commits:**
+- `051490c` Add lifecycle fields for link archive support
+- `29bcff3` Add expired page for archived slugs
+- `d5c3041` Add admin archive restore endpoints
+- `859efe2` Add admin archive controls to link search
+**Status:** Complete, deployed, production-verified (with Hotfix 4.1)
+
+**Summary:**
+Soft archive/restore system for NFC slugs. Archived slugs return a branded `410 Gone` page instead of redirecting. Slugs can be restored to active without changing the slug name or any client data.
+
+**Backend changes (`main.py`):**
+- SQLite migration: `is_archived BOOLEAN`, `archived_at DATETIME` columns added to `redirect_links`
+- `_expired_page_html()` — branded 410 page with Telegram contact button (`https://t.me/xshadzx`)
+- `redirect_slug()` — checks `is_archived` before redirect; returns 410 + expired page if archived
+- `POST /admin/link/{slug}/archive` — sets `is_archived=True`, records `archived_at` timestamp
+- `POST /admin/link/{slug}/restore` — clears `is_archived=False`, clears `archived_at`
+- `GET /admin/links/search` — active-only by default; `include_archived=true` param exposes archived view
+- `NULL is_archived` treated as active — backward-compatible with all legacy rows
+
+**Frontend changes (`static/admin.html`):**
+- Archive / Restore button per result card in Check Slug Info
+- Show Archived toggle — switches between active-only and archived result views
+- Archived card state visually distinct from active
+
+**Database migration:**
+- Safe `ALTER TABLE ADD COLUMN` migration at app startup (same pattern as v0.3 client fields)
+- Production DB backup created before deploy: `shadz.db.bak-phase2-20260531-103517`
+- Migration confirmed successful; `redirect_links` table now has `is_archived` and `archived_at`
+
+**Production deploy:**
+- DB backed up, `git pull origin master`, `shadz.service` restarted
+- Health check passed; `/admin` returned `401` unauthenticated as expected
+- Single archive: ✓
+- Single restore: ✓
+- Show Archived toggle: ✓
+- Active slugs redirect normally: ✓
+- Expired public page renders correctly: ✓
+- Auth, Media Engine, Storage Manager unaffected: ✓
+
+**Touched:** `main.py`, `static/admin.html`, SQLite migration (auto-runs at startup)
+**Nginx:** untouched
+**Auth:** untouched
+**Media Engine:** untouched
+**Storage Manager:** untouched
+
+---
+
 ## Admin UI v0.2.3 — Phase 1 Destination View Patch
 
 **Date:** 2026-05-31

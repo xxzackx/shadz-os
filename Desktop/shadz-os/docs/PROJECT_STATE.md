@@ -80,13 +80,49 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 - Create new SHADZ links (slug + client info)
 - Update redirect destination for a slug
 - Check Slug Info by phone/contact number
-  - Destination row: View Full (inline expand) + Open ↗ (new tab) — v0.2.3
+  - Destination row: View Full (inline expand) + Open ↗ (new tab) — v0.2.3 Phase 1
+  - Archive slug (soft archive, recoverable) — Phase 2
+  - Restore slug (clears archive state) — Phase 2
+  - Show Archived toggle (active-only default; opt-in archived view) — Phase 2
 - Edit client info (name, phone, notes)
 - Upload media assets to R2
 - Attach / detach media assets to media slugs
 - Storage Manager (browse all assets)
 
-**Admin UI version:** v0.2.3 — Phase 1 Destination View Patch (commit `d383b84`, deployed 2026-05-31)
+**Admin UI version:** v0.2.3 Phase 2 — Link Lifecycle Control + Hotfix 4.1 (`5a744ae`, deployed 2026-05-31)
+
+---
+
+## Database Schema — Live State
+
+### `redirect_links`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER | PK |
+| `slug` | VARCHAR | unique, indexed |
+| `destination_url` | VARCHAR | not null |
+| `scan_count` | INTEGER | default 0 |
+| `content_type` | VARCHAR | url / media / page; nullable (legacy rows) |
+| `client_name` | VARCHAR | nullable |
+| `phone_number` | VARCHAR | indexed; nullable |
+| `notes` | TEXT | nullable |
+| `is_archived` | BOOLEAN | nullable — `NULL` treated as active (added Phase 2) |
+| `archived_at` | DATETIME | nullable — set on archive, cleared on restore (added Phase 2) |
+| `created_at` | DATETIME | |
+| `updated_at` | DATETIME | |
+
+### `media_assets`
+
+One row per uploaded R2 file. Soft-deleted via `is_deleted=True`. Never auto-removed from R2.
+
+### `slug_media`
+
+Join between `redirect_links.slug` and `media_assets.id`. History preserved; only one row per slug has `is_active=True`.
+
+### `nfc_records` / `scan_logs`
+
+Legacy NFC system. Unchanged since v0.1.
 
 ---
 
@@ -165,21 +201,31 @@ Purpose:
 
 ## Current Priorities
 
-### Next: Admin UI v0.2.3 Phase 2 — Link Lifecycle Control
+### Next: Patch 5 — Bulk Archive / Bulk Restore
 
-- Soft archive/disable slugs (no hard delete)
-- Archived/disabled slugs must be recoverable
-- Admin Check Slug Info defaults to active slugs only
-- Show Archived option/list
-- Single restore
-- Bulk restore
-- Bulk archive/disable
-- Public expired/archived slug page copy:
-  ```
-  This SHADZ experience has expired.
-  Contact the us to reactivate.
-  ```
-- Expired page includes button linking to `https://t.me/xshadzx`
+**Target files:** `static/admin.html` (frontend) + `main.py` (backend)
+
+Requirements:
+1. Bulk selection checkboxes on Check Slug Info result cards
+2. Selected count / action bar (shows how many selected)
+3. Bulk Archive button
+4. Bulk Restore button
+5. Backend: `POST /admin/links/bulk-archive` endpoint
+6. Backend: `POST /admin/links/bulk-restore` endpoint
+7. Single Archive / Restore buttons must remain working
+8. Show Archived toggle must remain working
+9. Preserve v0.2.3 result card layout (2-column grid, equal height, bottom-pinned actions)
+10. Preserve Destination row View Full / Open ↗ actions
+11. Preserve Active Media panel
+12. Preserve Edit Info flow
+13. Do NOT touch Storage Manager
+14. Do NOT touch Media Engine
+15. Do NOT change public redirect behavior
+16. Do NOT change Basic Auth
+17. Do NOT hard delete slugs
+18. `NULL is_archived` must be treated as active throughout
+19. Bulk restore must support 100+ slugs (clients may have many keychains)
+20. Test with test slugs first before touching live client slugs
 
 ### Backlog
 
