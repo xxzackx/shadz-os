@@ -396,7 +396,7 @@ def _expired_page_html() -> str:
   </style>
 </head>
 <body>
-  <p>This SHADZ experience has expired.<br>Contact the us to reactivate.</p>
+  <p>SHADZ EXPERIENCE HAS EXPIRED.<br>CONTACT US TO REACTIVATE.</p>
   <a href="https://t.me/xshadzx" target="_blank" rel="noopener noreferrer">Contact</a>
 </body>
 </html>"""
@@ -1256,7 +1256,15 @@ def redirect_slug(slug: str, request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=f"Slug '{slug}' not found")
 
     if link.is_archived is True:
-        return HTMLResponse(content=_expired_page_html(), status_code=410)
+        return HTMLResponse(
+            content=_expired_page_html(),
+            status_code=410,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma":        "no-cache",
+                "Expires":       "0",
+            },
+        )
 
     link.scan_count += 1
     link.updated_at = datetime.now(timezone.utc)
