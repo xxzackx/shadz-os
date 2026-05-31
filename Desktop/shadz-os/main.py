@@ -375,6 +375,33 @@ def _page_placeholder_html(slug: str) -> str:
 </html>"""
 
 
+def _expired_page_html() -> str:
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SHADZ</title>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{background:#000;color:#4a4540;min-height:100vh;display:flex;
+         align-items:center;justify-content:center;font-family:system-ui,sans-serif;
+         flex-direction:column;gap:1.5rem;padding:2rem;text-align:center}
+    p{font-size:.75rem;letter-spacing:.2em;text-transform:uppercase;line-height:1.8}
+    a{display:inline-block;margin-top:.5rem;padding:.55rem 1.4rem;
+      border:1px solid #2a2520;border-radius:5px;
+      font-size:.65rem;letter-spacing:.15em;text-transform:uppercase;
+      color:#4a4540;text-decoration:none;transition:border-color .15s,color .15s}
+    a:hover{border-color:#7a5f28;color:#c9a84c}
+  </style>
+</head>
+<body>
+  <p>This SHADZ experience has expired.<br>Contact the us to reactivate.</p>
+  <a href="https://t.me/xshadzx" target="_blank" rel="noopener noreferrer">Contact</a>
+</body>
+</html>"""
+
+
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
@@ -1174,6 +1201,9 @@ def redirect_slug(slug: str, request: Request, db: Session = Depends(get_db)):
     link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
     if not link:
         raise HTTPException(status_code=404, detail=f"Slug '{slug}' not found")
+
+    if link.is_archived is True:
+        return HTMLResponse(content=_expired_page_html(), status_code=410)
 
     link.scan_count += 1
     link.updated_at = datetime.now(timezone.utc)
