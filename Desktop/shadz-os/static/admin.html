@@ -959,7 +959,8 @@
         } else {
           activeMediaHtml = `
             <div class="inset-panel" style="padding:0.55rem 1rem">
-              <span style="font-size:0.72rem;color:var(--text-muted)">No active media attached</span>
+              <span style="font-size:0.72rem;color:var(--text-muted)">No active media attached.</span><br>
+              <span style="font-size:0.68rem;color:var(--text-muted);opacity:0.7">Media destination is controlled by attached media asset.</span>
             </div>`;
         }
       }
@@ -988,7 +989,7 @@
                  onchange="toggleCardSelect(this)" />
         </div>`;
 
-      return `<div class="stats-box"><div class="card-body">${selectRow}${rowsBeforeHtml}${destinationRowHtml}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${lifecycleRow}${editForm}</div>`;
+      return `<div class="stats-box"><div class="card-body">${selectRow}${rowsBeforeHtml}${r.content_type !== 'media' ? destinationRowHtml : ''}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${lifecycleRow}${editForm}</div>`;
     }
 
     function toggleEdit(index) {
