@@ -859,6 +859,50 @@ def upsert_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db)):
     return link
 
 
+@admin_router.post("/link/{slug}/archive")
+def archive_link(slug: str, db: Session = Depends(get_db)):
+    """Soft-archive a redirect link.
+
+    Sets is_archived=True and records archived_at timestamp.
+    The public slug will return 410 and the expired page instead of redirecting.
+    Idempotent: returns 200 without error if the slug is already archived.
+    """
+    link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
+    if not link:
+        raise HTTPException(status_code=404, detail=f"Slug '{slug}' not found")
+
+    if link.is_archived is True:
+        return {"success": True, "slug": slug, "is_archived": True, "message": "Already archived"}
+
+    link.is_archived = True
+    link.archived_at = datetime.now(timezone.utc)
+    link.updated_at  = datetime.now(timezone.utc)
+    db.commit()
+    return {"success": True, "slug": slug, "is_archived": True, "message": "Link archived"}
+
+
+@admin_router.post("/link/{slug}/restore")
+def restore_link(slug: str, db: Session = Depends(get_db)):
+    """Restore an archived redirect link to active.
+
+    Clears is_archived and archived_at.
+    NULL is treated as active — only explicit True is archived.
+    Idempotent: returns 200 without error if the slug is already active.
+    """
+    link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
+    if not link:
+        raise HTTPException(status_code=404, detail=f"Slug '{slug}' not found")
+
+    if link.is_archived is not True:
+        return {"success": True, "slug": slug, "is_archived": False, "message": "Already active"}
+
+    link.is_archived = False
+    link.archived_at = None
+    link.updated_at  = datetime.now(timezone.utc)
+    db.commit()
+    return {"success": True, "slug": slug, "is_archived": False, "message": "Link restored"}
+
+
 @admin_router.get("/links/search", response_model=SearchResponse)
 def search_links(
     phone_number: str = Query(..., description="Phone number to search (partial match)"),
