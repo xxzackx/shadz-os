@@ -566,6 +566,11 @@
 
       <button class="action-btn" id="s-btn" onclick="searchSlugInfo()">Search Slug Info</button>
 
+      <div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.75rem">
+        <input type="checkbox" id="s-showArchived" style="accent-color:var(--gold);width:auto;cursor:pointer;margin-bottom:0" />
+        <label for="s-showArchived" style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:0;cursor:pointer">Show Archived</label>
+      </div>
+
       <!-- Results injected here dynamically — one card per matching record -->
       <div id="searchResults" class="card-grid"></div>
 
@@ -920,7 +925,19 @@
           <button class="ghost-btn" onclick="toggleEdit(${index})">Edit Info</button>
         </div>`;
 
-      return `<div class="stats-box"><div class="card-body">${rowsBeforeHtml}${destinationRowHtml}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${editForm}</div>`;
+      const isArchived = r.is_archived === true;
+      const statusBadge = isArchived
+        ? `<span style="font-size:.65rem;color:#e07070;text-transform:uppercase;letter-spacing:.06em">Archived</span>`
+        : `<span style="font-size:.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em">Active</span>`;
+      const lifecycleBtn = isArchived
+        ? `<button class="ghost-btn sm" onclick="restoreSlug('${escVal(r.slug)}')">Restore</button>`
+        : `<button class="ghost-btn sm danger" onclick="archiveSlug('${escVal(r.slug)}')">Archive</button>`;
+      const lifecycleRow = `
+        <div class="edit-toggle-row" style="justify-content:space-between">
+          ${statusBadge}${lifecycleBtn}
+        </div>`;
+
+      return `<div class="stats-box"><div class="card-body">${rowsBeforeHtml}${destinationRowHtml}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${lifecycleRow}${editForm}</div>`;
     }
 
     function toggleEdit(index) {
@@ -1009,6 +1026,43 @@
       }
     }
 
+    async function archiveSlug(slug) {
+      if (!confirm(`Archive /${slug}? The public link will show an expired page.`)) return;
+      try {
+        const res  = await fetch(`/admin/link/${encodeURIComponent(slug)}/archive`, {
+          method: 'POST',
+          credentials: 'same-origin',
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showMsg('s-msg', 'success', data.message || 'Link archived.');
+          searchSlugInfo();
+        } else {
+          showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('s-msg', 'error', 'Network error — is the server running?');
+      }
+    }
+
+    async function restoreSlug(slug) {
+      try {
+        const res  = await fetch(`/admin/link/${encodeURIComponent(slug)}/restore`, {
+          method: 'POST',
+          credentials: 'same-origin',
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showMsg('s-msg', 'success', data.message || 'Link restored.');
+          searchSlugInfo();
+        } else {
+          showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('s-msg', 'error', 'Network error — is the server running?');
+      }
+    }
+
     async function searchSlugInfo() {
       const phone = document.getElementById('s-phone').value.trim();
       const btn   = document.getElementById('s-btn');
@@ -1027,8 +1081,9 @@
       btn.textContent = 'Searching…';
 
       try {
+        const showArchived = document.getElementById('s-showArchived')?.checked;
         const res  = await fetch(
-          `/admin/links/search?phone_number=${encodeURIComponent(phone)}`,
+          `/admin/links/search?phone_number=${encodeURIComponent(phone)}${showArchived ? '&include_archived=true' : ''}`,
           { credentials: 'same-origin' }
         );
         const data = await res.json();

@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials, APIKeyHeader
 from pydantic import BaseModel
-from sqlalchemy import text, func
+from sqlalchemy import text, func, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -517,6 +517,7 @@ class LinkSearchResult(BaseModel):
     created_at: datetime
     updated_at: datetime
     active_media: ActiveMediaInfo | None = None   # populated for media slugs
+    is_archived: bool = False
 
 
 class SearchResponse(BaseModel):
@@ -906,19 +907,26 @@ def restore_link(slug: str, db: Session = Depends(get_db)):
 @admin_router.get("/links/search", response_model=SearchResponse)
 def search_links(
     phone_number: str = Query(..., description="Phone number to search (partial match)"),
+    include_archived: bool = Query(False, description="Include archived slugs in results"),
     db: Session = Depends(get_db),
 ):
     """Search redirect links by phone number.
     Uses a partial LIKE match so '+855123' matches '+85512345678'.
     Returns all matching records sorted newest-first.
     Returns {"results": []} if nothing found — never 404.
+    By default only active slugs are returned. Pass include_archived=true to include archived.
+    NULL is_archived is treated as active (legacy rows).
     """
-    links = (
+    q = (
         db.query(models.RedirectLink)
         .filter(models.RedirectLink.phone_number.like(f"%{phone_number}%"))
-        .order_by(models.RedirectLink.created_at.desc())
-        .all()
     )
+    if not include_archived:
+        q = q.filter(or_(
+            models.RedirectLink.is_archived == False,
+            models.RedirectLink.is_archived.is_(None),
+        ))
+    links = q.order_by(models.RedirectLink.created_at.desc()).all()
     results = []
     for link in links:
         # For media slugs, embed the active media attachment so the UI can
@@ -953,6 +961,7 @@ def search_links(
             created_at=link.created_at,
             updated_at=link.updated_at,
             active_media=active_media,
+            is_archived=link.is_archived is True,
         ))
     return SearchResponse(results=results)
 
