@@ -404,6 +404,34 @@
     @media (max-width: 700px) {
       .card-grid { grid-template-columns: 1fr; }
     }
+
+    /* ── Bulk action bar (Slug Info selection controls) ── */
+    .bulk-bar {
+      display: none;
+      align-items: center;
+      gap: 0.6rem;
+      margin-top: 0.75rem;
+      padding: 0.55rem 0.8rem;
+      background: var(--surface);
+      border: 1px solid var(--border-2);
+      border-radius: 6px;
+    }
+
+    .bulk-count {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      flex: 1;
+    }
+
+    /* Checkbox inside result cards — overrides generic input width/margin */
+    .bulk-check {
+      accent-color: var(--gold);
+      cursor: pointer;
+      width: auto;
+      margin-bottom: 0;
+    }
   </style>
 </head>
 <body>
@@ -571,6 +599,13 @@
         <label for="s-showArchived" style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:0;cursor:pointer">Show Archived</label>
       </div>
 
+      <!-- Bulk action bar — visible when one or more result cards are selected -->
+      <div id="bulk-bar" class="bulk-bar">
+        <span id="bulk-count" class="bulk-count">0 selected</span>
+        <button id="bulk-archive-btn" class="ghost-btn sm danger" onclick="bulkArchive()">Bulk Archive</button>
+        <button id="bulk-restore-btn" class="ghost-btn sm" onclick="bulkRestore()">Bulk Restore</button>
+      </div>
+
       <!-- Results injected here dynamically — one card per matching record -->
       <div id="searchResults" class="card-grid"></div>
 
@@ -674,6 +709,7 @@
 
   <script>
     const GRID_SECTIONS = new Set(['statsSection', 'storageSection']);
+    const selectedSlugs = new Set();
 
     function show(sectionId) {
       document.getElementById('home').style.display = 'none';
@@ -699,6 +735,7 @@
         el.style.display = 'none';
         el.className = 'msg';
       });
+      clearSelection();
     }
 
     // Show/hide destination URL field based on content type selection
@@ -937,7 +974,14 @@
           ${statusBadge}${lifecycleBtn}
         </div>`;
 
-      return `<div class="stats-box"><div class="card-body">${rowsBeforeHtml}${destinationRowHtml}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${lifecycleRow}${editForm}</div>`;
+      const selectRow = `
+        <div class="stats-row">
+          <span class="stats-label">Select</span>
+          <input type="checkbox" class="bulk-check" data-slug="${escVal(r.slug)}"
+                 onchange="toggleCardSelect(this)" />
+        </div>`;
+
+      return `<div class="stats-box"><div class="card-body">${selectRow}${rowsBeforeHtml}${destinationRowHtml}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${lifecycleRow}${editForm}</div>`;
     }
 
     function toggleEdit(index) {
@@ -1069,6 +1113,7 @@
       const container = document.getElementById('searchResults');
 
       container.innerHTML = '';
+      clearSelection();
       const msgEl = document.getElementById('s-msg');
       msgEl.style.display = 'none';
 
@@ -1338,6 +1383,103 @@
         }
       } catch {
         showMsg('st-msg', 'error', 'Network error');
+      }
+    }
+
+    // ── Bulk selection ───────────────────────────────────────────────────────
+
+    function toggleCardSelect(checkbox) {
+      const slug = checkbox.dataset.slug;
+      if (checkbox.checked) {
+        selectedSlugs.add(slug);
+      } else {
+        selectedSlugs.delete(slug);
+      }
+      updateBulkBar();
+    }
+
+    function updateBulkBar() {
+      const bar   = document.getElementById('bulk-bar');
+      const count = document.getElementById('bulk-count');
+      if (selectedSlugs.size > 0) {
+        bar.style.display  = 'flex';
+        count.textContent  = `${selectedSlugs.size} selected`;
+      } else {
+        bar.style.display  = 'none';
+      }
+    }
+
+    function clearSelection() {
+      selectedSlugs.clear();
+      document.querySelectorAll('.bulk-check').forEach(cb => { cb.checked = false; });
+      updateBulkBar();
+    }
+
+    async function bulkArchive() {
+      const n = selectedSlugs.size;
+      if (n === 0) return;
+      if (!confirm(`Archive ${n} selected slug${n > 1 ? 's' : ''}? Their public links will show an expired page.`)) return;
+
+      const archiveBtn = document.getElementById('bulk-archive-btn');
+      const restoreBtn = document.getElementById('bulk-restore-btn');
+      archiveBtn.disabled = true;
+      restoreBtn.disabled = true;
+
+      try {
+        const res  = await fetch('/admin/links/bulk-archive', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ slugs: [...selectedSlugs] }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          const skippedNote = data.skipped > 0 ? ` (${data.skipped} skipped)` : '';
+          clearSelection();
+          await searchSlugInfo();
+          showMsg('s-msg', 'success', `Archived ${data.updated} slug${data.updated !== 1 ? 's' : ''}${skippedNote}.`);
+        } else {
+          showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('s-msg', 'error', 'Network error — is the server running?');
+      } finally {
+        archiveBtn.disabled = false;
+        restoreBtn.disabled = false;
+      }
+    }
+
+    async function bulkRestore() {
+      const n = selectedSlugs.size;
+      if (n === 0) return;
+      if (!confirm(`Restore ${n} selected slug${n > 1 ? 's' : ''}? Their public links will become active again.`)) return;
+
+      const archiveBtn = document.getElementById('bulk-archive-btn');
+      const restoreBtn = document.getElementById('bulk-restore-btn');
+      archiveBtn.disabled = true;
+      restoreBtn.disabled = true;
+
+      try {
+        const res  = await fetch('/admin/links/bulk-restore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ slugs: [...selectedSlugs] }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          const skippedNote = data.skipped > 0 ? ` (${data.skipped} skipped)` : '';
+          clearSelection();
+          await searchSlugInfo();
+          showMsg('s-msg', 'success', `Restored ${data.updated} slug${data.updated !== 1 ? 's' : ''}${skippedNote}.`);
+        } else {
+          showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('s-msg', 'error', 'Network error — is the server running?');
+      } finally {
+        archiveBtn.disabled = false;
+        restoreBtn.disabled = false;
       }
     }
 

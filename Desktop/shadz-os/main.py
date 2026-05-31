@@ -593,6 +593,11 @@ class MediaDetachRequest(BaseModel):
     slug: str
 
 
+class BulkSlugRequest(BaseModel):
+    """Body for POST /admin/links/bulk-archive and /admin/links/bulk-restore."""
+    slugs: list[str]
+
+
 # ---------------------------------------------------------------------------
 # Public routes
 # ---------------------------------------------------------------------------
@@ -902,6 +907,92 @@ def restore_link(slug: str, db: Session = Depends(get_db)):
     link.updated_at  = datetime.now(timezone.utc)
     db.commit()
     return {"success": True, "slug": slug, "is_archived": False, "message": "Link restored"}
+
+
+@admin_router.post("/links/bulk-archive")
+def bulk_archive_links(payload: BulkSlugRequest, db: Session = Depends(get_db)):
+    """Bulk soft-archive redirect links.
+
+    Trims, drops empty strings, and de-duplicates slugs (preserving order).
+    Returns {updated, skipped, errors, results} — never crashes on empty input.
+    """
+    seen: set[str] = set()
+    clean: list[str] = []
+    for s in payload.slugs:
+        s = s.strip()
+        if s and s not in seen:
+            seen.add(s)
+            clean.append(s)
+
+    if not clean:
+        return {"updated": 0, "skipped": 0, "errors": [], "results": []}
+
+    updated = 0
+    skipped = 0
+    results = []
+    now = datetime.now(timezone.utc)
+
+    for slug in clean:
+        link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
+        if not link:
+            skipped += 1
+            results.append({"slug": slug, "status": "not_found"})
+            continue
+        if link.is_archived is True:
+            skipped += 1
+            results.append({"slug": slug, "status": "already_archived"})
+            continue
+        link.is_archived = True
+        link.archived_at = now
+        link.updated_at  = now
+        updated += 1
+        results.append({"slug": slug, "status": "archived"})
+
+    db.commit()
+    return {"updated": updated, "skipped": skipped, "errors": [], "results": results}
+
+
+@admin_router.post("/links/bulk-restore")
+def bulk_restore_links(payload: BulkSlugRequest, db: Session = Depends(get_db)):
+    """Bulk restore archived redirect links to active.
+
+    Trims, drops empty strings, and de-duplicates slugs (preserving order).
+    Returns {updated, skipped, errors, results} — never crashes on empty input.
+    """
+    seen: set[str] = set()
+    clean: list[str] = []
+    for s in payload.slugs:
+        s = s.strip()
+        if s and s not in seen:
+            seen.add(s)
+            clean.append(s)
+
+    if not clean:
+        return {"updated": 0, "skipped": 0, "errors": [], "results": []}
+
+    updated = 0
+    skipped = 0
+    results = []
+    now = datetime.now(timezone.utc)
+
+    for slug in clean:
+        link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
+        if not link:
+            skipped += 1
+            results.append({"slug": slug, "status": "not_found"})
+            continue
+        if link.is_archived is not True:
+            skipped += 1
+            results.append({"slug": slug, "status": "already_active"})
+            continue
+        link.is_archived = False
+        link.archived_at = None
+        link.updated_at  = now
+        updated += 1
+        results.append({"slug": slug, "status": "restored"})
+
+    db.commit()
+    return {"updated": updated, "skipped": skipped, "errors": [], "results": results}
 
 
 @admin_router.get("/links/search", response_model=SearchResponse)
