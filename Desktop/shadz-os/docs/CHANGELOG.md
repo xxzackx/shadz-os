@@ -2,6 +2,57 @@
 
 ---
 
+## Patch 5.2 — Media Destination Row Fix
+
+**Date:** 2026-06-01
+**Commit:** `b388288`
+**Status:** Complete, deployed, production-verified
+
+**Problem:**
+Media slugs (`media-*`) showed a Destination row with View Full / Open ↗ actions in Admin result cards. This is conceptually wrong — media slugs are controlled by active SlugMedia / MediaAsset attachment, not `destination_url`. Showing destination_url actions for media slugs caused admin confusion and would create problems before Phase 3 Type Conversion.
+
+**Changes:**
+- `buildResultCard()` return statement now conditionally includes `destinationRowHtml` only when `r.content_type !== 'media'`
+- No-active-media state message enhanced: now shows "No active media attached." plus "Media destination is controlled by attached media asset."
+
+**Behavior after patch:**
+
+| Slug type | Destination row | Active Media panel |
+|---|---|---|
+| `url` | Shown — View Full + Open ↗ | Never shown |
+| `page` | Shown (Page Engine does not exist yet) | Never shown |
+| `media` + active media | **Hidden** | Shown |
+| `media` + no active media | **Hidden** | "No active media attached." + context message |
+
+**Frontend only:**
+- `static/admin.html` — 3 lines changed (+2 / -1)
+- `main.py` — untouched
+- Backend endpoints — untouched
+- Database — untouched
+- Nginx — untouched
+- Auth — untouched
+
+**This is a pre-Phase-3 cleanup before Type Conversion. Do not implement Type Conversion until it is explicitly tasked.**
+
+**Production deploy:**
+- VPS pulled `b388288` via `git pull origin master` (from `9aa2aa6`)
+- `shadz.service` restarted; brief `502 Bad Gateway` immediately after restart was startup timing only, not a code failure
+- `systemctl status shadz.service` showed `active (running)`
+- `journalctl` showed Uvicorn startup complete
+- Port check: Uvicorn listening on `127.0.0.1:8000`
+- Local health: `curl http://127.0.0.1:8000/health` → `{"status":"ok"}`
+- GET-based production checks: `/` → 200, `/admin` → 401, `/health` → 200
+- Browser live tests passed; user confirmed all tests passed
+
+**Touched:** `static/admin.html` only
+**Backend:** untouched
+**Database:** untouched
+**Nginx:** untouched
+**Auth:** untouched
+**Media Engine:** untouched
+
+---
+
 ## Patch 5.1 — Bulk Selection UX Patch
 
 **Date:** 2026-05-31

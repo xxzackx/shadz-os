@@ -103,28 +103,31 @@ If `git diff` shows unexpected changes, stop and investigate before proceeding.
 
 ## Post-Deploy Checks
 
-After any deploy, verify with:
+After any deploy, verify with GET-based curl only — do NOT use `curl -I` or HEAD requests (see Known Non-Bugs):
 
 ```bash
-curl -I https://shadz.io/
-curl -i https://shadz.io/health
-curl -I https://shadz.io/admin
+curl -s -o /dev/null -w "%{http_code}\n" https://shadz.io/
+curl -s -o /dev/null -w "%{http_code}\n" https://shadz.io/admin
+curl -s -o /dev/null -w "%{http_code}\n" https://shadz.io/health
+curl -s https://shadz.io/health
 ```
 
 Expected results:
 
 | Endpoint | Expected |
 |---|---|
-| `GET /` | `200 OK` |
-| `GET /health` | `200 OK` with JSON body |
-| `GET /admin` (no auth) | `401 Unauthorized` |
-| `GET /admin` (with auth) | `200 OK` |
+| `GET /` | `200` |
+| `GET /health` | `200` with body `{"status":"ok"}` |
+| `GET /admin` (no auth) | `401` |
+| `GET /admin` (with auth) | `200` |
+
+A brief `502 Bad Gateway` immediately after `shadz.service` restart is startup timing only — wait a moment and recheck before diagnosing a code failure.
 
 ---
 
 ## Known Non-Bugs
 
-- `HEAD` requests to most endpoints return `405 Method Not Allowed` — this is expected FastAPI behavior, not a bug
+- `HEAD` / `curl -I` requests to SHADZ routes return `405 Method Not Allowed` — FastAPI routes currently only allow GET. Always use GET-based curl for verification. A 405 from a HEAD check does NOT mean the app is broken.
 - Basic Auth browser popup is ugly — this is a known accepted state, not a regression
 - Storage Manager shows only non-deleted assets — this is intentional behavior from v0.1.2
 

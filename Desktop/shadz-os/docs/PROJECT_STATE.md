@@ -80,7 +80,7 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 - Create new SHADZ links (slug + client info)
 - Update redirect destination for a slug
 - Check Slug Info by phone/contact number
-  - Destination row: View Full (inline expand) + Open ↗ (new tab) — v0.2.3 Phase 1
+  - Destination row: View Full (inline expand) + Open ↗ (new tab) — `url` and `page` slugs only (Patch 5.2)
   - Archive slug (soft archive, recoverable) — Phase 2
   - Restore slug (clears archive state) — Phase 2
   - Show Archived toggle (active-only default; opt-in archived view) — Phase 2
@@ -93,7 +93,7 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 - Attach / detach media assets to media slugs
 - Storage Manager (browse all assets)
 
-**Admin UI version:** Patch 5.1 — Bulk Archive/Restore + Select All (`8d4fb91`, deployed 2026-05-31)
+**Admin UI version:** Patch 5.2 — Media Destination Row Fix (`b388288`, deployed 2026-06-01)
 
 ---
 
@@ -151,6 +151,7 @@ Legacy NFC system. Unchanged since v0.1.
 
 ## Safe Operating Rules
 
+- Do NOT use `curl -I` or HEAD-method requests to verify SHADZ routes. FastAPI routes currently only allow GET — HEAD returns `405 Method Not Allowed`. Use GET-based checks: `curl -s -o /dev/null -w "%{http_code}\n" <url>`
 - URL content type is allowed to point at any destination including `media.shadz.io` for now — only admin can edit links
 - Do not add backend validation blocking URL type from pointing to `media.shadz.io` until: client portal, staff roles, multi-admin, or API-based link creation is added
 - Do not modify `main.py` unless the task explicitly requires backend changes
@@ -203,22 +204,36 @@ Purpose:
 
 ---
 
-## Current Priorities
+## Execution Context / Guardrails
 
-### Completed: Link Lifecycle Control (Patch 5 + Patch 5.1)
+This section exists to give Claude Code a compressed snapshot of current project state and active constraints. It is not a roadmap or task queue. Do not infer permission to start future work from anything written here.
 
-Link lifecycle control is fully operational as of `8d4fb91`:
+### Completed milestones
 
-- Single archive / restore per card
-- Bulk archive / bulk restore (multi-card selection)
-- Select All Visible / Clear Selection
-- Show Archived toggle (active-only default; opt-in archived view)
-- Expired public page (410 Gone + no-cache headers)
-- Restore to active (slug redirects normally again)
+- Link Lifecycle Control (Phase 2) — archive, restore, 410 expired page, no-cache headers — complete
+- Bulk Archive / Bulk Restore (Patch 5) — complete
+- Select All / Clear Selection (Patch 5.1) — complete
+- Media Destination Row Fix (Patch 5.2, `b388288`, deployed 2026-06-01) — Admin result cards now show Destination row only for `url` and `page` slugs, not `media` slugs
 
-### Next Recommended
+### Active slug type policy
 
-1. **Analytics / Scan Tracking Chart v0.1** — `scan_count` is already tracked per slug in the DB; needs a read-only chart or table view in the admin panel
-2. **Admin UX polish** — any remaining rough edges surfaced from live production testing
-3. **Proper UI login/logout system** — Basic Auth popup is accepted for now but ugly; deferred until needed
-4. **Role-based admin security** — deferred until multi-admin use case arises
+- Current official slug types: `url`, `media`, `page`
+- `url` — behavior controlled by `destination_url`; admin shows Destination row with View Full / Open ↗
+- `media` — behavior controlled by active `SlugMedia` / `MediaAsset` attachment; admin hides Destination row entirely
+- `page` — reserved for future SHADZ-hosted internal landing page / mini site / Page Engine; until Page Engine exists, `page` temporarily keeps Destination row behavior
+
+### Not yet implemented
+
+- Type Conversion (URL ↔ Media slug conversion) — not started
+- Analytics / Scan Tracking Chart — not started
+- Page Engine — not started
+- Proper UI login/logout system — deferred; Basic Auth popup is accepted for now
+- Role-based admin security — deferred until multi-admin use case arises
+
+### Guardrails for future sessions
+
+- Future work must be explicitly prompted per session
+- Do not infer or start roadmap tasks from this document
+- Do not implement Type Conversion, Analytics, Page Engine, login/logout, or any other future feature unless the current prompt explicitly asks for it
+- Do not modify `main.py`, database schema, Nginx, or auth unless the task explicitly requires it
+- Always verify `/`, `/admin` (→ 401), `/health` (→ 200) after any deploy using GET-based curl only
