@@ -40,6 +40,8 @@ def _run_migrations() -> None:
         "client_name":  "VARCHAR",
         "phone_number": "VARCHAR",
         "notes":        "TEXT",
+        "is_archived":  "BOOLEAN",
+        "archived_at":  "DATETIME",
     }
     with engine.connect() as conn:
         rows = conn.execute(text("PRAGMA table_info(redirect_links)")).fetchall()

@@ -68,6 +68,12 @@ class RedirectLink(Base):
         nullable=False,
     )
 
+    # ── Lifecycle fields (added in Phase 2) ───────────────────────────────────
+    # Nullable so existing rows without these columns remain safe.
+    # NULL must be treated as False (active) everywhere.
+    is_archived: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
 
 # ── Media Engine v0.1 ────────────────────────────────────────────────────────
 
