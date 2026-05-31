@@ -2,6 +2,117 @@
 
 ---
 
+## Patch 5.1 — Bulk Selection UX Patch
+
+**Date:** 2026-05-31
+**Commit:** `8d4fb91`
+**Status:** Complete, deployed, production-verified
+
+**Problem:**
+After Patch 5 deployed, admin had to click individual checkboxes for every result card. A client with 100+ slugs would require 100+ manual clicks to bulk archive or restore.
+
+**Changes:**
+- Added Select All button — selects all currently visible Check Slug Info result cards
+- Added Clear Selection button — unticks all checkboxes and clears `selectedSlugs` Set
+- Selection tools row (`#selection-tools`) appears only when search results are rendered
+- Hidden automatically when: navigating home, starting a new search, no results found
+- Scoped to `#searchResults .bulk-check` — never selects non-rendered database records
+- Works with Show Archived off and on
+- `clearSelection()` reused directly by Clear Selection button — no duplicate logic
+- Existing bulk action success order preserved: `clearSelection() → await searchSlugInfo() → showMsg(...)`
+
+**Frontend only:**
+- `static/admin.html` — 17 lines added, 0 deleted
+- `main.py` — untouched
+- Backend endpoints — untouched
+- Database — untouched
+- Media Engine — untouched
+- Public redirect — untouched
+- Basic Auth — untouched
+- Nginx — untouched
+
+**Production deploy:**
+- VPS pulled `8d4fb91` via `git pull origin master`
+- `shadz.service` restarted; confirmed active/running
+- `/health` returned `{"status":"ok"}`
+- `/admin` returned `401` unauthenticated
+- Browser live test passed:
+  - Select All appears after search results render ✓
+  - Clear Selection appears after search results render ✓
+  - Select All selects all visible result cards ✓
+  - Selected count updates correctly ✓
+  - Clear Selection unticks all cards and resets bulk bar ✓
+  - Works with Show Archived on and off ✓
+  - Existing Bulk Archive / Bulk Restore still work ✓
+
+**Touched:** `static/admin.html` only
+**Backend:** untouched
+**Database:** untouched
+**Nginx:** untouched
+
+---
+
+## Patch 5 — Bulk Archive / Bulk Restore
+
+**Date:** 2026-05-31
+**Commit:** `44c78db`
+**Status:** Complete, deployed, production-verified
+
+**Summary:**
+Bulk lifecycle control for SHADZ links. Admin can select multiple Check Slug Info result cards and archive or restore them in a single action. Designed for clients with large numbers of NFC keychains.
+
+**Backend changes (`main.py`):**
+- `BulkSlugRequest` Pydantic model — `{ "slugs": ["url-xxxxx", ...] }`
+- `POST /admin/links/bulk-archive` — soft-archives selected slugs; sets `is_archived=True`, `archived_at`, `updated_at`
+- `POST /admin/links/bulk-restore` — restores selected slugs; clears `is_archived` and `archived_at`
+- Both endpoints on `admin_router` — protected by existing Basic Auth dependency; no per-route auth added
+- Input sanitization: trim whitespace, drop empty strings, de-duplicate preserving order
+- Empty slug list returns `{updated:0, skipped:0, errors:[], results:[]}` — no crash, no DB touch
+- Per-slug status values — bulk-archive: `archived`, `already_archived`, `not_found`; bulk-restore: `restored`, `already_active`, `not_found`
+- Single `db.commit()` after all updates — transaction-safe
+- Does NOT: delete `RedirectLink` rows, delete `MediaAsset` rows, detach media, change `destination_url`, rename slug, change `content_type`
+
+**Frontend changes (`static/admin.html`):**
+- Bulk selection checkboxes (`.bulk-check`) on each result card
+- `#bulk-bar` action bar — shows selected count + Bulk Archive + Bulk Restore buttons; appears when `selectedSlugs.size > 0`
+- `selectedSlugs` — module-level `Set` tracking selected slug strings
+- `toggleCardSelect()`, `updateBulkBar()`, `clearSelection()` — selection state helpers
+- `bulkArchive()` / `bulkRestore()` — confirm → POST → `clearSelection()` → `await searchSlugInfo()` → `showMsg()`
+- Both bulk buttons disabled during in-flight request — prevents double-submission
+- `clearSelection()` called at start of every `searchSlugInfo()` and inside `goHome()`
+
+**Preserved (unchanged):**
+- Single Archive / Restore per card
+- Show Archived toggle
+- Destination View Full / Open ↗
+- Edit Info
+- Active Media panel
+- Media Engine / Storage Manager
+- Public redirect and expired page behavior (410 + no-cache)
+- Basic Auth
+
+**Production deploy:**
+- VPS pulled `44c78db` via `git pull origin master`
+- `shadz.service` restarted; confirmed active/running
+- `/health` returned `{"status":"ok"}`
+- `/admin` returned `401` unauthenticated
+- Browser live test passed:
+  - Admin page loads ✓
+  - Checkboxes appear on result cards ✓
+  - Bulk Archive works ✓
+  - Show Archived shows archived slugs ✓
+  - Public expired page works ✓
+  - Bulk Restore works ✓
+  - Public slug active again after restore ✓
+
+**Touched:** `main.py`, `static/admin.html`
+**Database:** untouched (`is_archived` and `archived_at` columns already exist from Phase 2)
+**Nginx:** untouched
+**Auth:** untouched
+**Media Engine:** untouched
+
+---
+
 ## Hotfix 4.1 — Expired Page Copy + No-Cache Headers
 
 **Date:** 2026-05-31

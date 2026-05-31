@@ -84,12 +84,16 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
   - Archive slug (soft archive, recoverable) — Phase 2
   - Restore slug (clears archive state) — Phase 2
   - Show Archived toggle (active-only default; opt-in archived view) — Phase 2
+  - Bulk Archive selected slugs — Patch 5
+  - Bulk Restore selected slugs — Patch 5
+  - Select All Visible result cards — Patch 5.1
+  - Clear Selection — Patch 5.1
 - Edit client info (name, phone, notes)
 - Upload media assets to R2
 - Attach / detach media assets to media slugs
 - Storage Manager (browse all assets)
 
-**Admin UI version:** v0.2.3 Phase 2 — Link Lifecycle Control + Hotfix 4.1 (`5a744ae`, deployed 2026-05-31)
+**Admin UI version:** Patch 5.1 — Bulk Archive/Restore + Select All (`8d4fb91`, deployed 2026-05-31)
 
 ---
 
@@ -201,34 +205,20 @@ Purpose:
 
 ## Current Priorities
 
-### Next: Patch 5 — Bulk Archive / Bulk Restore
+### Completed: Link Lifecycle Control (Patch 5 + Patch 5.1)
 
-**Target files:** `static/admin.html` (frontend) + `main.py` (backend)
+Link lifecycle control is fully operational as of `8d4fb91`:
 
-Requirements:
-1. Bulk selection checkboxes on Check Slug Info result cards
-2. Selected count / action bar (shows how many selected)
-3. Bulk Archive button
-4. Bulk Restore button
-5. Backend: `POST /admin/links/bulk-archive` endpoint
-6. Backend: `POST /admin/links/bulk-restore` endpoint
-7. Single Archive / Restore buttons must remain working
-8. Show Archived toggle must remain working
-9. Preserve v0.2.3 result card layout (2-column grid, equal height, bottom-pinned actions)
-10. Preserve Destination row View Full / Open ↗ actions
-11. Preserve Active Media panel
-12. Preserve Edit Info flow
-13. Do NOT touch Storage Manager
-14. Do NOT touch Media Engine
-15. Do NOT change public redirect behavior
-16. Do NOT change Basic Auth
-17. Do NOT hard delete slugs
-18. `NULL is_archived` must be treated as active throughout
-19. Bulk restore must support 100+ slugs (clients may have many keychains)
-20. Test with test slugs first before touching live client slugs
+- Single archive / restore per card
+- Bulk archive / bulk restore (multi-card selection)
+- Select All Visible / Clear Selection
+- Show Archived toggle (active-only default; opt-in archived view)
+- Expired public page (410 Gone + no-cache headers)
+- Restore to active (slug redirects normally again)
 
-### Backlog
+### Next Recommended
 
-1. Analytics / scan tracking chart
-2. Proper UI login/logout system
-3. Role-based admin security
+1. **Analytics / Scan Tracking Chart v0.1** — `scan_count` is already tracked per slug in the DB; needs a read-only chart or table view in the admin panel
+2. **Admin UX polish** — any remaining rough edges surfaced from live production testing
+3. **Proper UI login/logout system** — Basic Auth popup is accepted for now but ugly; deferred until needed
+4. **Role-based admin security** — deferred until multi-admin use case arises
