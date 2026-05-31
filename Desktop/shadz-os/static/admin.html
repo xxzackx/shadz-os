@@ -599,6 +599,12 @@
         <label for="s-showArchived" style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:0;cursor:pointer">Show Archived</label>
       </div>
 
+      <!-- Selection tools row — shown when results exist, hidden when grid is empty -->
+      <div id="selection-tools" style="display:none;align-items:center;gap:0.5rem;margin-top:0.5rem">
+        <button class="ghost-btn sm" onclick="selectAllVisible()">Select All</button>
+        <button class="ghost-btn sm" onclick="clearSelection()">Clear Selection</button>
+      </div>
+
       <!-- Bulk action bar — visible when one or more result cards are selected -->
       <div id="bulk-bar" class="bulk-bar">
         <span id="bulk-count" class="bulk-count">0 selected</span>
@@ -723,6 +729,7 @@
       document.querySelector('.panel').classList.remove('wide');
       document.getElementById('createResult').style.display = 'none';
       document.getElementById('searchResults').innerHTML = '';
+      document.getElementById('selection-tools').style.display = 'none';
       document.getElementById('storageList').innerHTML = '';
       document.getElementById('st-historyResults').innerHTML = '';
       document.getElementById('mu-result').style.display = 'none';
@@ -1114,6 +1121,7 @@
 
       container.innerHTML = '';
       clearSelection();
+      document.getElementById('selection-tools').style.display = 'none';
       const msgEl = document.getElementById('s-msg');
       msgEl.style.display = 'none';
 
@@ -1138,6 +1146,7 @@
             showMsg('s-msg', 'error', 'No records found for that phone number.');
           } else {
             container.innerHTML = data.results.map((r, i) => buildResultCard(r, i)).join('');
+            document.getElementById('selection-tools').style.display = 'flex';
           }
         } else {
           showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
@@ -1387,6 +1396,14 @@
     }
 
     // ── Bulk selection ───────────────────────────────────────────────────────
+
+    function selectAllVisible() {
+      document.querySelectorAll('#searchResults .bulk-check').forEach(cb => {
+        cb.checked = true;
+        if (cb.dataset.slug) selectedSlugs.add(cb.dataset.slug);
+      });
+      updateBulkBar();
+    }
 
     function toggleCardSelect(checkbox) {
       const slug = checkbox.dataset.slug;
