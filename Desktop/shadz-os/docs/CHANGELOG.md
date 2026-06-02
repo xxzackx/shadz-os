@@ -2,6 +2,77 @@
 
 ---
 
+## Phase 3 — Type Conversion v0.1
+
+**Date:** 2026-06-03
+**Commit:** `660ac44`
+**Status:** Complete, deployed, production-verified
+
+**Summary:**
+URL ↔ Media type conversion for SHADZ slugs. A slug's `content_type` can now be changed between `url` and `media` without renaming or replacing the slug. The slug string is the permanent NFC identity; `content_type` controls public behavior.
+
+**Core architecture principle confirmed:**
+- `slug` = permanent NFC identity — never changes
+- `content_type` = current behavior
+- `destination_url` = preserved memory, even when a `url` slug converts to `media`
+
+**Backend changes (`main.py`):**
+- `LinkConvertRequest` Pydantic model — `{ "target_type": "url"|"media", "destination_url": optional }`
+- `POST /admin/link/{slug}/convert` — new endpoint on `admin_router` (Basic Auth protected)
+- `url → media`: sets `content_type = "media"`; preserves `destination_url` exactly as-is
+- `media → url`: requires non-empty `destination_url`; blocked if active `SlugMedia` exists (must detach first); sets `content_type = "url"` and `destination_url`
+- `page` conversion rejected in v0.1
+- `null` / legacy `content_type` conversion rejected
+- No-op response if already target type
+- `scan_count`, `client_name`, `phone_number`, `notes`, `is_archived`, `archived_at` never touched
+
+**Frontend changes (`static/admin.html`):**
+- `convertRow` injected into each result card (after Archive/Restore row):
+  - `url` slug: **Convert to Media** button
+  - `media` slug: **Convert to URL** button
+  - `page` / null: no button shown
+- `convertSlugType(slug, targetType, index)` JS function:
+  - `url → media`: confirm dialog with clear NFC URL / destination preservation note
+  - `media → url`: `prompt()` for required destination URL; validates non-empty
+  - On success: `searchSlugInfo()` refresh — card fully re-renders with new type state
+  - Backend error messages (e.g. active media block) surfaced inline via `showMsg`
+
+**Conversion rules:**
+
+| Conversion | Precondition | Result |
+|---|---|---|
+| `url → media` | Any active `url` slug | `content_type = "media"`, `destination_url` preserved |
+| `media → url` | Active media must be detached first | `content_type = "url"`, new `destination_url` set |
+| Either direction | `page` type | Rejected |
+| Either direction | `null` content_type | Rejected |
+| Archived slug | No restriction | Conversion allowed; archive status unchanged |
+
+**Unchanged (confirmed):**
+- Media attach endpoint: still enforces `content_type == "media"` — no guard was loosened
+- Public redirect route: still branches on `content_type`, not slug prefix
+- Slug naming system: no slug is renamed or regenerated
+- No database migration: `content_type` column already existed and is writable
+- All existing systems: Link Lifecycle Control, Media Engine, Storage Manager, Archive/Restore, Bulk Archive/Restore, Select All/Clear Selection, expired public page, Basic Auth — all working
+
+**Production deploy:**
+- VPS pulled `660ac44` via `git pull origin master` (fast-forward from `0974650`)
+- `shadz.service` restarted; confirmed `active (running)`
+- GET-based checks: `/` → 200, `/admin` → 401, `/health` → 200 `{"status":"ok"}`
+- Browser live tests passed: URL→Media conversion, Media→URL conversion, active-media block confirmed, guard rejections confirmed
+
+**Note — VPS DB backups (intentionally uncommitted):**
+- `shadz.db.backup-before-logging-v03`
+- `shadz.db.bak-phase2-20260531-103517`
+
+**Touched:** `main.py`, `static/admin.html`
+**Database:** untouched (no migration)
+**Schema:** untouched
+**Nginx:** untouched
+**Auth:** untouched
+**Media Engine:** untouched
+
+---
+
 ## Patch 5.2 — Media Destination Row Fix
 
 **Date:** 2026-06-01

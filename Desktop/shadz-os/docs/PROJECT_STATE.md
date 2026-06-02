@@ -92,8 +92,9 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 - Upload media assets to R2
 - Attach / detach media assets to media slugs
 - Storage Manager (browse all assets)
+- Convert URL ↔ Media type — Phase 3 v0.1
 
-**Admin UI version:** Patch 5.2 — Media Destination Row Fix (`b388288`, deployed 2026-06-01)
+**Admin UI version:** Phase 3 v0.1 — Type Conversion (`660ac44`, deployed 2026-06-03)
 
 ---
 
@@ -214,6 +215,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Bulk Archive / Bulk Restore (Patch 5) — complete
 - Select All / Clear Selection (Patch 5.1) — complete
 - Media Destination Row Fix (Patch 5.2, `b388288`, deployed 2026-06-01) — Admin result cards now show Destination row only for `url` and `page` slugs, not `media` slugs
+- Type Conversion v0.1 (Phase 3, `660ac44`, deployed 2026-06-03) — URL ↔ Media conversion live; slug identity permanent, content_type controls behavior
 
 ### Active slug type policy
 
@@ -221,10 +223,20 @@ This section exists to give Claude Code a compressed snapshot of current project
 - `url` — behavior controlled by `destination_url`; admin shows Destination row with View Full / Open ↗
 - `media` — behavior controlled by active `SlugMedia` / `MediaAsset` attachment; admin hides Destination row entirely
 - `page` — reserved for future SHADZ-hosted internal landing page / mini site / Page Engine; until Page Engine exists, `page` temporarily keeps Destination row behavior
+- **`slug` = permanent NFC identity; `content_type` = current behavior; `destination_url` = preserved even when slug converts to media**
+
+### Type Conversion rules (v0.1)
+
+- `url → media`: allowed; `destination_url` preserved; no media auto-attached; public shows media-not-ready until media attached
+- `media → url`: requires `destination_url`; blocked if active `SlugMedia` exists (must detach first); public redirects on success
+- `page` conversion: rejected in v0.1
+- `null` / legacy `content_type`: conversion rejected
+- Media attach endpoint guard unchanged: only `content_type == "media"` slugs can attach media
+- Public redirect route: branches on `content_type`, not slug prefix — slug string never changes
 
 ### Not yet implemented
 
-- Type Conversion (URL ↔ Media slug conversion) — not started
+- Type Conversion v0.2 — page conversion, extended conversion rules (not started)
 - Analytics / Scan Tracking Chart — not started
 - Page Engine — not started
 - Proper UI login/logout system — deferred; Basic Auth popup is accepted for now
@@ -234,6 +246,6 @@ This section exists to give Claude Code a compressed snapshot of current project
 
 - Future work must be explicitly prompted per session
 - Do not infer or start roadmap tasks from this document
-- Do not implement Type Conversion, Analytics, Page Engine, login/logout, or any other future feature unless the current prompt explicitly asks for it
+- Do not implement Analytics, Page Engine, login/logout, or any other future feature unless the current prompt explicitly asks for it
 - Do not modify `main.py`, database schema, Nginx, or auth unless the task explicitly requires it
 - Always verify `/`, `/admin` (→ 401), `/health` (→ 200) after any deploy using GET-based curl only
