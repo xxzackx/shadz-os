@@ -41,7 +41,7 @@ URL ↔ Media type conversion for SHADZ slugs. A slug's `content_type` can now b
 
 | Conversion | Precondition | Result |
 |---|---|---|
-| `url → media` | Any active `url` slug | `content_type = "media"`, `destination_url` preserved |
+| `url → media` | Any `url` slug | `content_type = "media"`, `destination_url` preserved |
 | `media → url` | Active media must be detached first | `content_type = "url"`, new `destination_url` set |
 | Either direction | `page` type | Rejected |
 | Either direction | `null` content_type | Rejected |
