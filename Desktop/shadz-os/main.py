@@ -598,6 +598,16 @@ class BulkSlugRequest(BaseModel):
     slugs: list[str]
 
 
+class LinkConvertRequest(BaseModel):
+    """Body for POST /admin/link/{slug}/convert — URL <-> Media type conversion.
+
+    target_type must be "url" or "media".
+    destination_url is required (and must be non-empty) when target_type == "url".
+    """
+    target_type: str
+    destination_url: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Public routes
 # ---------------------------------------------------------------------------
@@ -907,6 +917,94 @@ def restore_link(slug: str, db: Session = Depends(get_db)):
     link.updated_at  = datetime.now(timezone.utc)
     db.commit()
     return {"success": True, "slug": slug, "is_archived": False, "message": "Link restored"}
+
+
+@admin_router.post("/link/{slug}/convert")
+def convert_link_type(slug: str, payload: LinkConvertRequest, db: Session = Depends(get_db)):
+    """Convert a slug between url and media content types.
+
+    Rules:
+    - target_type must be "url" or "media" — "page" is rejected.
+    - Slugs with null or "page" content_type are rejected.
+    - url -> media: preserves destination_url; no media is auto-attached.
+    - media -> url: requires destination_url; rejects if active media is attached.
+    - archive status, scan_count, and client fields are never touched.
+    """
+    _CONVERTIBLE = frozenset({"url", "media"})
+
+    if payload.target_type not in _CONVERTIBLE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid target_type '{payload.target_type}'. Must be 'url' or 'media'.",
+        )
+
+    link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
+    if not link:
+        raise HTTPException(status_code=404, detail=f"Slug '{slug}' not found")
+
+    if link.content_type is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Slug has no content_type set. Set it explicitly before converting.",
+        )
+    if link.content_type not in _CONVERTIBLE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Slug content_type '{link.content_type}' cannot be converted in v0.1.",
+        )
+
+    # No-op: already the target type
+    if link.content_type == payload.target_type:
+        return {
+            "success": True,
+            "slug": link.slug,
+            "content_type": link.content_type,
+            "destination_url": link.destination_url,
+            "message": f"Slug is already '{payload.target_type}' — no change.",
+        }
+
+    # ── media -> url ───────────────────────────────────────────────────────────
+    if payload.target_type == "url":
+        if not payload.destination_url or not payload.destination_url.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="destination_url is required when converting to url.",
+            )
+        active_sm = (
+            db.query(models.SlugMedia)
+              .filter(models.SlugMedia.slug == slug, models.SlugMedia.is_active == True)
+              .first()
+        )
+        if active_sm:
+            raise HTTPException(
+                status_code=400,
+                detail="Detach active media before converting this slug to URL.",
+            )
+        link.content_type = "url"
+        link.destination_url = payload.destination_url.strip()
+        link.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(link)
+        return {
+            "success": True,
+            "slug": link.slug,
+            "content_type": link.content_type,
+            "destination_url": link.destination_url,
+            "message": "Slug converted to url.",
+        }
+
+    # ── url -> media ───────────────────────────────────────────────────────────
+    link.content_type = "media"
+    link.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(link)
+    return {
+        "success": True,
+        "slug": link.slug,
+        "content_type": link.content_type,
+        "destination_url": link.destination_url,
+        "message": "Slug converted to media.",
+    }
 
 
 @admin_router.post("/links/bulk-archive")

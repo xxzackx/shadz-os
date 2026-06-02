@@ -982,6 +982,19 @@
           ${statusBadge}${lifecycleBtn}
         </div>`;
 
+      let convertRow = '';
+      if (r.content_type === 'url') {
+        convertRow = `
+          <div class="edit-toggle-row">
+            <button class="ghost-btn sm" onclick="convertSlugType('${escVal(r.slug)}', 'media', ${index})">Convert to Media</button>
+          </div>`;
+      } else if (r.content_type === 'media') {
+        convertRow = `
+          <div class="edit-toggle-row">
+            <button class="ghost-btn sm" onclick="convertSlugType('${escVal(r.slug)}', 'url', ${index})">Convert to URL</button>
+          </div>`;
+      }
+
       const selectRow = `
         <div class="stats-row">
           <span class="stats-label">Select</span>
@@ -989,7 +1002,7 @@
                  onchange="toggleCardSelect(this)" />
         </div>`;
 
-      return `<div class="stats-box"><div class="card-body">${selectRow}${rowsBeforeHtml}${r.content_type !== 'media' ? destinationRowHtml : ''}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${lifecycleRow}${editForm}</div>`;
+      return `<div class="stats-box"><div class="card-body">${selectRow}${rowsBeforeHtml}${r.content_type !== 'media' ? destinationRowHtml : ''}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${lifecycleRow}${convertRow}${editForm}</div>`;
     }
 
     function toggleEdit(index) {
@@ -1498,6 +1511,52 @@
       } finally {
         archiveBtn.disabled = false;
         restoreBtn.disabled = false;
+      }
+    }
+
+    // ── Type Conversion ─────────────────────────────────────────────────────────
+
+    async function convertSlugType(slug, targetType, index) {
+      let destUrl = null;
+
+      if (targetType === 'media') {
+        const confirmed = confirm(
+          `Convert /${slug} to Media?\n\n` +
+          `The NFC URL will stay the same. Existing destination URL will be preserved ` +
+          `but inactive while this slug is Media type.`
+        );
+        if (!confirmed) return;
+      } else if (targetType === 'url') {
+        destUrl = prompt(`Convert /${slug} to URL.\n\nEnter the new destination URL:`);
+        if (destUrl === null) return;          // user cancelled
+        destUrl = destUrl.trim();
+        if (!destUrl) {
+          showMsg('s-msg', 'error', 'Destination URL is required when converting to URL.');
+          return;
+        }
+      } else {
+        return;
+      }
+
+      const body = { target_type: targetType };
+      if (destUrl) body.destination_url = destUrl;
+
+      try {
+        const res  = await fetch(`/admin/link/${encodeURIComponent(slug)}/convert`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showMsg('s-msg', 'success', data.message || `Converted /${slug} to ${targetType}.`);
+          await searchSlugInfo();
+        } else {
+          showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('s-msg', 'error', 'Network error — is the server running?');
       }
     }
 
