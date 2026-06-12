@@ -5,7 +5,8 @@
 ## Phase B — Admin Create Validation
 
 **Date:** 2026-06-13
-**Status:** Complete, not yet deployed
+**Commit:** `0268da1`
+**Status:** Complete, deployed, production-verified
 
 **Summary:**
 Phone number is now required on all admin create and upsert flows. Backend trims and validates before saving. Frontend blocks submission before the request is sent.
@@ -27,6 +28,19 @@ Phone number is now required on all admin create and upsert flows. Backend trims
 - Redirect engine, media engine, page engine, scan tracking: untouched
 - Nginx, shadz.service, Cloudflare/R2: untouched
 - All existing admin capabilities: archive/restore, bulk archive/restore, select all/clear, type conversion, storage manager, media attach/detach — all untouched
+
+**Production deploy:**
+- User manually pulled `0268da1` on VPS via `git pull origin master`
+- `shadz.service` restarted (`main.py` changed)
+- Local health check: `http://127.0.0.1:8000/health` → `200` `{"status":"ok"}`
+- Public health check: `https://shadz.io/health` → `200` `{"status":"ok"}`
+- Admin unauthenticated: `https://shadz.io/admin` → `401`
+- Browser live tests passed:
+  - Create link with blank phone blocked ✓
+  - Create link with leading/trailing spaces saves trimmed phone ✓
+  - Save Info with blank phone blocked ✓
+  - Save Info with leading/trailing spaces saves trimmed phone ✓
+  - Existing public slug behavior unchanged ✓
 
 **Pending — Phase C:**
 - CSV export function for admin client information recovery/search fallback
