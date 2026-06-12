@@ -520,7 +520,7 @@
       <input type="text" id="c-name" placeholder="John Smith" autocomplete="off" />
 
       <label for="c-phone">Phone Number</label>
-      <input type="tel" id="c-phone" placeholder="+85512345678" autocomplete="off" />
+      <input type="tel" id="c-phone" placeholder="+85512345678" autocomplete="off" required />
 
       <label for="c-notes">Notes</label>
       <input type="text" id="c-notes" placeholder="Black keychain, first order" autocomplete="off" />
@@ -768,6 +768,11 @@
       const clientName = document.getElementById('c-name').value.trim();
       const phone      = document.getElementById('c-phone').value.trim();
       const notes      = document.getElementById('c-notes').value.trim();
+
+      if (!phone) {
+        showMsg('c-msg', 'error', 'Phone number is required.');
+        return;
+      }
 
       btn.disabled = true;
       btn.textContent = 'Creating…';
@@ -1023,6 +1028,13 @@
       const msgEl = document.getElementById(`ef-msg-${index}`);
       const form  = document.getElementById(`editForm-${index}`);
       const btn   = form.querySelector('.action-btn');
+
+      if (!phone) {
+        msgEl.textContent   = 'Phone number is required.';
+        msgEl.className     = 'msg error';
+        msgEl.style.display = 'block';
+        return;
+      }
 
       // Clear previous message
       msgEl.style.display = 'none';

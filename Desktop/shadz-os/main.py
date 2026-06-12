@@ -765,12 +765,18 @@ def create_link(payload: LinkCreate, db: Session = Depends(get_db)):
             detail="destination_url is required for url content_type",
         )
 
+    if payload.phone_number is None:
+        raise HTTPException(status_code=400, detail="Phone number is required")
+    phone = payload.phone_number.strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="Phone number cannot be blank")
+
     link = models.RedirectLink(
         slug=slug,
         destination_url=payload.destination_url,
         content_type=payload.content_type,
         client_name=payload.client_name,
-        phone_number=payload.phone_number,
+        phone_number=phone,
         notes=payload.notes,
     )
     db.add(link)
@@ -821,8 +827,12 @@ def upsert_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db)):
             link.content_type = payload.content_type
         if payload.client_name is not None:
             link.client_name = payload.client_name
-        if payload.phone_number is not None:
-            link.phone_number = payload.phone_number
+        if payload.phone_number is None:
+            raise HTTPException(status_code=400, detail="Phone number is required")
+        phone = payload.phone_number.strip()
+        if not phone:
+            raise HTTPException(status_code=400, detail="Phone number cannot be blank")
+        link.phone_number = phone
         if payload.notes is not None:
             link.notes = payload.notes
         link.updated_at = datetime.now(timezone.utc)
@@ -847,6 +857,12 @@ def upsert_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db)):
             detail="destination_url is required when creating a new slug",
         )
 
+    if payload.phone_number is None:
+        raise HTTPException(status_code=400, detail="Phone number is required")
+    phone = payload.phone_number.strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="Phone number cannot be blank")
+
     # Infer content_type from slug prefix unless caller supplied one explicitly.
     # For any slug that passes is_valid_slug(), infer_content_type_from_slug()
     # always returns a non-None value — the guard below is a safety net.
@@ -862,7 +878,7 @@ def upsert_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db)):
         destination_url=payload.destination_url,
         content_type=resolved_content_type,
         client_name=payload.client_name,
-        phone_number=payload.phone_number,
+        phone_number=phone,
         notes=payload.notes,
     )
     db.add(link)

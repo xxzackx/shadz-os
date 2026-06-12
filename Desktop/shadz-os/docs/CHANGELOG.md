@@ -2,6 +2,47 @@
 
 ---
 
+## Phase B — Admin Create Validation
+
+**Date:** 2026-06-13
+**Status:** Complete, not yet deployed
+
+**Summary:**
+Phone number is now required on all admin create and upsert flows. Backend trims and validates before saving. Frontend blocks submission before the request is sent.
+
+**Backend changes (`main.py`):**
+- `POST /admin/link` (`create_link`): `phone_number` is now required; `None` → 400 "Phone number is required"; stripped value empty → 400 "Phone number cannot be blank"; trimmed value saved
+- `POST /admin/link/{slug}` (`upsert_link`) — update path: same validation replaces the old optional `if phone_number is not None` guard
+- `POST /admin/link/{slug}` (`upsert_link`) — new-slug creation path: same validation added before object construction
+- All three paths store the trimmed value only
+
+**Frontend changes (`static/admin.html`):**
+- Create form phone `<input>`: added `required` attribute
+- `createLink()`: explicit `if (!phone)` guard after trim — shows "Phone number is required." and returns before fetch
+- `saveInfo()`: explicit `if (!phone)` guard after trim — shows "Phone number is required." in card error area and returns before fetch
+
+**Unchanged (confirmed):**
+- Database schema: untouched — no migration, no column added or removed
+- Existing Phase A rescued data: not modified, not normalised, not deleted
+- Redirect engine, media engine, page engine, scan tracking: untouched
+- Nginx, shadz.service, Cloudflare/R2: untouched
+- All existing admin capabilities: archive/restore, bulk archive/restore, select all/clear, type conversion, storage manager, media attach/detach — all untouched
+
+**Pending — Phase C:**
+- CSV export function for admin client information recovery/search fallback
+- Export button to be placed at the top of the admin panel
+- CSV must include enough client/link information for manual recovery when admin search cannot find client information
+- Not started
+
+**Touched:** `main.py`, `static/admin.html`
+**Database:** untouched
+**Schema:** untouched
+**Nginx:** untouched
+**Auth:** untouched
+**Media Engine:** untouched
+
+---
+
 ## Phase 3 — Type Conversion v0.1
 
 **Date:** 2026-06-03

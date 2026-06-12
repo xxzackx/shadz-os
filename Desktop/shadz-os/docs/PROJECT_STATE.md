@@ -216,6 +216,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Select All / Clear Selection (Patch 5.1) — complete
 - Media Destination Row Fix (Patch 5.2, `b388288`, deployed 2026-06-01) — Admin result cards now show Destination row only for `url` and `page` slugs, not `media` slugs
 - Type Conversion v0.1 (Phase 3, `660ac44`, deployed 2026-06-03) — URL ↔ Media conversion live; slug identity permanent, content_type controls behavior
+- Admin Create Validation (Phase B, 2026-06-13, not yet deployed) — phone_number required on create/upsert; trimmed before save; backend rejects missing/blank; UI shows error before submit
 
 ### Active slug type policy
 
@@ -236,6 +237,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 
 ### Not yet implemented
 
+- Phase C — CSV Export — admin client information recovery/search fallback; export button at top of admin panel; CSV includes enough client/link data for manual recovery when search cannot find client info — not started
 - Type Conversion v0.2 — page conversion, extended conversion rules (not started)
 - Analytics / Scan Tracking Chart — not started
 - Page Engine — not started
