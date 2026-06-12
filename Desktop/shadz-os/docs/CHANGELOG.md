@@ -2,6 +2,60 @@
 
 ---
 
+## Phase C — Admin CSV Export
+
+**Date:** 2026-06-13
+**Commit:** `45d2656`
+**Status:** Complete, deployed, production-verified
+
+**Summary:**
+Admin CSV export for client and link data recovery. A protected `GET /admin/links/export.csv` endpoint exports all link/client records as a UTF-8 CSV attachment. An Export CSV button is placed near the top of the Admin Panel for one-click download. Designed as a recovery fallback when admin search cannot locate client information.
+
+**Backend changes (`main.py`):**
+- Added `import csv`, `import io`, `StreamingResponse` to imports
+- `GET /admin/links/export.csv` added to `admin_router` — inherits existing Basic Auth dependency; no separate auth added
+- Default export: all records including archived (`include_archived=True`)
+- Optional `?include_archived=false` — excludes archived slugs
+- Optional `?q=term` — partial LIKE match across `slug`, `phone_number`, `client_name`, `destination_url`
+- Active media asset metadata resolved via batched join (not N+1)
+- CSV written via `csv.QUOTE_ALL` — commas, quotes, newlines fully escaped
+- `Content-Disposition: attachment; filename="shadz_links_export_YYYYMMDD_HHMMSS.csv"`
+- Response: `StreamingResponse`, `text/csv; charset=utf-8`
+
+**CSV columns:**
+`slug`, `content_type`, `destination_url`, `client_name`, `phone_number`, `is_archived`, `archived_at`, `scan_count`, `created_at`, `updated_at`, `active_media_asset_id`, `media_original_filename`, `media_mime_type`, `media_file_size_bytes`, `media_storage_key`
+
+No credentials, API keys, R2 secrets, or environment variables are included. `media_storage_key` is the bucket object path only.
+
+**Frontend changes (`static/admin.html`):**
+- Export CSV button added below the Search button in `statsSection`
+- Plain `<a href="/admin/links/export.csv" download class="ghost-btn">` — browser handles Basic Auth session and triggers native file download
+- No JS required; no redesign; existing style preserved
+
+**Unchanged (confirmed):**
+- Database schema: untouched — no migration, no column added or removed
+- All existing admin capabilities: archive/restore, bulk archive/restore, select all/clear, type conversion, storage manager, media attach/detach — all untouched
+- Redirect engine, media engine, scan tracking: untouched
+- Nginx, shadz.service, Cloudflare/R2: untouched
+- Auth behavior: untouched — Basic Auth dependency unchanged
+
+**Production deploy:**
+- User manually pulled `45d2656` on VPS via `git pull origin master`
+- `shadz.service` restarted (`main.py` changed)
+- `https://shadz.io/health` → `200` `{"status":"ok"}`
+- `https://shadz.io/admin` unauthenticated → `401`
+- `https://shadz.io/admin/links/export.csv` with auth → `200`, `text/csv; charset=utf-8`, `Content-Disposition` attachment confirmed
+- CSV header and data rows visible; archived records included by default; active media asset fields export correctly
+
+**Touched:** `main.py`, `static/admin.html`
+**Database:** untouched
+**Schema:** untouched
+**Nginx:** untouched
+**Auth:** untouched
+**Media Engine:** untouched
+
+---
+
 ## Phase B — Admin Create Validation
 
 **Date:** 2026-06-13

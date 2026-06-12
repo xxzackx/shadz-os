@@ -93,8 +93,9 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 - Attach / detach media assets to media slugs
 - Storage Manager (browse all assets)
 - Convert URL ↔ Media type — Phase 3 v0.1
+- Export CSV — download all link/client records as CSV — Phase C
 
-**Admin UI version:** Phase 3 v0.1 — Type Conversion (`660ac44`, deployed 2026-06-03)
+**Admin UI version:** Phase C — CSV Export (`45d2656`, deployed 2026-06-13)
 
 ---
 
@@ -217,6 +218,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Media Destination Row Fix (Patch 5.2, `b388288`, deployed 2026-06-01) — Admin result cards now show Destination row only for `url` and `page` slugs, not `media` slugs
 - Type Conversion v0.1 (Phase 3, `660ac44`, deployed 2026-06-03) — URL ↔ Media conversion live; slug identity permanent, content_type controls behavior
 - Admin Create Validation (Phase B, `0268da1`, deployed 2026-06-13) — phone_number required on create/upsert; trimmed before save; backend rejects missing/blank; UI shows error before submit
+- Admin CSV Export (Phase C, `45d2656`, deployed 2026-06-13) — protected GET /admin/links/export.csv; default exports all records including archived; optional include_archived and q filters; CSV includes slug/client/link/media/admin review fields; Export CSV button near top of admin panel; no schema migration
 
 ### Active slug type policy
 
@@ -237,7 +239,6 @@ This section exists to give Claude Code a compressed snapshot of current project
 
 ### Not yet implemented
 
-- Phase C — CSV Export — admin client information recovery/search fallback; export button at top of admin panel; CSV includes enough client/link data for manual recovery when search cannot find client info — not started
 - Type Conversion v0.2 — page conversion, extended conversion rules (not started)
 - Analytics / Scan Tracking Chart — not started
 - Page Engine — not started
