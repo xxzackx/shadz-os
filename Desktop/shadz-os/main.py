@@ -1,3 +1,5 @@
+import csv
+import io
 import os
 import re
 import time
@@ -12,7 +14,7 @@ from botocore.config import Config as BotocoreConfig
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Depends, Security, Request, APIRouter, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials, APIKeyHeader
 from pydantic import BaseModel
 from sqlalchemy import text, func, or_
@@ -1169,6 +1171,105 @@ def search_links(
             is_archived=link.is_archived is True,
         ))
     return SearchResponse(results=results)
+
+
+@admin_router.get("/links/export.csv")
+def export_links_csv(
+    include_archived: bool = Query(True, description="Include archived slugs (default: true — full export)"),
+    q: str = Query(None, description="Optional search term — matches slug, phone_number, client_name, destination_url"),
+    db: Session = Depends(get_db),
+):
+    """Export all link/client records as a UTF-8 CSV attachment.
+
+    Default: all records including archived (include_archived=true).
+    Optional q= filters by slug, phone_number, client_name, or destination_url (partial LIKE match).
+    Protected by the same Basic Auth dependency as all /admin/* routes.
+    """
+    query = db.query(models.RedirectLink)
+
+    if not include_archived:
+        query = query.filter(or_(
+            models.RedirectLink.is_archived == False,
+            models.RedirectLink.is_archived.is_(None),
+        ))
+
+    if q:
+        term = f"%{q}%"
+        query = query.filter(or_(
+            models.RedirectLink.slug.like(term),
+            models.RedirectLink.phone_number.like(term),
+            models.RedirectLink.client_name.like(term),
+            models.RedirectLink.destination_url.like(term),
+        ))
+
+    links = query.order_by(models.RedirectLink.created_at.desc()).all()
+
+    # Build a lookup: slug → active MediaAsset (if any)
+    active_media_map: dict = {}
+    media_slugs = [lnk.slug for lnk in links if lnk.content_type == "media"]
+    if media_slugs:
+        rows = (
+            db.query(models.SlugMedia, models.MediaAsset)
+            .join(models.MediaAsset, models.SlugMedia.media_asset_id == models.MediaAsset.id)
+            .filter(
+                models.SlugMedia.slug.in_(media_slugs),
+                models.SlugMedia.is_active == True,
+                models.MediaAsset.is_deleted == False,
+            )
+            .all()
+        )
+        for sm, asset in rows:
+            active_media_map[sm.slug] = asset
+
+    buf = io.StringIO()
+    writer = csv.writer(buf, quoting=csv.QUOTE_ALL)
+
+    writer.writerow([
+        "slug",
+        "content_type",
+        "destination_url",
+        "client_name",
+        "phone_number",
+        "is_archived",
+        "archived_at",
+        "scan_count",
+        "created_at",
+        "updated_at",
+        "active_media_asset_id",
+        "media_original_filename",
+        "media_mime_type",
+        "media_file_size_bytes",
+        "media_storage_key",
+    ])
+
+    for link in links:
+        asset = active_media_map.get(link.slug)
+        writer.writerow([
+            link.slug,
+            link.content_type or "",
+            link.destination_url,
+            link.client_name or "",
+            link.phone_number or "",
+            "true" if link.is_archived is True else "false",
+            link.archived_at.isoformat() if link.archived_at else "",
+            link.scan_count,
+            link.created_at.isoformat() if link.created_at else "",
+            link.updated_at.isoformat() if link.updated_at else "",
+            asset.id if asset else "",
+            asset.original_filename if asset else "",
+            asset.mime_type if asset else "",
+            asset.file_size if asset else "",
+            asset.storage_key if asset else "",
+        ])
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    filename = f"shadz_links_export_{timestamp}.csv"
+
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ── Media Engine — admin routes ─────────────────────────────────────────────
