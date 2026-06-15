@@ -2,6 +2,70 @@
 
 ---
 
+## Admin Hotfix — Redirect Update Phone Validation Regression
+
+**Date:** 2026-06-16
+**Commit:** `edb2c2c`
+**Status:** Complete, deployed, production-verified
+
+**Summary:**
+Hotfix for a regression introduced in Phase B. The `upsert_link` backend endpoint incorrectly required `phone_number` in the existing-link update branch, causing the Admin Update Redirect function to always return "Phone number is required" even though the frontend correctly sends only `destination_url`.
+
+**Root cause:**
+In `main.py`, the update-existing-link branch contained:
+```python
+if payload.phone_number is None:
+    raise HTTPException(status_code=400, detail="Phone number is required")
+```
+This unconditionally blocked any update that did not include a phone number — including legitimate redirect-only updates.
+
+**Fix:**
+Flipped the guard to only validate and write `phone_number` when it is explicitly provided by the caller:
+```python
+if payload.phone_number is not None:
+    phone = payload.phone_number.strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="Phone number cannot be blank")
+    link.phone_number = phone
+```
+When `phone_number` is omitted, the existing value is preserved. Blank phone still returns an error.
+
+**Validation scope (post-fix):**
+- Create new link: `phone_number` required — unchanged
+- Update Redirect: `phone_number` not required — fixed
+- Check Slug Info, Archive/Restore, Edit Info, Media/Page update: phone not required — unchanged
+
+**Backend changes (`main.py`):**
+- `upsert_link` update-existing branch: 6 lines replaced with 5 lines (net -1 line)
+
+**Frontend changes:**
+- None — `static/admin.html` was already correct; it sends only `destination_url` for Update Redirect
+
+**Unchanged (confirmed):**
+- Database schema: untouched — no migration
+- Create flow phone validation: untouched — still enforced
+- All other admin functions: archive/restore, bulk ops, CSV export, type conversion, media engine — untouched
+- Nginx, shadz.service, Cloudflare/R2: untouched
+- Auth behavior: untouched
+
+**Production deploy:**
+- `git pull origin master` on VPS — `edb2c2c` pulled successfully
+- `shadz.service` restarted
+- `https://shadz.io/health` → `200` `{"status":"ok"}`
+- `https://shadz.io/admin` unauthenticated → `401`
+- Admin Update Redirect with slug + URL only → success (no phone required)
+- Admin Create without phone → still rejected "Phone number is required"
+- All existing admin functions confirmed working
+
+**Touched:** `main.py` only
+**Database:** untouched
+**Schema:** untouched
+**Nginx:** untouched
+**Auth:** untouched
+**Frontend:** untouched
+
+---
+
 ## Phase C — Admin CSV Export
 
 **Date:** 2026-06-13

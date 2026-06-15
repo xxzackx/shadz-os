@@ -95,7 +95,7 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 - Convert URL ↔ Media type — Phase 3 v0.1
 - Export CSV — download all link/client records as CSV — Phase C
 
-**Admin UI version:** Phase C — CSV Export (`45d2656`, deployed 2026-06-13)
+**Admin UI version:** Hotfix `edb2c2c` — Redirect update phone validation fix (deployed 2026-06-16), on top of Phase C CSV Export (`45d2656`, deployed 2026-06-13)
 
 ---
 
@@ -217,8 +217,9 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Select All / Clear Selection (Patch 5.1) — complete
 - Media Destination Row Fix (Patch 5.2, `b388288`, deployed 2026-06-01) — Admin result cards now show Destination row only for `url` and `page` slugs, not `media` slugs
 - Type Conversion v0.1 (Phase 3, `660ac44`, deployed 2026-06-03) — URL ↔ Media conversion live; slug identity permanent, content_type controls behavior
-- Admin Create Validation (Phase B, `0268da1`, deployed 2026-06-13) — phone_number required on create/upsert; trimmed before save; backend rejects missing/blank; UI shows error before submit
+- Admin Create Validation (Phase B, `0268da1`, deployed 2026-06-13) — phone_number required when creating new links/client records; trimmed before save; backend rejects missing/blank on create; existing-link redirect updates do not require phone after hotfix `edb2c2c`
 - Admin CSV Export (Phase C, `45d2656`, deployed 2026-06-13) — protected GET /admin/links/export.csv; default exports all records including archived; optional include_archived and q filters; CSV includes slug/client/link/media/admin review fields; Export CSV button near top of admin panel; no schema migration
+- Admin Hotfix — Redirect Update Phone Regression (`edb2c2c`, deployed 2026-06-16) — `upsert_link` update branch no longer requires phone_number; phone preserved if not provided; create flow still requires phone; no frontend change; no schema migration
 
 ### Active slug type policy
 
