@@ -829,12 +829,11 @@ def upsert_link(slug: str, payload: LinkUpdate, db: Session = Depends(get_db)):
             link.content_type = payload.content_type
         if payload.client_name is not None:
             link.client_name = payload.client_name
-        if payload.phone_number is None:
-            raise HTTPException(status_code=400, detail="Phone number is required")
-        phone = payload.phone_number.strip()
-        if not phone:
-            raise HTTPException(status_code=400, detail="Phone number cannot be blank")
-        link.phone_number = phone
+        if payload.phone_number is not None:
+            phone = payload.phone_number.strip()
+            if not phone:
+                raise HTTPException(status_code=400, detail="Phone number cannot be blank")
+            link.phone_number = phone
         if payload.notes is not None:
             link.notes = payload.notes
         link.updated_at = datetime.now(timezone.utc)
