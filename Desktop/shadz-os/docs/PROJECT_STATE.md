@@ -89,13 +89,13 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
   - Select All Visible result cards — Patch 5.1
   - Clear Selection — Patch 5.1
 - Edit client info (name, phone, notes)
-- Upload media assets to R2
+- Upload media assets to R2 (optional display name supported — Phase 1)
 - Attach / detach media assets to media slugs
-- Storage Manager (browse all assets)
+- Storage Manager (browse all assets; rename / add display name — Phase 1B)
 - Convert URL ↔ Media type — Phase 3 v0.1
 - Export CSV — download all link/client records as CSV — Phase C
 
-**Admin UI version:** Hotfix `edb2c2c` — Redirect update phone validation fix (deployed 2026-06-16), on top of Phase C CSV Export (`45d2656`, deployed 2026-06-13)
+**Admin UI version:** Phase 1B `1d11005` — Media asset rename (deployed 2026-06-19), on top of Phase 1 display names (`4476142`), Hotfix `edb2c2c`, Phase C CSV Export (`45d2656`)
 
 ---
 
@@ -122,6 +122,21 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 
 One row per uploaded R2 file. Soft-deleted via `is_deleted=True`. Never auto-removed from R2.
 
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER | PK |
+| `media_type` | VARCHAR | video / image / audio / gif |
+| `storage_provider` | VARCHAR | `r2` |
+| `storage_key` | VARCHAR | path inside R2 bucket |
+| `public_url` | VARCHAR | `media.shadz.io/...` |
+| `original_filename` | VARCHAR | original upload name — never changed |
+| `mime_type` | VARCHAR | |
+| `file_size` | BIGINT | bytes |
+| `display_name` | VARCHAR | nullable; human-readable label (added Phase 1) |
+| `is_deleted` | BOOLEAN | soft-delete flag |
+| `created_at` | DATETIME | |
+| `deleted_at` | DATETIME | nullable |
+
 ### `slug_media`
 
 Join between `redirect_links.slug` and `media_assets.id`. History preserved; only one row per slug has `is_active=True`.
@@ -135,10 +150,13 @@ Legacy NFC system. Unchanged since v0.1.
 ## Media System
 
 - Upload flow: Admin → presigned R2 PUT → confirm to FastAPI → `MediaAsset` row created
+- Optional `display_name` saved on upload; blank/whitespace stored as NULL (Phase 1)
+- Rename flow: Admin can Add Name / Edit Name on any asset in Storage Manager via `PATCH /admin/media/assets/{id}` (Phase 1B)
 - Attach flow: Admin links `MediaAsset` to a `media` slug
 - Render flow: `/{slug}` for media type serves the attached asset
 - Detach: unlinks asset from slug; slug shows "Media not ready yet"
 - Delete safety: deleting a `MediaAsset` still linked to active slugs is blocked
+- `_run_migrations()` covers both `redirect_links` and `media_assets` tables (Phase 1)
 
 ---
 
@@ -220,6 +238,8 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Admin Create Validation (Phase B, `0268da1`, deployed 2026-06-13) — phone_number required when creating new links/client records; trimmed before save; backend rejects missing/blank on create; existing-link redirect updates do not require phone after hotfix `edb2c2c`
 - Admin CSV Export (Phase C, `45d2656`, deployed 2026-06-13) — protected GET /admin/links/export.csv; default exports all records including archived; optional include_archived and q filters; CSV includes slug/client/link/media/admin review fields; Export CSV button near top of admin panel; no schema migration
 - Admin Hotfix — Redirect Update Phone Regression (`edb2c2c`, deployed 2026-06-16) — `upsert_link` update branch no longer requires phone_number; phone preserved if not provided; create flow still requires phone; no frontend change; no schema migration
+- Page Engine v1 Phase 1 — Media Engine Display Names (`4476142`, deployed 2026-06-19) — nullable `display_name` column added to `media_assets`; safe additive migration; upload form + Storage Manager updated; presign endpoint unchanged; no Page Engine DB tables
+- Page Engine v1 Phase 1B — Media Asset Rename (`1d11005`, deployed 2026-06-19) — `PATCH /admin/media/assets/{id}` endpoint; Storage Manager Add Name / Edit Name action; `_assetMap` pattern prevents XSS via HTML attributes; only `display_name` writable; all other asset fields and R2 object unchanged
 
 ### Active slug type policy
 
@@ -242,7 +262,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 
 - Type Conversion v0.2 — page conversion, extended conversion rules (not started)
 - Analytics / Scan Tracking Chart — not started
-- Page Engine — not started
+- Page Engine v1 Phase 2 — Page Engine DB models, routes, and admin UI (Create/Edit/Attach) — not started; Media Engine preparation (Phase 1/1B) is complete; next phase requires explicit approval
 - Proper UI login/logout system — deferred; Basic Auth popup is accepted for now
 - Role-based admin security — deferred until multi-admin use case arises
 

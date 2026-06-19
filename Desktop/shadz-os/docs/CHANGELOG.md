@@ -2,6 +2,115 @@
 
 ---
 
+## Page Engine v1 Phase 1B — Media Asset Rename
+
+**Date:** 2026-06-19
+**Commit:** `1d11005`
+**Status:** Complete, deployed, production-verified
+
+**Summary:**
+Admin can now rename (or clear) the `display_name` of any existing media asset directly from the Storage Manager. No R2 object, storage key, public URL, or original filename is touched.
+
+**Backend changes (`main.py`):**
+- `MediaAssetUpdateRequest` Pydantic model — `{ "display_name": str | None }`
+- `PATCH /admin/media/assets/{media_asset_id}` — new endpoint on `admin_router` (Basic Auth protected)
+- Only `asset.display_name` is written; all other fields are never touched
+- Blank / whitespace-only `display_name` stored as `NULL` (clears the name)
+- Works on both active and soft-deleted assets
+- Returns `{ success, id, display_name, original_filename }`
+
+**Frontend changes (`static/admin.html`):**
+- `_assetMap` — module-level JS object keyed by asset ID; populated by `loadStorage()` before rendering
+- `renameAsset(assetId)` — reads current `display_name` from `_assetMap[assetId]`; uses `prompt()` pre-filled with current name; blank input clears name
+- `buildAssetCard()` — adds **Add Name** / **Edit Name** button per card; `onclick` passes only integer asset ID (no string data in HTML attributes — XSS-safe)
+- Action row now `space-between`: rename button left, delete button right
+- On success: `showMsg('st-msg', ...)` + `loadStorage()` refresh; Name row appears/disappears/updates correctly
+
+**Security note:**
+Previous draft used `JSON.stringify(display_name)` inside `onclick="..."` — identified as unsafe (double-quote injection, unescaped `<`/`>`/`&`). Fixed by moving all string state into `_assetMap` and passing only the integer ID through the HTML attribute.
+
+**Unchanged (confirmed):**
+- Original filename, storage_key, public_url, media_type, file_size — never touched by PATCH
+- R2 object — never touched
+- Slug / media attachments — unaffected
+- Public `/{slug}` routing — untouched
+- All existing admin capabilities — untouched
+- Database schema — no migration (column exists from Phase 1)
+
+**Production deploy:**
+- VPS pulled `1d11005` via `git pull origin master`
+- `shadz.service` restarted; confirmed `active (running)`
+- `https://shadz.io/health` → `200` `{"status":"ok"}`
+- `https://shadz.io/admin` unauthenticated → `401`
+- Storage Manager: Add Name / Edit Name button present on all asset cards ✓
+- Blank rename clears display_name; Name row disappears on refresh ✓
+- Original filename always visible ✓
+
+**Touched:** `main.py`, `static/admin.html`
+**Database:** untouched (no migration)
+**Schema:** untouched
+**Nginx:** untouched
+**Auth:** untouched
+**R2 / Media Engine upload:** untouched
+
+---
+
+## Page Engine v1 Phase 1 — Media Engine Display Names
+
+**Date:** 2026-06-19
+**Commit:** `4476142`
+**Status:** Complete, deployed, production-verified
+
+**Summary:**
+Added optional human-readable `display_name` to media assets. Allows admin to label assets for recognition and future Page Engine use. All existing uploads and asset records remain valid; blank display_name stored as NULL.
+
+**Schema change:**
+- `media_assets.display_name VARCHAR` — nullable, added via safe `ALTER TABLE ADD COLUMN` in `_run_migrations()`
+- Migration is idempotent (PRAGMA check before ALTER); skips if column already exists
+- `media_assets` block wrapped in `if rows:` guard — safe if table does not exist yet (fresh environment)
+- `_run_migrations()` now covers both `redirect_links` and `media_assets`
+
+**Production DB backup created before deploy:**
+- `shadz.db.backup-before-media-display-name-20260619-094628`
+
+**Backend changes (`main.py`):**
+- `MediaCompleteRequest` — added optional `display_name: str | None = None`
+- `MediaAssetOut` — added `display_name: str | None = None`
+- `complete_upload()` — trims display_name; blank/whitespace stored as `None`
+- `list_media_assets()` — includes `display_name` in response per asset
+- Presigned R2 upload endpoint (`/admin/media/upload-url`) — intentionally unchanged
+
+**Frontend changes (`static/admin.html`):**
+- Upload form: optional **Display Name** input + hint text
+- `display_name` sent only in `/admin/media/complete` payload (not presign step)
+- Input cleared after successful upload
+- Storage Manager `buildAssetCard()`: conditional **Name** row (gold, shown only when `display_name` truthy); **File** row always visible
+
+**Unchanged (confirmed):**
+- Public `/{slug}` routing — untouched
+- Page slug placeholder behavior — untouched
+- All slug type policy — untouched
+- Archive/restore behavior — untouched
+- No Page Engine DB tables created
+
+**Production deploy:**
+- VPS pulled `4476142` via `git pull origin master`
+- `shadz.service` restarted; confirmed `active (running)`
+- `https://shadz.io/health` → `200` `{"status":"ok"}`
+- `https://shadz.io/admin` unauthenticated → `401`
+- DB migration confirmed: `PRAGMA table_info(media_assets)` shows `display_name VARCHAR` column ✓
+- Upload with display_name saves correctly ✓
+- Storage Manager shows Name row + File row ✓
+- Existing assets (display_name NULL) show File row only — no regression ✓
+
+**Touched:** `models.py`, `main.py`, `static/admin.html`
+**SQLite migration:** additive, idempotent, auto-runs at startup
+**Nginx:** untouched
+**Auth:** untouched
+**R2 / presign flow:** untouched
+
+---
+
 ## Admin Hotfix — Redirect Update Phone Validation Regression
 
 **Date:** 2026-06-16
