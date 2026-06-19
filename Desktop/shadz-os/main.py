@@ -606,6 +606,11 @@ class SlugMediaOut(BaseModel):
     media_type:        str
 
 
+class MediaAssetUpdateRequest(BaseModel):
+    """Body for PATCH /admin/media/assets/{asset_id} — update display_name only."""
+    display_name: str | None = None
+
+
 class MediaDetachRequest(BaseModel):
     """Body for POST /admin/media/detach — unlink active media from a slug."""
     slug: str
@@ -1513,6 +1518,35 @@ def get_slug_media_history(slug: str, db: Session = Depends(get_db)):
             media_type=asset.media_type if asset else "",
         ))
     return results
+
+
+@admin_router.patch("/media/assets/{media_asset_id}")
+def update_asset_display_name(
+    media_asset_id: int,
+    payload: MediaAssetUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    """Update the display_name of a MediaAsset.
+
+    Only display_name is writable — original_filename, public_url, storage_key,
+    media_type, and file_size are never touched.
+    Blank / whitespace-only display_name is stored as NULL (clears the name).
+    Works on both active and soft-deleted assets.
+    """
+    asset = db.query(models.MediaAsset).filter(models.MediaAsset.id == media_asset_id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail=f"MediaAsset {media_asset_id} not found")
+
+    display_name = payload.display_name.strip() if payload.display_name else None
+    display_name = display_name or None
+    asset.display_name = display_name
+    db.commit()
+    return {
+        "success": True,
+        "id": asset.id,
+        "display_name": asset.display_name,
+        "original_filename": asset.original_filename,
+    }
 
 
 @admin_router.delete("/media/assets/{media_asset_id}")

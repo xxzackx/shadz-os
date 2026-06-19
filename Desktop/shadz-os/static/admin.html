@@ -721,6 +721,11 @@
 
   <script>
     const GRID_SECTIONS = new Set(['statsSection', 'storageSection']);
+
+    // Keyed by asset id (number). Populated by loadStorage() before rendering.
+    // renameAsset() reads current display_name from here — avoids passing any
+    // string data through inline onclick attributes (XSS-safe).
+    let _assetMap = {};
     const selectedSlugs = new Set();
 
     function show(sectionId) {
@@ -1364,6 +1369,8 @@
           return;
         }
 
+        _assetMap = {};
+        data.forEach(a => { _assetMap[a.id] = a; });
         container.innerHTML = data.map(a => buildAssetCard(a)).join('');
       } catch {
         container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
@@ -1374,6 +1381,7 @@
       const deleted = a.is_deleted
         ? '<span class="badge-deleted">Deleted</span>'
         : `<button class="ghost-btn sm danger" onclick="softDeleteAsset(${a.id})">Delete</button>`;
+      const renameLabel = a.display_name ? 'Edit Name' : 'Add Name';
       return `
         <div class="stats-box" style="display:block">
           <div class="stats-row">
@@ -1410,7 +1418,10 @@
             <span class="stats-label">Created</span>
             <span class="stats-value">${esc(new Date(a.created_at).toLocaleString())}</span>
           </div>
-          <div class="stats-row" style="justify-content:flex-end">${deleted}</div>
+          <div class="stats-row" style="justify-content:space-between;align-items:center">
+            <button class="ghost-btn sm" onclick="renameAsset(${a.id})">${renameLabel}</button>
+            ${deleted}
+          </div>
         </div>`;
     }
 
@@ -1424,6 +1435,38 @@
         const data = await res.json();
         if (res.ok) {
           showMsg('st-msg', 'success', `Asset ${assetId} soft-deleted.`);
+          loadStorage();
+        } else {
+          showMsg('st-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('st-msg', 'error', 'Network error');
+      }
+    }
+
+    async function renameAsset(assetId) {
+      const currentName = (_assetMap[assetId] && _assetMap[assetId].display_name) || '';
+      const input = prompt(
+        `Display name for asset ${assetId}:\n(Leave blank to clear name)`,
+        currentName,
+      );
+      // User cancelled — do nothing
+      if (input === null) return;
+
+      const trimmed = input.trim();
+      try {
+        const res  = await fetch(`/admin/media/assets/${assetId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ display_name: trimmed || null }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          const msg = data.display_name
+            ? `Asset ${assetId} renamed to "${data.display_name}".`
+            : `Asset ${assetId} name cleared.`;
+          showMsg('st-msg', 'success', msg);
           loadStorage();
         } else {
           showMsg('st-msg', 'error', data.detail || `Error ${res.status}`);
