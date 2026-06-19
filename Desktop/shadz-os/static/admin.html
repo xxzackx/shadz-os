@@ -638,6 +638,10 @@
       <label for="mu-file">File</label>
       <input type="file" id="mu-file" accept="video/mp4,video/quicktime,video/webm,image/jpeg,image/png,image/webp,image/gif,audio/mpeg,audio/mp4,audio/wav,audio/x-wav,audio/x-m4a" style="cursor:pointer" />
 
+      <label for="mu-displayName">Display Name <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+      <input type="text" id="mu-displayName" placeholder="e.g. SHADZ product hero image" autocomplete="off" />
+      <div style="font-size:0.68rem;color:var(--text-muted);margin-top:-0.35rem;margin-bottom:0.5rem;letter-spacing:.03em">For admin recognition / future Page Engine use. Original filename is still kept.</div>
+
       <button class="action-btn" id="mu-btn" onclick="uploadMedia()" style="margin-top:0.5rem">Upload to R2</button>
 
       <!-- Progress bar -->
@@ -1276,6 +1280,7 @@
             original_filename: file.name,
             mime_type:         file.type,
             file_size:         file.size,
+            display_name:      document.getElementById('mu-displayName').value.trim() || null,
           }),
         });
         const completeData = await completeRes.json();
@@ -1292,8 +1297,9 @@
         document.getElementById('mu-result').style.display = 'block';
         progressWrap.style.display = 'none';
 
-        // Reset file input
+        // Reset file input and display name
         fileInput.value = '';
+        document.getElementById('mu-displayName').value = '';
 
         const msgEl = document.getElementById('mu-msg');
         msgEl.style.display = 'none';
@@ -1378,6 +1384,10 @@
             <span class="stats-label">Type</span>
             <span class="stats-value">${esc(a.media_type)}</span>
           </div>
+          ${a.display_name ? `<div class="stats-row">
+            <span class="stats-label">Name</span>
+            <span class="stats-value value-overflow" style="color:var(--gold-light)">${esc(a.display_name)}</span>
+          </div>` : ''}
           <div class="stats-row">
             <span class="stats-label">File</span>
             <span class="stats-value value-overflow">${esc(a.original_filename)}</span>

@@ -93,6 +93,7 @@ class MediaAsset(Base):
     original_filename: Mapped[str] = mapped_column(String, nullable=False)
     mime_type: Mapped[str] = mapped_column(String, nullable=False)
     file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)    # bytes
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

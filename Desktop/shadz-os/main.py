@@ -28,16 +28,17 @@ Base.metadata.create_all(bind=engine)
 
 
 def _run_migrations() -> None:
-    """Safe lightweight migration for SQLite.
+    """Safe additive migrations for existing production SQLite tables.
 
     Base.metadata.create_all never adds columns to an existing table, so we
     inspect PRAGMA table_info and ALTER TABLE ADD COLUMN for any column that
     is missing.  Running this multiple times is harmless — it skips columns
-    that already exist.
+    that already exist.  Tables that do not yet exist are skipped entirely
+    (PRAGMA returns an empty list for a non-existent table).
 
-    Only touches redirect_links.  No Alembic required.
+    Covers: redirect_links, media_assets.  No Alembic required.
     """
-    new_cols = {
+    redirect_links_cols = {
         "content_type": "VARCHAR",
         "client_name":  "VARCHAR",
         "phone_number": "VARCHAR",
@@ -45,14 +46,27 @@ def _run_migrations() -> None:
         "is_archived":  "BOOLEAN",
         "archived_at":  "DATETIME",
     }
+    media_assets_cols = {
+        "display_name": "VARCHAR",
+    }
     with engine.connect() as conn:
         rows = conn.execute(text("PRAGMA table_info(redirect_links)")).fetchall()
-        existing = {row[1] for row in rows}   # row[1] = column name
-        for col, col_type in new_cols.items():
+        existing = {row[1] for row in rows}
+        for col, col_type in redirect_links_cols.items():
             if col not in existing:
                 conn.execute(text(
                     f"ALTER TABLE redirect_links ADD COLUMN {col} {col_type}"
                 ))
+
+        rows = conn.execute(text("PRAGMA table_info(media_assets)")).fetchall()
+        if rows:
+            existing = {row[1] for row in rows}
+            for col, col_type in media_assets_cols.items():
+                if col not in existing:
+                    conn.execute(text(
+                        f"ALTER TABLE media_assets ADD COLUMN {col} {col_type}"
+                    ))
+
         conn.commit()
 
 
@@ -550,6 +564,7 @@ class MediaCompleteRequest(BaseModel):
     original_filename: str
     mime_type:         str
     file_size:         int
+    display_name:      str | None = None   # optional human-readable label
 
 
 class MediaCompleteResponse(BaseModel):
@@ -571,6 +586,7 @@ class MediaAssetOut(BaseModel):
     original_filename: str
     mime_type:         str
     file_size:         int
+    display_name:      str | None = None
     is_deleted:        bool
     created_at:        datetime
     deleted_at:        datetime | None
@@ -1368,6 +1384,9 @@ def complete_upload(payload: MediaCompleteRequest, db: Session = Depends(get_db)
     allowed = ALLOWED_MEDIA_TYPES.get(payload.media_type)
     if allowed is None or payload.mime_type not in allowed:
         raise HTTPException(status_code=400, detail="Invalid media_type or mime_type")
+    # Normalise display_name: blank/whitespace → None
+    display_name = payload.display_name.strip() if payload.display_name else None
+    display_name = display_name or None
     asset = models.MediaAsset(
         media_type=payload.media_type,
         storage_provider="r2",
@@ -1376,6 +1395,7 @@ def complete_upload(payload: MediaCompleteRequest, db: Session = Depends(get_db)
         original_filename=payload.original_filename,
         mime_type=payload.mime_type,
         file_size=payload.file_size,
+        display_name=display_name,
     )
     db.add(asset)
     db.commit()
@@ -1460,6 +1480,7 @@ def list_media_assets(
             original_filename=asset.original_filename,
             mime_type=asset.mime_type,
             file_size=asset.file_size,
+            display_name=asset.display_name,
             is_deleted=asset.is_deleted,
             created_at=asset.created_at,
             deleted_at=asset.deleted_at,
