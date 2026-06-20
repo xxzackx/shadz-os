@@ -2,6 +2,72 @@
 
 ---
 
+## Page Engine v1 Phase 2 — Database Foundation
+
+**Date:** 2026-06-20
+**Commit:** `e37a56c`
+**Status:** Complete, deployed, production-verified
+
+**Summary:**
+Added Page Engine database foundation. Creates `pages` and `page_slug_attachments` tables with idempotent safe migration. No public rendering, no admin routes, no admin UI added.
+
+**Schema changes (`models.py`):**
+- `PAGE_TEMPLATE_TYPES = {"invitation", "brand_product", "child_safety"}` — validation constant
+- `PAGE_STATUSES = {"draft", "ready", "archived"}` — validation constant
+- `Page` model → `pages` table:
+  - `id` (PK), `title` (VARCHAR NOT NULL), `template_type` (VARCHAR NOT NULL), `status` (VARCHAR NOT NULL, default `draft`), `content_json` (TEXT nullable), `created_at`, `updated_at`, `archived_at` (nullable)
+- `PageSlugAttachment` model → `page_slug_attachments` table:
+  - `id` (PK), `page_id` (FK → `pages.id`, indexed), `slug` (FK → `redirect_links.slug`, indexed), `is_active` (BOOLEAN NOT NULL), `created_at`, `updated_at`
+
+**Migration changes (`main.py`):**
+- `_run_migrations()` extended with idempotent PRAGMA guards for both new tables
+- All `ALTER TABLE ADD COLUMN` definitions are nullable or carry a DEFAULT — safe against tables that already have rows
+- Partial unique index created explicitly (cannot be expressed in SQLAlchemy `mapped_column`):
+  - `CREATE UNIQUE INDEX IF NOT EXISTS idx_page_slug_one_active ON page_slug_attachments(slug) WHERE is_active = 1`
+  - Enforces: one slug → only one active page attachment; inactive/history rows are allowed
+- Normal lookup indexes (`page_id`, `slug`) created by `create_all` via `index=True` on model — not duplicated explicitly
+
+**Page Engine rules enforced by DB:**
+- One page may attach to many slugs ✓
+- One slug may only have one active page attachment ✓ (partial unique index)
+- Inactive/history attachment rows allowed ✓
+
+**FK note:**
+`PRAGMA foreign_keys=ON` is not enabled — same as existing production pattern (`SlugMedia` has the same situation). FK declarations are ORM metadata only. Application-layer integrity checks to be added in Phase 3A routes.
+
+**Unchanged (confirmed):**
+- Public redirect route — untouched
+- `url` and `media` slug behaviour — untouched
+- Admin UI — untouched
+- All existing endpoints — untouched
+- Nginx, shadz.service, Cloudflare/R2 — untouched
+- Auth — untouched
+
+**Production deploy:**
+- DB backup: `shadz.db.backup-before-page-engine-phase2-20260620-195630`
+- VPS pulled `e37a56c` via `git pull origin master` (fast-forward from `6dfbb6b`)
+- `shadz.service` restarted manually by user; confirmed `active (running)`
+- Local health: `http://127.0.0.1:8000/health` → `200` `{"status":"ok"}`
+- Public health: `https://shadz.io/health` → `200` `{"status":"ok"}`
+- `pages` table exists, 0 rows ✓
+- `page_slug_attachments` table exists, 0 rows ✓
+- `idx_page_slug_one_active` exists, unique=1, partial=1 ✓
+- `redirect_links`: 26 rows — existing data intact ✓
+- `media_assets`: 13 rows — existing data intact ✓
+- Homepage: 200, admin unauthenticated: 401 ✓
+
+**Workflow note:**
+Claude Code has no VPS execution authority. Claude Code handles local code changes, verification, commit, and push when approved. VPS pull, service restart, and production verification are performed manually by user via SSH.
+
+**Touched:** `models.py`, `main.py`
+**Database:** new tables created; existing tables untouched
+**Schema:** additive only — no existing column or table modified
+**Nginx:** untouched
+**Auth:** untouched
+**Frontend:** untouched
+
+---
+
 ## Page Engine v1 Phase 1B — Media Asset Rename
 
 **Date:** 2026-06-19

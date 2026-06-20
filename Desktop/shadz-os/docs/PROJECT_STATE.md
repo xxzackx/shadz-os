@@ -95,7 +95,7 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 - Convert URL ↔ Media type — Phase 3 v0.1
 - Export CSV — download all link/client records as CSV — Phase C
 
-**Admin UI version:** Phase 1B `1d11005` — Media asset rename (deployed 2026-06-19), on top of Phase 1 display names (`4476142`), Hotfix `edb2c2c`, Phase C CSV Export (`45d2656`)
+**Admin UI version:** Phase 1B `1d11005` — Media asset rename (deployed 2026-06-19), on top of Phase 1 display names (`4476142`), Hotfix `edb2c2c`, Phase C CSV Export (`45d2656`). Page Engine Phase 2 (`e37a56c`, deployed 2026-06-20) added DB tables only — no admin UI change.
 
 ---
 
@@ -140,6 +140,36 @@ One row per uploaded R2 file. Soft-deleted via `is_deleted=True`. Never auto-rem
 ### `slug_media`
 
 Join between `redirect_links.slug` and `media_assets.id`. History preserved; only one row per slug has `is_active=True`.
+
+### `pages` _(added Page Engine v1 Phase 2)_
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER | PK |
+| `title` | VARCHAR | not null |
+| `template_type` | VARCHAR | not null; one of `invitation`, `brand_product`, `child_safety` |
+| `status` | VARCHAR | not null; default `draft`; one of `draft`, `ready`, `archived` |
+| `content_json` | TEXT | nullable; unstructured for now |
+| `created_at` | DATETIME | |
+| `updated_at` | DATETIME | |
+| `archived_at` | DATETIME | nullable |
+
+### `page_slug_attachments` _(added Page Engine v1 Phase 2)_
+
+Join between `pages.id` and `redirect_links.slug`. One page may attach to many slugs. Only one active attachment per slug enforced by partial unique index `idx_page_slug_one_active`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER | PK |
+| `page_id` | INTEGER | FK → `pages.id`; indexed |
+| `slug` | VARCHAR | FK → `redirect_links.slug`; indexed |
+| `is_active` | BOOLEAN | not null |
+| `created_at` | DATETIME | |
+| `updated_at` | DATETIME | |
+
+**Partial unique index:** `idx_page_slug_one_active ON page_slug_attachments(slug) WHERE is_active = 1`
+
+**FK note:** `PRAGMA foreign_keys=ON` is not enabled — FK declarations are ORM metadata only, same as `slug_media`. Application-layer enforcement to be added in Phase 3A.
 
 ### `nfc_records` / `scan_logs`
 
@@ -240,6 +270,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Admin Hotfix — Redirect Update Phone Regression (`edb2c2c`, deployed 2026-06-16) — `upsert_link` update branch no longer requires phone_number; phone preserved if not provided; create flow still requires phone; no frontend change; no schema migration
 - Page Engine v1 Phase 1 — Media Engine Display Names (`4476142`, deployed 2026-06-19) — nullable `display_name` column added to `media_assets`; safe additive migration; upload form + Storage Manager updated; presign endpoint unchanged; no Page Engine DB tables
 - Page Engine v1 Phase 1B — Media Asset Rename (`1d11005`, deployed 2026-06-19) — `PATCH /admin/media/assets/{id}` endpoint; Storage Manager Add Name / Edit Name action; `_assetMap` pattern prevents XSS via HTML attributes; only `display_name` writable; all other asset fields and R2 object unchanged
+- Page Engine v1 Phase 2 — DB Foundation (`e37a56c`, deployed 2026-06-20) — `pages` + `page_slug_attachments` tables; `PAGE_TEMPLATE_TYPES` + `PAGE_STATUSES` constants; idempotent migration guards; partial unique index `idx_page_slug_one_active`; no routes, no UI, no public rendering; DB backup `shadz.db.backup-before-page-engine-phase2-20260620-195630`
 
 ### Active slug type policy
 
@@ -262,7 +293,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 
 - Type Conversion v0.2 — page conversion, extended conversion rules (not started)
 - Analytics / Scan Tracking Chart — not started
-- Page Engine v1 Phase 2 — Page Engine DB models, routes, and admin UI (Create/Edit/Attach) — not started; Media Engine preparation (Phase 1/1B) is complete; next phase requires explicit approval
+- Page Engine v1 Phase 3A — admin-only backend routes and safety helpers for page create / edit / attach; do not add public rendering or polished admin UI before safe backend routes exist
 - Proper UI login/logout system — deferred; Basic Auth popup is accepted for now
 - Role-based admin security — deferred until multi-admin use case arises
 
