@@ -94,8 +94,9 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 - Storage Manager (browse all assets; rename / add display name — Phase 1B)
 - Convert URL ↔ Media type — Phase 3 v0.1
 - Export CSV — download all link/client records as CSV — Phase C
+- Page Engine admin routes (Phase 3A) — create/update pages; attach/detach pages to page slugs
 
-**Admin UI version:** Phase 1B `1d11005` — Media asset rename (deployed 2026-06-19), on top of Phase 1 display names (`4476142`), Hotfix `edb2c2c`, Phase C CSV Export (`45d2656`). Page Engine Phase 2 (`e37a56c`, deployed 2026-06-20) added DB tables only — no admin UI change.
+**Admin UI version:** Phase 1B `1d11005` — Media asset rename (deployed 2026-06-19), on top of Phase 1 display names (`4476142`), Hotfix `edb2c2c`, Phase C CSV Export (`45d2656`). Page Engine Phase 2 (`e37a56c`, deployed 2026-06-20) added DB tables only — no admin UI change. Page Engine Phase 3A (`c6c5a15`, deployed 2026-06-20) added admin backend routes — no public page rendering, no final admin UI.
 
 ---
 
@@ -169,7 +170,7 @@ Join between `pages.id` and `redirect_links.slug`. One page may attach to many s
 
 **Partial unique index:** `idx_page_slug_one_active ON page_slug_attachments(slug) WHERE is_active = 1`
 
-**FK note:** `PRAGMA foreign_keys=ON` is not enabled — FK declarations are ORM metadata only, same as `slug_media`. Application-layer enforcement to be added in Phase 3A.
+**FK note:** `PRAGMA foreign_keys=ON` is not enabled — FK declarations are ORM metadata only, same as `slug_media`. Application-layer enforcement added in Phase 3A (slug existence + content_type validation in attach route).
 
 ### `nfc_records` / `scan_logs`
 
@@ -271,6 +272,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Page Engine v1 Phase 1 — Media Engine Display Names (`4476142`, deployed 2026-06-19) — nullable `display_name` column added to `media_assets`; safe additive migration; upload form + Storage Manager updated; presign endpoint unchanged; no Page Engine DB tables
 - Page Engine v1 Phase 1B — Media Asset Rename (`1d11005`, deployed 2026-06-19) — `PATCH /admin/media/assets/{id}` endpoint; Storage Manager Add Name / Edit Name action; `_assetMap` pattern prevents XSS via HTML attributes; only `display_name` writable; all other asset fields and R2 object unchanged
 - Page Engine v1 Phase 2 — DB Foundation (`e37a56c`, deployed 2026-06-20) — `pages` + `page_slug_attachments` tables; `PAGE_TEMPLATE_TYPES` + `PAGE_STATUSES` constants; idempotent migration guards; partial unique index `idx_page_slug_one_active`; no routes, no UI, no public rendering; DB backup `shadz.db.backup-before-page-engine-phase2-20260620-195630`
+- Page Engine v1 Phase 3A — Admin Backend Routes (`c6c5a15`, deployed 2026-06-20) — page create/update/attach/detach admin routes; safety helpers; Pydantic schemas; all routes behind existing Basic Auth; re-attach deactivates old active attachment and preserves history; no public rendering; no DB migration; DB backup `shadz.db.backup-before-page-engine-phase3a-20260620-211430`
 
 ### Active slug type policy
 
@@ -293,7 +295,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 
 - Type Conversion v0.2 — page conversion, extended conversion rules (not started)
 - Analytics / Scan Tracking Chart — not started
-- Page Engine v1 Phase 3A — admin-only backend routes and safety helpers for page create / edit / attach; do not add public rendering or polished admin UI before safe backend routes exist
+- Page Engine v1 Phase 3B — admin UI integration / Page Engine panel in admin.html; connect to Phase 3A backend routes; page list, create form, edit form, attach/detach controls
 - Proper UI login/logout system — deferred; Basic Auth popup is accepted for now
 - Role-based admin security — deferred until multi-admin use case arises
 
