@@ -103,6 +103,69 @@ class MediaAsset(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+# ── Page Engine v1 ───────────────────────────────────────────────────────────
+
+PAGE_TEMPLATE_TYPES = {"invitation", "brand_product", "child_safety"}
+PAGE_STATUSES = {"draft", "ready", "archived"}
+
+
+class Page(Base):
+    """One row per authored page.
+
+    content_json is unstructured for now; schema is defined per-template at
+    render time.  Pages are never hard-deleted; use status='archived'.
+    """
+    __tablename__ = "pages"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    template_type: Mapped[str] = mapped_column(String, nullable=False)   # see PAGE_TEMPLATE_TYPES
+    status: Mapped[str] = mapped_column(String, default="draft", nullable=False)  # see PAGE_STATUSES
+    content_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PageSlugAttachment(Base):
+    """Join between a Page and a redirect_links slug.
+
+    One page may attach to many slugs.  One slug may have only one active
+    attachment (enforced by partial unique index idx_page_slug_one_active,
+    created in _run_migrations).  History rows (is_active=False) are kept.
+    """
+    __tablename__ = "page_slug_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    page_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("pages.id"), index=True, nullable=False
+    )
+    slug: Mapped[str] = mapped_column(
+        String, ForeignKey("redirect_links.slug"), index=True, nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
 class SlugMedia(Base):
     """Join between a slug (RedirectLink) and a MediaAsset.
 

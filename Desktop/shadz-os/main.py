@@ -67,6 +67,58 @@ def _run_migrations() -> None:
                         f"ALTER TABLE media_assets ADD COLUMN {col} {col_type}"
                     ))
 
+        # ── Page Engine v1 — pages ───────────────────────────────────────────
+        # create_all handles new table creation; this block guards future
+        # additive column additions and confirms the table is present.
+        # All ALTER TABLE definitions are nullable or carry a DEFAULT so they
+        # are safe if the table already has rows.  NOT NULL strictness is
+        # enforced at the ORM/application layer, not here.
+        pages_cols = {
+            "title":         "VARCHAR",
+            "template_type": "VARCHAR",
+            "status":        "VARCHAR DEFAULT 'draft'",
+            "content_json":  "TEXT",
+            "created_at":    "DATETIME",
+            "updated_at":    "DATETIME",
+            "archived_at":   "DATETIME",
+        }
+        rows = conn.execute(text("PRAGMA table_info(pages)")).fetchall()
+        if rows:
+            existing = {row[1] for row in rows}
+            for col, col_type in pages_cols.items():
+                if col not in existing:
+                    conn.execute(text(
+                        f"ALTER TABLE pages ADD COLUMN {col} {col_type}"
+                    ))
+
+        # ── Page Engine v1 — page_slug_attachments ───────────────────────────
+        # Same safety rule: all ALTER TABLE definitions are nullable or carry
+        # a DEFAULT.  Strict constraints live at the ORM/application layer.
+        psa_cols = {
+            "page_id":    "INTEGER",
+            "slug":       "VARCHAR",
+            "is_active":  "BOOLEAN DEFAULT 1",
+            "created_at": "DATETIME",
+            "updated_at": "DATETIME",
+        }
+        rows = conn.execute(text("PRAGMA table_info(page_slug_attachments)")).fetchall()
+        if rows:
+            existing = {row[1] for row in rows}
+            for col, col_type in psa_cols.items():
+                if col not in existing:
+                    conn.execute(text(
+                        f"ALTER TABLE page_slug_attachments ADD COLUMN {col} {col_type}"
+                    ))
+
+        # Normal indexes are declared via index=True on the model columns and
+        # created by create_all.  Only the partial unique index is explicit here
+        # because SQLAlchemy cannot express WHERE-clause indexes in mapped_column.
+        # Partial unique index: only one active attachment per slug.
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_page_slug_one_active "
+            "ON page_slug_attachments(slug) WHERE is_active = 1"
+        ))
+
         conn.commit()
 
 
