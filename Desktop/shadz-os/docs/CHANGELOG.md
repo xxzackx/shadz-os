@@ -2,6 +2,54 @@
 
 ---
 
+## Page Engine v1 Phase 3C — Public Page Rendering
+
+**Date:** 2026-06-26
+**Commit:** (pending deploy approval)
+**Status:** Complete, locally verified
+
+**Summary:**
+Implemented the public serving path for `page`-type slugs. When an NFC tag pointing to a `page` slug is scanned, the system now looks up the active page attachment, loads the page record, and renders a safe HTML page matching the page's template type. No active attachment returns 404.
+
+**Backend changes (`main.py`):**
+- Added `import html` and `import json` (stdlib — no new dependencies)
+- Added `_render_page_html(page)` function: parses `content_json` safely, escapes all user text via `html.escape()`, renders per template type (`invitation`, `brand_product`, `child_safety`), falls back to title-only for unknown types
+- `invitation` template: renders eyebrow "You are invited", title (h1), optional message, and a details table (Date, Time, Venue, RSVP)
+- `brand_product` template: renders title (h1), optional tagline (gold uppercase), description, contact
+- `child_safety` template: renders gold "Missing Child" eyebrow, title (h1), details table (Name, Age, Last seen, Contact, Phone, Alt phone, Notes), help note
+- Styling: black/gold SHADZ aesthetic, SHADZ wordmark fixed top-center, responsive max-width 480px card, inline CSS only
+- Replaced `if ct == "page": return HTMLResponse(content=_page_placeholder_html(slug))` with active-attachment lookup and `_render_page_html` call
+- `_page_placeholder_html` remains defined but is no longer called from the public route
+
+**Public behavior after Phase 3C:**
+- `page` slug, no active attachment → 404
+- `page` slug, active attachment → 200 HTML rendered page
+- Archived slug → 410 expired page (unchanged)
+- `url` slug → 302 redirect (unchanged)
+- `media` slug → media HTML page (unchanged)
+- `scan_count` incremented on every non-archived public hit (unchanged behavior — happens before page branch)
+
+**Unchanged:**
+- Admin UI (`static/admin.html`) — not touched
+- All admin routes — not touched
+- url/media slug behavior — not touched
+- Archive/restore behavior — not touched
+- DB schema/models — not touched
+
+**Local test results:**
+- `GET /health` → 200 `{"status":"ok"}` ✓
+- `GET /admin` unauthenticated → 401 ✓
+- `GET /page-unknown` (unknown slug) → 404 ✓
+- `GET /page-xxx` (page slug, no active attachment) → 404 ✓
+- `GET /page-xxx` (page slug, active invitation attachment) → 200 HTML with title/content ✓
+- `GET /page-xxx` (archived slug) → 410 ✓
+- XSS: `<script>` in title → `&lt;script&gt;` in output, raw `<script>` absent ✓
+- `child_safety` template renders "Missing Child" label ✓
+
+**Touched:** `main.py` only (+120 lines, -2 lines)
+
+---
+
 ## Page Engine v1 Phase 3B — Admin UI
 
 **Date:** 2026-06-25
