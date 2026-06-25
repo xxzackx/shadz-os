@@ -46,7 +46,7 @@ Implemented the public serving path for `page`-type slugs. When an NFC tag point
 - XSS: `<script>` in title → `&lt;script&gt;` in output, raw `<script>` absent ✓
 - `child_safety` template renders "Missing Child" label ✓
 
-**Touched:** `main.py` only (+120 lines, -2 lines)
+**Touched:** `main.py`, `docs/CHANGELOG.md`
 
 ---
 
