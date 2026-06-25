@@ -2,6 +2,46 @@
 
 ---
 
+## Page Engine v1 Phase 4A — Surgical Renderer Extraction
+
+**Date:** 2026-06-26
+**Commit:** `e3965f5`
+**Status:** Complete, deployed, production-verified ✓
+
+**Summary:**
+Refactored Page Engine public rendering logic out of `main.py` into a dedicated `page_renderer.py` module. Refactor-only milestone — no behavior change, no schema change, no admin UI change, no route change, no new features.
+
+**Changes (`main.py`, `page_renderer.py`):**
+- Created `page_renderer.py`: contains `_render_page_html()` and its `import html` / `import json` stdlib imports
+- Removed `_render_page_html()` from `main.py`; removed `import html` and `import json` (both were exclusively used by that function)
+- `main.py` now imports: `from page_renderer import _render_page_html`
+- Call site in `redirect_slug` route is byte-for-byte unchanged
+
+**Unchanged:**
+- Public rendering behavior — identical output for all templates
+- All admin routes — not touched
+- Database schema — no migration
+- `static/admin.html` — not touched
+- All public URLs — unchanged
+- Basic Auth — unchanged
+
+**Production deploy (2026-06-26):**
+- VPS pulled `357a85e` → `e3965f5` (fast-forward); files: `main.py` (modified), `page_renderer.py` (new)
+- `shadz.service` restarted; confirmed `active (running)`
+- `GET /health` (local) → 200 `{"status":"ok"}` ✓
+- `GET https://shadz.io/health` → 200 `{"status":"ok"}` ✓
+- `GET https://shadz.io/admin` unauthenticated → 401 ✓
+- No `ModuleNotFoundError`, `ImportError`, or `NameError` in service logs ✓
+
+**Touched:** `main.py`, `page_renderer.py` (new file)
+**Database:** untouched — no migration
+**Schema:** untouched
+**Admin UI:** untouched
+**Nginx:** untouched
+**Auth:** untouched
+
+---
+
 ## Page Engine v1 Phase 3D — Admin JSON Helper Guidance
 
 **Date:** 2026-06-26

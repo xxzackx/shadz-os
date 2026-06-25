@@ -278,6 +278,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Page Engine v1 Phase 3B — Admin UI (`a57fff7`, deployed 2026-06-25) — `static/admin.html` only; Module C Page Engine on home screen; Create Page, Edit Page (partial-update), Attach/Detach sections; four JS functions wired to Phase 3A routes; no backend changes; no new routes; DB backup `shadz.db.backup-before-page-engine-phase3b-20260625-184943`
 - Page Engine v1 Phase 3C — Public Page Rendering (`165c0d3`, deployed 2026-06-26) — `main.py` only; `_render_page_html()` renders `invitation`, `brand_product`, `child_safety` templates; page slug with active attachment → 200 HTML; no active attachment → 404; archived → 410 unchanged; all user text HTML-escaped; visual design acceptable for testing, not yet client-facing polish
 - Page Engine v1 Phase 3D — Admin JSON Helper (`357a85e`, deployed 2026-06-26) — `static/admin.html` only; template guide with field list + Fill sample JSON button; inline JSON validation (valid/invalid hint on blur); null-guarded JS functions; no backend changes; no DB migration; no renderer change
+- Page Engine v1 Phase 4A — Renderer Extraction (`e3965f5`, deployed 2026-06-26) — `_render_page_html()` moved from `main.py` into new `page_renderer.py`; `import html` and `import json` moved with it; `main.py` imports it via `from page_renderer import _render_page_html`; refactor-only, no behavior change, no DB migration, no admin UI change, no route change
 
 ### Active slug type policy
 
@@ -296,10 +297,17 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Media attach endpoint guard unchanged: only `content_type == "media"` slugs can attach media
 - Public redirect route: branches on `content_type`, not slug prefix — slug string never changes
 
+### Source file layout (as of Phase 4A)
+
+- `main.py` — FastAPI app, all routes (public + admin), DB/session setup, auth, slug/media/redirect/page route wiring, migrations
+- `page_renderer.py` — Page Engine public renderer only (`_render_page_html()`); imported by `main.py`
+- `models.py` — SQLAlchemy ORM models and constants
+- `database.py` — SQLAlchemy engine and session factory
+
 ### Not yet implemented
 
-- Phase 4A — Surgical `main.py` organisation / renderer extraction (next recommended phase; move `_render_page_html` and HTML helpers to a separate module; `main.py` is growing large)
-- Phase 3E — Public page visual upgrade (deferred; current v1 rendering is functional and acceptable for internal testing; polish pass planned before official client-facing sales use; when implemented, update `_render_page_html` renderer fields and `_PE_SAMPLES` in `admin.html` in the same commit if field names change)
+- Phase 3E — Public page visual upgrade (deferred; current v1 rendering is functional and acceptable for internal testing; polish pass planned before official client-facing sales use; when implemented, update `_render_page_html` renderer fields in `page_renderer.py` and `_PE_SAMPLES` in `admin.html` in the same commit if field names change)
+- Next recommended milestone: continue surgical modularization only after review
 - Type Conversion v0.2 — page conversion, extended conversion rules (not started)
 - Analytics / Scan Tracking Chart — not started
 - `GET /admin/pages/{page_id}` JSON read endpoint — to support Edit Page pre-fill in admin UI; not required for current v1
