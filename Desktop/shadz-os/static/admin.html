@@ -495,6 +495,31 @@
         </div>
       </div>
 
+      <!-- Module C: Page Engine -->
+      <div class="module-group">
+        <div class="module-header">
+          <span class="module-header-label">Page Engine</span>
+          <div class="module-header-line"></div>
+        </div>
+        <div class="home-grid">
+          <div class="home-card" onclick="show('pageCreateSection')">
+            <div class="home-card-title">Create Page</div>
+            <div class="home-card-desc">Create a new page record</div>
+            <div class="home-card-arrow">›</div>
+          </div>
+          <div class="home-card" onclick="show('pageEditSection')">
+            <div class="home-card-title">Edit Page</div>
+            <div class="home-card-desc">Update an existing page by ID</div>
+            <div class="home-card-arrow">›</div>
+          </div>
+          <div class="home-card" onclick="show('pageAttachSection')">
+            <div class="home-card-title">Attach / Detach</div>
+            <div class="home-card-desc">Link or unlink a page from a slug</div>
+            <div class="home-card-arrow">›</div>
+          </div>
+        </div>
+      </div>
+
     </div>
 
     <!-- Create new link section -->
@@ -715,6 +740,158 @@
       <div id="storageList" class="card-grid"></div>
 
       <div id="st-msg" class="msg"></div>
+    </div>
+
+    <!-- Create Page section -->
+    <div id="pageCreateSection" class="section">
+      <div class="section-header">
+        <button class="back-btn" onclick="goHome()">← Back</button>
+        <span class="section-title">Create Page</span>
+      </div>
+
+      <label for="pc-title">Title</label>
+      <input type="text" id="pc-title" placeholder="e.g. SHADZ Invitation 2026" autocomplete="off" />
+
+      <label for="pc-template">Template</label>
+      <select id="pc-template">
+        <option value="invitation">invitation</option>
+        <option value="brand_product">brand_product</option>
+        <option value="child_safety">child_safety</option>
+      </select>
+
+      <label for="pc-status">Status</label>
+      <select id="pc-status">
+        <option value="draft">draft</option>
+        <option value="ready">ready</option>
+      </select>
+
+      <label for="pc-content">Content JSON <span style="color:var(--text-muted);font-size:0.7em">(optional)</span></label>
+      <textarea id="pc-content" placeholder='{"key": "value"}' style="width:100%;height:80px;resize:vertical;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);padding:0.5rem 0.7rem;border-radius:4px;font-family:inherit;font-size:0.85rem;box-sizing:border-box"></textarea>
+
+      <button class="action-btn" id="pc-btn" onclick="createPage()">Create Page</button>
+
+      <div id="pc-result" class="result-box" style="display:none">
+        <div class="result-row">
+          <span class="result-label">Page ID</span>
+          <span class="result-value big" id="pc-resId">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Title</span>
+          <span class="result-value" id="pc-resTitle">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Template</span>
+          <span class="result-value" id="pc-resTemplate">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Status</span>
+          <span class="result-value" id="pc-resStatus">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Created</span>
+          <span class="result-value" id="pc-resCreated">—</span>
+        </div>
+      </div>
+
+      <div id="pc-msg" class="msg"></div>
+    </div>
+
+    <!-- Edit Page section -->
+    <div id="pageEditSection" class="section">
+      <div class="section-header">
+        <button class="back-btn" onclick="goHome()">← Back</button>
+        <span class="section-title">Edit Page</span>
+      </div>
+
+      <div style="font-size:0.7rem;color:var(--text-muted);letter-spacing:.03em;margin-bottom:1rem;line-height:1.5">Only filled fields will be updated. Leave a field blank to keep the existing value.</div>
+
+      <label for="pe-id">Page ID</label>
+      <input type="number" id="pe-id" placeholder="1" autocomplete="off" />
+
+      <label for="pe-title">Title <span style="color:var(--text-muted);font-size:0.7em">(leave blank to keep existing)</span></label>
+      <input type="text" id="pe-title" placeholder="New title" autocomplete="off" />
+
+      <label for="pe-template">Template <span style="color:var(--text-muted);font-size:0.7em">(leave at — to keep existing)</span></label>
+      <select id="pe-template">
+        <option value="">— keep existing —</option>
+        <option value="invitation">invitation</option>
+        <option value="brand_product">brand_product</option>
+        <option value="child_safety">child_safety</option>
+      </select>
+
+      <label for="pe-status">Status <span style="color:var(--text-muted);font-size:0.7em">(leave at — to keep existing)</span></label>
+      <select id="pe-status">
+        <option value="">— keep existing —</option>
+        <option value="draft">draft</option>
+        <option value="ready">ready</option>
+        <option value="archived">archived</option>
+      </select>
+
+      <label for="pe-content">Content JSON <span style="color:var(--text-muted);font-size:0.7em">(leave blank to keep existing)</span></label>
+      <textarea id="pe-content" placeholder='{"key": "value"}' style="width:100%;height:80px;resize:vertical;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);padding:0.5rem 0.7rem;border-radius:4px;font-family:inherit;font-size:0.85rem;box-sizing:border-box"></textarea>
+
+      <button class="action-btn" id="pe-btn" onclick="editPage()">Update Page</button>
+
+      <div id="pe-result" class="result-box" style="display:none">
+        <div class="result-row">
+          <span class="result-label">Page ID</span>
+          <span class="result-value big" id="pe-resId">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Title</span>
+          <span class="result-value" id="pe-resTitle">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Template</span>
+          <span class="result-value" id="pe-resTemplate">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Status</span>
+          <span class="result-value" id="pe-resStatus">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Updated</span>
+          <span class="result-value" id="pe-resUpdated">—</span>
+        </div>
+      </div>
+
+      <div id="pe-msg" class="msg"></div>
+    </div>
+
+    <!-- Attach / Detach Page section -->
+    <div id="pageAttachSection" class="section">
+      <div class="section-header">
+        <button class="back-btn" onclick="goHome()">← Back</button>
+        <span class="section-title">Attach / Detach Page</span>
+      </div>
+
+      <!-- Attach block -->
+      <div style="margin-bottom:1.5rem">
+        <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:0.75rem">Attach Page to Slug</div>
+
+        <label for="pa-pageId">Page ID</label>
+        <input type="number" id="pa-pageId" placeholder="1" autocomplete="off" />
+
+        <label for="pa-slug">Slug <span style="color:var(--text-muted);font-size:0.7em">(must be a page-type slug)</span></label>
+        <input type="text" id="pa-slug" placeholder="page-abc123" autocomplete="off" />
+
+        <button class="action-btn" id="pa-btn" onclick="attachPage()">Attach Page</button>
+        <div id="pa-msg" class="msg"></div>
+      </div>
+
+      <!-- Divider -->
+      <div style="height:1px;background:var(--border-2);margin-bottom:1.5rem"></div>
+
+      <!-- Detach block -->
+      <div>
+        <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:0.75rem">Detach Page from Slug</div>
+
+        <label for="pd-slug">Slug</label>
+        <input type="text" id="pd-slug" placeholder="page-abc123" autocomplete="off" />
+
+        <button class="action-btn" id="pd-btn" onclick="detachPage()">Detach Page</button>
+        <div id="pd-msg" class="msg"></div>
+      </div>
     </div>
 
   </div>
@@ -1679,6 +1856,161 @@
           </div>`).join('');
       } catch {
         container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+      }
+    }
+
+    // ── Page Engine ──────────────────────────────────────────────────────────
+
+    async function createPage() {
+      const title    = document.getElementById('pc-title').value.trim();
+      const template = document.getElementById('pc-template').value;
+      const status   = document.getElementById('pc-status').value;
+      const content  = document.getElementById('pc-content').value.trim();
+
+      if (!title) { showMsg('pc-msg', 'error', 'Title is required.'); return; }
+
+      const btn = document.getElementById('pc-btn');
+      btn.disabled = true;
+      showMsg('pc-msg', '', '');
+
+      const body = { title, template_type: template, status };
+      if (content) body.content_json = content;
+
+      try {
+        const res  = await fetch('/admin/pages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showMsg('pc-msg', 'error', data.detail || 'Error creating page.');
+        } else {
+          document.getElementById('pc-result').style.display = 'block';
+          document.getElementById('pc-resId').textContent       = data.id;
+          document.getElementById('pc-resTitle').textContent    = data.title;
+          document.getElementById('pc-resTemplate').textContent = data.template_type;
+          document.getElementById('pc-resStatus').textContent   = data.status;
+          document.getElementById('pc-resCreated').textContent  = new Date(data.created_at).toLocaleString();
+          showMsg('pc-msg', 'ok', `Page ${data.id} created.`);
+          document.getElementById('pc-title').value   = '';
+          document.getElementById('pc-content').value = '';
+        }
+      } catch {
+        showMsg('pc-msg', 'error', 'Network error.');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function editPage() {
+      const pageId   = document.getElementById('pe-id').value.trim();
+      const title    = document.getElementById('pe-title').value.trim();
+      const template = document.getElementById('pe-template').value;
+      const status   = document.getElementById('pe-status').value;
+      const content  = document.getElementById('pe-content').value.trim();
+
+      if (!pageId) { showMsg('pe-msg', 'error', 'Page ID is required.'); return; }
+
+      const body = {};
+      if (title)    body.title         = title;
+      if (template) body.template_type = template;
+      if (status)   body.status        = status;
+      if (content)  body.content_json  = content;
+
+      if (Object.keys(body).length === 0) {
+        showMsg('pe-msg', 'error', 'Fill in at least one field to update.');
+        return;
+      }
+
+      const btn = document.getElementById('pe-btn');
+      btn.disabled = true;
+      showMsg('pe-msg', '', '');
+
+      try {
+        const res  = await fetch(`/admin/pages/${encodeURIComponent(pageId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showMsg('pe-msg', 'error', data.detail || 'Error updating page.');
+        } else {
+          document.getElementById('pe-result').style.display = 'block';
+          document.getElementById('pe-resId').textContent       = data.id;
+          document.getElementById('pe-resTitle').textContent    = data.title;
+          document.getElementById('pe-resTemplate').textContent = data.template_type;
+          document.getElementById('pe-resStatus').textContent   = data.status;
+          document.getElementById('pe-resUpdated').textContent  = new Date(data.updated_at).toLocaleString();
+          showMsg('pe-msg', 'ok', `Page ${data.id} updated.`);
+        }
+      } catch {
+        showMsg('pe-msg', 'error', 'Network error.');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function attachPage() {
+      const pageId = document.getElementById('pa-pageId').value.trim();
+      const slug   = document.getElementById('pa-slug').value.trim();
+
+      if (!pageId) { showMsg('pa-msg', 'error', 'Page ID is required.'); return; }
+      if (!slug)   { showMsg('pa-msg', 'error', 'Slug is required.'); return; }
+
+      const btn = document.getElementById('pa-btn');
+      btn.disabled = true;
+      showMsg('pa-msg', '', '');
+
+      try {
+        const res  = await fetch('/admin/pages/attach', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ page_id: parseInt(pageId, 10), slug }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showMsg('pa-msg', 'error', data.detail || 'Error attaching page.');
+        } else {
+          showMsg('pa-msg', 'ok', data.message || 'Attached.');
+        }
+      } catch {
+        showMsg('pa-msg', 'error', 'Network error.');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function detachPage() {
+      const slug = document.getElementById('pd-slug').value.trim();
+
+      if (!slug) { showMsg('pd-msg', 'error', 'Slug is required.'); return; }
+
+      const btn = document.getElementById('pd-btn');
+      btn.disabled = true;
+      showMsg('pd-msg', '', '');
+
+      try {
+        const res  = await fetch('/admin/pages/detach', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ slug }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showMsg('pd-msg', 'error', data.detail || 'Error detaching page.');
+        } else {
+          showMsg('pd-msg', 'ok', data.message || 'Detached.');
+        }
+      } catch {
+        showMsg('pd-msg', 'error', 'Network error.');
+      } finally {
+        btn.disabled = false;
       }
     }
   </script>
