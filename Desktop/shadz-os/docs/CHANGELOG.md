@@ -5,8 +5,8 @@
 ## Page Engine v1 Phase 3C — Public Page Rendering
 
 **Date:** 2026-06-26
-**Commit:** (pending deploy approval)
-**Status:** Complete, locally verified
+**Commits:** `28c1530` — Add Page Engine public rendering (Phase 3C), `165c0d3` — Fix Phase 3C changelog touched-files note
+**Status:** Complete, deployed, production-verified, browser live-tested ✓
 
 **Summary:**
 Implemented the public serving path for `page`-type slugs. When an NFC tag pointing to a `page` slug is scanned, the system now looks up the active page attachment, loads the page record, and renders a safe HTML page matching the page's template type. No active attachment returns 404.
@@ -45,6 +45,17 @@ Implemented the public serving path for `page`-type slugs. When an NFC tag point
 - `GET /page-xxx` (archived slug) → 410 ✓
 - XSS: `<script>` in title → `&lt;script&gt;` in output, raw `<script>` absent ✓
 - `child_safety` template renders "Missing Child" label ✓
+
+**Production deploy (2026-06-26):**
+- VPS pulled `719b103` → `165c0d3` (fast-forward); files updated: `main.py`, `docs/CHANGELOG.md`
+- `shadz.service` restarted manually by Mr.Zack
+- Note: immediate curl after restart returned `502 Bad Gateway` — startup timing only; Uvicorn was still initialising. Resolved within seconds once startup completed.
+- `shadz.service` confirmed `active (running)`; Uvicorn bound to `http://127.0.0.1:8000`
+- `GET /health` (local) → 200 `{"status":"ok"}` ✓
+- `GET https://shadz.io/health` → 200 `{"status":"ok"}` ✓
+- `GET https://shadz.io/admin` unauthenticated → 401 ✓
+- Browser live test: public page slug rendered black/gold SHADZ page correctly ✓
+- Visual design noted as acceptable for internal testing; not yet polished for client-facing sales use
 
 **Touched:** `main.py`, `docs/CHANGELOG.md`
 
