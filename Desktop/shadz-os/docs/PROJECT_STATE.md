@@ -96,8 +96,9 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 - Export CSV — download all link/client records as CSV — Phase C
 - Page Engine admin routes (Phase 3A, `c6c5a15`) — create/update pages; attach/detach pages to page slugs; all backend-only
 - Page Engine admin UI (Phase 3B, `a57fff7`) — Module C in admin panel; Create Page, Edit Page (partial-update), Attach / Detach; wired to Phase 3A backend routes
+- Page Engine admin JSON helper / template guidance (Phase 3D, `357a85e`) — template guide shows expected content_json fields per template; Fill sample JSON button; inline JSON validation hint on textarea blur
 
-**Admin UI version:** Phase 3B `a57fff7` — Page Engine admin UI (deployed 2026-06-25). Previous: Phase 1B `1d11005` media asset rename, Hotfix `edb2c2c`, Phase C `45d2656` CSV export. Page Engine Phase 2 (`e37a56c`) added DB tables only; Phase 3A (`c6c5a15`) added backend routes only; Phase 3B adds admin UI. Phase 3C (`165c0d3`, deployed 2026-06-26) adds public page rendering — no admin UI change.
+**Admin UI version:** Phase 3D `357a85e` — Page Engine JSON helper guidance (deployed 2026-06-26). Previous: Phase 3B `a57fff7` Page Engine admin UI. Phase 3C (`165c0d3`) added public page rendering — no admin UI change. Phase 1B `1d11005` media asset rename. Phase C `45d2656` CSV export.
 
 ---
 
@@ -276,6 +277,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Page Engine v1 Phase 3A — Admin Backend Routes (`c6c5a15`, deployed 2026-06-20) — page create/update/attach/detach admin routes; safety helpers; Pydantic schemas; all routes behind existing Basic Auth; re-attach deactivates old active attachment and preserves history; no public rendering; no DB migration; DB backup `shadz.db.backup-before-page-engine-phase3a-20260620-211430`
 - Page Engine v1 Phase 3B — Admin UI (`a57fff7`, deployed 2026-06-25) — `static/admin.html` only; Module C Page Engine on home screen; Create Page, Edit Page (partial-update), Attach/Detach sections; four JS functions wired to Phase 3A routes; no backend changes; no new routes; DB backup `shadz.db.backup-before-page-engine-phase3b-20260625-184943`
 - Page Engine v1 Phase 3C — Public Page Rendering (`165c0d3`, deployed 2026-06-26) — `main.py` only; `_render_page_html()` renders `invitation`, `brand_product`, `child_safety` templates; page slug with active attachment → 200 HTML; no active attachment → 404; archived → 410 unchanged; all user text HTML-escaped; visual design acceptable for testing, not yet client-facing polish
+- Page Engine v1 Phase 3D — Admin JSON Helper (`357a85e`, deployed 2026-06-26) — `static/admin.html` only; template guide with field list + Fill sample JSON button; inline JSON validation (valid/invalid hint on blur); null-guarded JS functions; no backend changes; no DB migration; no renderer change
 
 ### Active slug type policy
 
@@ -296,9 +298,8 @@ This section exists to give Claude Code a compressed snapshot of current project
 
 ### Not yet implemented
 
-- Phase 3D — Admin JSON input helper / template field guidance (content_json field hints per template type in admin UI)
-- Phase 4A — Surgical `main.py` organisation / renderer extraction (move `_render_page_html` and HTML helpers to a separate module)
-- Public page visual upgrade — current v1 rendering is functional and acceptable for internal testing; a visual polish pass may be considered before client-facing sales use
+- Phase 4A — Surgical `main.py` organisation / renderer extraction (next recommended phase; move `_render_page_html` and HTML helpers to a separate module; `main.py` is growing large)
+- Phase 3E — Public page visual upgrade (deferred; current v1 rendering is functional and acceptable for internal testing; polish pass planned before official client-facing sales use; when implemented, update `_render_page_html` renderer fields and `_PE_SAMPLES` in `admin.html` in the same commit if field names change)
 - Type Conversion v0.2 — page conversion, extended conversion rules (not started)
 - Analytics / Scan Tracking Chart — not started
 - `GET /admin/pages/{page_id}` JSON read endpoint — to support Edit Page pre-fill in admin UI; not required for current v1

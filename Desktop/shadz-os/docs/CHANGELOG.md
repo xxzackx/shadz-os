@@ -2,6 +2,50 @@
 
 ---
 
+## Page Engine v1 Phase 3D — Admin JSON Helper Guidance
+
+**Date:** 2026-06-26
+**Commit:** `357a85e`
+**Status:** Complete, deployed, production-verified, browser live-tested ✓
+
+**Summary:**
+Added template field guidance and sample JSON helpers to the Page Engine admin UI. When creating or editing a page, the admin now sees the expected `content_json` fields for the selected template, with a "↓ Fill sample JSON" button that inserts valid prettified JSON into the textarea. JSON validation feedback (valid/invalid hint) appears on textarea blur.
+
+**Frontend changes (`static/admin.html`):**
+- Template guide div added after template `<select>` in both Create Page and Edit Page sections; hidden by default, populated by JS on template change
+- `updateTemplateGuide(prefix)` — renders field list and Fill sample JSON button for the selected template; hides when no template selected (Edit Page "— keep existing —" case); null-guarded
+- `fillSample(prefix)` — inserts prettified sample JSON into the content textarea, then triggers validation; null-guarded
+- `validateJsonField(prefix)` — on textarea blur: shows ✓ Valid JSON (green) or ✗ Invalid JSON with error message (red); clears when textarea is empty; null-guarded
+- Content textarea height increased 80px → 120px; `font-family` changed to monospace for readability
+- `updateTemplateGuide('pc')` called at script init — guide appears immediately on Create Page load (invitation pre-selected)
+
+**Sample JSON keys (match `_render_page_html` renderer fields exactly):**
+- `invitation`: `message`, `date`, `time`, `venue`, `rsvp_contact`
+- `brand_product`: `tagline`, `description`, `contact`
+- `child_safety`: `child_name`, `age`, `description`, `contact_name`, `contact_phone`, `contact_phone_2`, `notes`
+
+**Technical note — renderer alignment:**
+Sample keys intentionally match the current renderer in `main.py`. If field names change in a future Phase 3E renderer update, samples should be updated in the same commit.
+
+**Unchanged:**
+- `main.py` — not touched
+- Backend routes — not touched
+- DB schema — not touched
+- Public renderer behavior — not touched
+- All existing admin capabilities — confirmed working
+
+**Production deploy (2026-06-26):**
+- VPS pulled `b38ff6e` → `357a85e` (fast-forward); file updated: `static/admin.html`
+- `shadz.service` restarted by Mr.Zack
+- `GET /health` (local) → 200 `{"status":"ok"}` ✓
+- `GET https://shadz.io/health` → 200 `{"status":"ok"}` ✓
+- `GET https://shadz.io/admin` unauthenticated → 401 ✓
+- Browser live test: template guide visible on Create Page load; Fill sample JSON inserts correct JSON; JSON validation hint shows green/red correctly ✓
+
+**Touched:** `static/admin.html` only
+
+---
+
 ## Page Engine v1 Phase 3C — Public Page Rendering
 
 **Date:** 2026-06-26
