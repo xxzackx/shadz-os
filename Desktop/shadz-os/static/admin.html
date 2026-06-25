@@ -753,11 +753,13 @@
       <input type="text" id="pc-title" placeholder="e.g. SHADZ Invitation 2026" autocomplete="off" />
 
       <label for="pc-template">Template</label>
-      <select id="pc-template">
+      <select id="pc-template" onchange="updateTemplateGuide('pc')">
         <option value="invitation">invitation</option>
         <option value="brand_product">brand_product</option>
         <option value="child_safety">child_safety</option>
       </select>
+
+      <div id="pc-template-guide" style="margin-top:-0.6rem;margin-bottom:1rem;padding:0.7rem 0.85rem;background:var(--surface);border:1px solid var(--border-2);border-left:2px solid var(--gold-dim);border-radius:6px;font-size:0.72rem;line-height:1.7;display:none"></div>
 
       <label for="pc-status">Status</label>
       <select id="pc-status">
@@ -766,7 +768,8 @@
       </select>
 
       <label for="pc-content">Content JSON <span style="color:var(--text-muted);font-size:0.7em">(optional)</span></label>
-      <textarea id="pc-content" placeholder='{"key": "value"}' style="width:100%;height:80px;resize:vertical;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);padding:0.5rem 0.7rem;border-radius:4px;font-family:inherit;font-size:0.85rem;box-sizing:border-box"></textarea>
+      <textarea id="pc-content" placeholder='{"key": "value"}' onblur="validateJsonField('pc')" style="width:100%;height:120px;resize:vertical;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);padding:0.5rem 0.7rem;border-radius:4px;font-family:monospace;font-size:0.82rem;box-sizing:border-box"></textarea>
+      <div id="pc-json-hint" style="font-size:0.68rem;margin-top:-0.75rem;margin-bottom:0.75rem;display:none"></div>
 
       <button class="action-btn" id="pc-btn" onclick="createPage()">Create Page</button>
 
@@ -812,12 +815,14 @@
       <input type="text" id="pe-title" placeholder="New title" autocomplete="off" />
 
       <label for="pe-template">Template <span style="color:var(--text-muted);font-size:0.7em">(leave at — to keep existing)</span></label>
-      <select id="pe-template">
+      <select id="pe-template" onchange="updateTemplateGuide('pe')">
         <option value="">— keep existing —</option>
         <option value="invitation">invitation</option>
         <option value="brand_product">brand_product</option>
         <option value="child_safety">child_safety</option>
       </select>
+
+      <div id="pe-template-guide" style="margin-top:-0.6rem;margin-bottom:1rem;padding:0.7rem 0.85rem;background:var(--surface);border:1px solid var(--border-2);border-left:2px solid var(--gold-dim);border-radius:6px;font-size:0.72rem;line-height:1.7;display:none"></div>
 
       <label for="pe-status">Status <span style="color:var(--text-muted);font-size:0.7em">(leave at — to keep existing)</span></label>
       <select id="pe-status">
@@ -828,7 +833,8 @@
       </select>
 
       <label for="pe-content">Content JSON <span style="color:var(--text-muted);font-size:0.7em">(leave blank to keep existing)</span></label>
-      <textarea id="pe-content" placeholder='{"key": "value"}' style="width:100%;height:80px;resize:vertical;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);padding:0.5rem 0.7rem;border-radius:4px;font-family:inherit;font-size:0.85rem;box-sizing:border-box"></textarea>
+      <textarea id="pe-content" placeholder='{"key": "value"}' onblur="validateJsonField('pe')" style="width:100%;height:120px;resize:vertical;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);padding:0.5rem 0.7rem;border-radius:4px;font-family:monospace;font-size:0.82rem;box-sizing:border-box"></textarea>
+      <div id="pe-json-hint" style="font-size:0.68rem;margin-top:-0.75rem;margin-bottom:0.75rem;display:none"></div>
 
       <button class="action-btn" id="pe-btn" onclick="editPage()">Update Page</button>
 
@@ -1859,6 +1865,113 @@
       }
     }
 
+    // ── Page Engine — template guide ─────────────────────────────────────────
+
+    const _PE_SAMPLES = {
+      invitation: {
+        message:      "Short invitation message",
+        date:         "2026-12-31",
+        time:         "18:00",
+        venue:        "Venue name",
+        rsvp_contact: "+85500000000"
+      },
+      brand_product: {
+        tagline:     "Short product tagline",
+        description: "Short product or brand description",
+        contact:     "Contact info or URL"
+      },
+      child_safety: {
+        child_name:     "Child Name",
+        age:            "Age or DOB",
+        description:    "Last seen / physical description",
+        contact_name:   "Guardian Name",
+        contact_phone:  "+85500000000",
+        contact_phone_2:"+85500000000",
+        notes:          "Optional note"
+      }
+    };
+
+    const _PE_FIELD_DOCS = {
+      invitation: [
+        ["message",      "Main body text"],
+        ["date",         "Event date (e.g. 2026-12-31)"],
+        ["time",         "Event time (e.g. 18:00)"],
+        ["venue",        "Venue name"],
+        ["rsvp_contact", "RSVP contact info"],
+      ],
+      brand_product: [
+        ["tagline",     "Short subtitle / tagline"],
+        ["description", "Body text"],
+        ["contact",     "Contact line or URL"],
+      ],
+      child_safety: [
+        ["child_name",     "Child's full name"],
+        ["age",            "Age or date of birth"],
+        ["description",    "Physical description / last seen"],
+        ["contact_name",   "Primary guardian name"],
+        ["contact_phone",  "Primary phone"],
+        ["contact_phone_2","Secondary phone (optional)"],
+        ["notes",          "Additional notes (optional)"],
+      ],
+    };
+
+    function updateTemplateGuide(prefix) {
+      const templateEl = document.getElementById(prefix + '-template');
+      const guideEl    = document.getElementById(prefix + '-template-guide');
+      if (!templateEl || !guideEl) return;
+      const template = templateEl.value;
+      if (!template || !_PE_SAMPLES[template]) {
+        guideEl.style.display = 'none';
+        return;
+      }
+      const rows = _PE_FIELD_DOCS[template].map(([k, doc]) =>
+        `<div><span style="color:var(--text);font-family:monospace">${k}</span>` +
+        `<span style="color:var(--text-muted)"> — ${doc}</span></div>`
+      ).join('');
+      guideEl.innerHTML =
+        `<div style="font-size:0.6rem;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;` +
+        `color:var(--gold-dim);margin-bottom:0.5rem">${template} — fields</div>` +
+        `<div style="margin-bottom:0.65rem">${rows}</div>` +
+        `<button type="button" onclick="fillSample('${prefix}')" ` +
+        `style="font-size:0.7rem;padding:0.3rem 0.7rem;background:var(--surface-2);` +
+        `border:1px solid var(--border-2);color:var(--gold-dim);border-radius:4px;` +
+        `cursor:pointer;letter-spacing:0.05em">↓ Fill sample JSON</button>`;
+      guideEl.style.display = 'block';
+    }
+
+    function fillSample(prefix) {
+      const templateEl = document.getElementById(prefix + '-template');
+      const ta         = document.getElementById(prefix + '-content');
+      if (!templateEl || !ta) return;
+      const template = templateEl.value;
+      if (!_PE_SAMPLES[template]) return;
+      ta.value = JSON.stringify(_PE_SAMPLES[template], null, 2);
+      validateJsonField(prefix);
+    }
+
+    function validateJsonField(prefix) {
+      const ta   = document.getElementById(prefix + '-content');
+      const hint = document.getElementById(prefix + '-json-hint');
+      if (!ta || !hint) return;
+      const val  = ta.value.trim();
+      if (!val) {
+        hint.style.display = 'none';
+        ta.style.borderColor = '';
+        return;
+      }
+      try {
+        JSON.parse(val);
+        hint.textContent     = '✓ Valid JSON';
+        hint.style.color     = '#5a8f5a';
+        ta.style.borderColor = '#2a4a2a';
+      } catch (e) {
+        hint.textContent     = '✗ Invalid JSON — ' + e.message;
+        hint.style.color     = '#a04040';
+        ta.style.borderColor = '#4a2020';
+      }
+      hint.style.display = 'block';
+    }
+
     // ── Page Engine ──────────────────────────────────────────────────────────
 
     async function createPage() {
@@ -2013,6 +2126,9 @@
         btn.disabled = false;
       }
     }
+
+    // Initialize template guide for Create Page (invitation is pre-selected)
+    updateTemplateGuide('pc');
   </script>
 </body>
 </html>
