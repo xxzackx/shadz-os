@@ -94,9 +94,10 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 - Storage Manager (browse all assets; rename / add display name — Phase 1B)
 - Convert URL ↔ Media type — Phase 3 v0.1
 - Export CSV — download all link/client records as CSV — Phase C
-- Page Engine admin routes (Phase 3A) — create/update pages; attach/detach pages to page slugs
+- Page Engine admin routes (Phase 3A, `c6c5a15`) — create/update pages; attach/detach pages to page slugs; all backend-only
+- Page Engine admin UI (Phase 3B, `a57fff7`) — Module C in admin panel; Create Page, Edit Page (partial-update), Attach / Detach; wired to Phase 3A backend routes
 
-**Admin UI version:** Phase 1B `1d11005` — Media asset rename (deployed 2026-06-19), on top of Phase 1 display names (`4476142`), Hotfix `edb2c2c`, Phase C CSV Export (`45d2656`). Page Engine Phase 2 (`e37a56c`, deployed 2026-06-20) added DB tables only — no admin UI change. Page Engine Phase 3A (`c6c5a15`, deployed 2026-06-20) added admin backend routes — no public page rendering, no final admin UI.
+**Admin UI version:** Phase 3B `a57fff7` — Page Engine admin UI (deployed 2026-06-25). Previous: Phase 1B `1d11005` media asset rename, Hotfix `edb2c2c`, Phase C `45d2656` CSV export. Page Engine Phase 2 (`e37a56c`) added DB tables only; Phase 3A (`c6c5a15`) added backend routes only; Phase 3B adds admin UI. No public page rendering yet.
 
 ---
 
@@ -273,6 +274,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Page Engine v1 Phase 1B — Media Asset Rename (`1d11005`, deployed 2026-06-19) — `PATCH /admin/media/assets/{id}` endpoint; Storage Manager Add Name / Edit Name action; `_assetMap` pattern prevents XSS via HTML attributes; only `display_name` writable; all other asset fields and R2 object unchanged
 - Page Engine v1 Phase 2 — DB Foundation (`e37a56c`, deployed 2026-06-20) — `pages` + `page_slug_attachments` tables; `PAGE_TEMPLATE_TYPES` + `PAGE_STATUSES` constants; idempotent migration guards; partial unique index `idx_page_slug_one_active`; no routes, no UI, no public rendering; DB backup `shadz.db.backup-before-page-engine-phase2-20260620-195630`
 - Page Engine v1 Phase 3A — Admin Backend Routes (`c6c5a15`, deployed 2026-06-20) — page create/update/attach/detach admin routes; safety helpers; Pydantic schemas; all routes behind existing Basic Auth; re-attach deactivates old active attachment and preserves history; no public rendering; no DB migration; DB backup `shadz.db.backup-before-page-engine-phase3a-20260620-211430`
+- Page Engine v1 Phase 3B — Admin UI (`a57fff7`, deployed 2026-06-25) — `static/admin.html` only; Module C Page Engine on home screen; Create Page, Edit Page (partial-update), Attach/Detach sections; four JS functions wired to Phase 3A routes; no backend changes; no new routes; DB backup `shadz.db.backup-before-page-engine-phase3b-20260625-184943`
 
 ### Active slug type policy
 
@@ -295,7 +297,8 @@ This section exists to give Claude Code a compressed snapshot of current project
 
 - Type Conversion v0.2 — page conversion, extended conversion rules (not started)
 - Analytics / Scan Tracking Chart — not started
-- Page Engine v1 Phase 3B — admin UI integration / Page Engine panel in admin.html; connect to Phase 3A backend routes; page list, create form, edit form, attach/detach controls
+- Page Engine v1 Phase 3C (possible patch) — `GET /admin/pages/{page_id}` JSON read endpoint to support Edit Page pre-fill; not required for v1
+- Page Engine v1 public rendering — not started; page slugs currently return 404 if no active attachment
 - Proper UI login/logout system — deferred; Basic Auth popup is accepted for now
 - Role-based admin security — deferred until multi-admin use case arises
 

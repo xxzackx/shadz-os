@@ -2,6 +2,104 @@
 
 ---
 
+## Page Engine v1 Phase 3B — Admin UI
+
+**Date:** 2026-06-25
+**Commit:** `a57fff7`
+**Status:** Complete, deployed, production-verified
+
+**Summary:**
+Wired Phase 3A backend routes into the admin panel. Added Page Engine as Module C on the admin home screen with three sections: Create Page, Edit Page, and Attach / Detach.
+
+**Frontend changes (`static/admin.html`):**
+- Module C: Page Engine added to home screen (after Media Engine)
+- Three new home-card tiles: Create Page, Edit Page, Attach / Detach
+- `pageCreateSection` — form to create a new page; title (required), template select (`invitation` / `brand_product` / `child_safety`), status select (`draft` / `ready`), optional content JSON textarea; result box shows page ID on success
+- `pageEditSection` — partial-update form; page ID required; only filled fields sent in payload (omitted fields preserved server-side); blank select option `"— keep existing —"` prevents accidental overwrites; informational note shown to user
+- `pageAttachSection` — two sub-blocks: Attach (page ID + slug → `POST /admin/pages/attach`) and Detach (slug only → `POST /admin/pages/detach`); separated by visual divider with sub-labels
+- Four JS functions added: `createPage()`, `editPage()`, `attachPage()`, `detachPage()` — all use `credentials: 'same-origin'`, button-disable during request, `showMsg()` for success/error
+- `GRID_SECTIONS` unchanged (new sections are simple form layouts, not card grids)
+
+**Backend routes used (no backend changes — Phase 3A routes only):**
+- `POST /admin/pages` — create page
+- `POST /admin/pages/{page_id}` — partial update
+- `POST /admin/pages/attach` — attach page to slug
+- `POST /admin/pages/detach` — detach page from slug
+
+**Remaining limitation:**
+Edit Page cannot pre-populate with existing data — no `GET /admin/pages/{page_id}` JSON endpoint exists. The edit form is a partial-update form only. A read endpoint can be added as a future patch if needed.
+
+**Unchanged (confirmed):**
+- All existing admin sections — untouched
+- All backend files — untouched
+- No new routes added
+- No DB migration
+
+**Production deploy:**
+- DB backup: `shadz.db.backup-before-page-engine-phase3b-20260625-184943`
+- VPS pulled `a57fff7` via `git pull origin master`
+- `shadz.service` restarted; confirmed `active (running)`
+- Local `/health` → `200` `{"status":"ok"}`
+- Public `https://shadz.io/health` → `200` `{"status":"ok"}`
+- `https://shadz.io/admin` unauthenticated → `401` ✓
+- Browser live test: Create Page, Edit Page, Attach/Detach all confirmed working ✓
+- All existing admin functions confirmed working ✓
+
+**Touched:** `static/admin.html` only
+
+---
+
+## Page Engine v1 Phase 3A — Admin Backend Routes
+
+**Date:** 2026-06-20
+**Commit:** `c6c5a15`
+**Status:** Complete, deployed, production-verified
+
+**Summary:**
+Added all Page Engine admin backend routes behind existing Basic Auth. No public page rendering. No admin UI. No DB migration.
+
+**Backend changes (`main.py`, +387 lines, 0 deleted):**
+
+Schemas added:
+- `PageCreateRequest` — `title`, `template_type`, `status` (default `draft`), `content_json` (optional)
+- `PageUpdateRequest` — all fields optional (partial update semantics)
+- `PageOut` — full page record response
+- `PageAttachRequest` — `page_id`, `slug`
+- `PageDetachRequest` — `slug`
+
+Helpers added:
+- `_get_page_or_404(page_id, db)` — raises 404 if page not found
+- `_validate_page_template(template_type)` — validates against `PAGE_TEMPLATE_TYPES`
+- `_validate_page_status(status)` — validates against `PAGE_STATUSES`
+- `_get_active_page_attachment(slug, db)` — returns active `PageSlugAttachment` or None
+
+Routes added (all under `admin_router`, Basic Auth protected):
+- `GET  /admin/pages/new` — minimal standalone test form (not integrated into admin.html)
+- `POST /admin/pages` — create page (draft by default); does not attach to any slug
+- `POST /admin/pages/attach` — attach page to slug; validates slug exists with `content_type='page'`; deactivates old active attachment; preserves history
+- `POST /admin/pages/detach` — safe no-op deactivation; preserves history; no error if nothing attached
+- `GET  /admin/pages/{page_id}/edit` — minimal standalone test form (not integrated into admin.html)
+- `POST /admin/pages/{page_id}` — partial update; omitted fields preserved
+
+**Route ordering note:**
+`/attach` and `/detach` registered before `/{page_id}` to prevent FastAPI coercing string path segments as int.
+
+**Application-layer FK enforcement:**
+Attach route validates slug exists in `redirect_links` with `content_type='page'` before writing. `PRAGMA foreign_keys=ON` still not enabled — consistent with existing production pattern.
+
+**Production deploy:**
+- DB backup: `shadz.db.backup-before-page-engine-phase3a-20260620-211430`
+- VPS pulled `c6c5a15`
+- `shadz.service` restarted; confirmed `active (running)`
+- `/health` → 200, `/admin` unauthed → 401 ✓
+- `pages` → 0 rows, `page_slug_attachments` → 0 rows ✓
+
+**Touched:** `main.py` only
+**Database:** no migration — tables already exist from Phase 2
+**Frontend:** untouched
+
+---
+
 ## Page Engine v1 Phase 2 — Database Foundation
 
 **Date:** 2026-06-20
