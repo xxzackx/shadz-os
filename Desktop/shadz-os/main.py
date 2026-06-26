@@ -427,24 +427,6 @@ def _media_not_ready_html(slug: str) -> str:
 </html>"""
 
 
-def _page_placeholder_html(slug: str) -> str:
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SHADZ</title>
-  <style>
-    *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
-    body{{background:#000;color:#4a4540;min-height:100vh;display:flex;
-         align-items:center;justify-content:center;font-family:system-ui,sans-serif}}
-    p{{font-size:.75rem;letter-spacing:.2em;text-transform:uppercase}}
-  </style>
-</head>
-<body><p>Coming soon</p></body>
-</html>"""
-
-
 def _expired_page_html() -> str:
     return """<!DOCTYPE html>
 <html lang="en">
@@ -1662,7 +1644,7 @@ def redirect_slug(slug: str, request: Request, db: Session = Depends(get_db)):
     Behaviour depends on the slug's content_type:
       url   → 302 redirect to destination_url  (legacy behaviour unchanged)
       media → render lightweight media page (or 'Media not ready yet' page)
-      page  → placeholder 'Coming soon' page
+      page  → renders active attached page via Page Engine (404 if none attached)
       other → 302 redirect to destination_url for backward-compat with old slugs
     """
     if slug in RESERVED_SLUGS:
