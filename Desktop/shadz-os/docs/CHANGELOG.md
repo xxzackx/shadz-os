@@ -2,6 +2,69 @@
 
 ---
 
+## Page Engine v1 Phase 4D — Public Page Handler Extraction
+
+**Date:** 2026-06-27
+**Commit:** `d502819`
+**Status:** Code-completed locally — not yet pushed, not yet deployed, not yet production-verified
+
+**Summary:**
+Extracted public Page Engine page handling out of `main.py` into a dedicated `page_public.py` module. Shared active-attachment query helper moved into a new `page_queries.py` module so that public runtime code does not depend on the admin module. Refactor-only milestone — no behavior change, no schema change, no admin UI change, no route change, no new features.
+
+**Changes:**
+
+New file `page_queries.py`:
+- `get_active_page_attachment(slug, db)` — shared DB query helper; returns active `PageSlugAttachment` or `None`; logic identical to the former `_get_active_page_attachment` in `page_admin.py`
+
+New file `page_public.py`:
+- `serve_public_page(slug, db)` — public page handler; calls `get_active_page_attachment`, queries `Page` record, calls `_render_page_html`, returns `HTMLResponse`; raises 404 if no attachment or page record missing
+- Imports only from `page_queries` and `page_renderer` — no dependency on `page_admin`
+
+`page_admin.py` changes:
+- Added `from page_queries import get_active_page_attachment`
+- Removed `_get_active_page_attachment` function (moved to `page_queries.py`)
+- Updated detach route call site from `_get_active_page_attachment(...)` to `get_active_page_attachment(...)`
+
+`main.py` changes:
+- Removed `from page_renderer import _render_page_html` (no longer used directly in `main.py`)
+- Changed `from page_admin import register_page_admin_routes, _get_active_page_attachment` → `from page_admin import register_page_admin_routes`
+- Added `from page_public import serve_public_page`
+- Replaced 7-line page block in `redirect_slug` with `return serve_public_page(slug, db)`
+
+Net: 4 files changed, 36 insertions(+), 20 deletions(−). Two new files created.
+
+**Unchanged:**
+- All route paths — identical
+- All response shapes — identical
+- All status codes — identical
+- All error detail strings — identical
+- url/media/legacy slug behavior — untouched
+- Archive/expired page behavior — untouched
+- Admin routes — untouched
+- Auth — untouched
+- `page_renderer.py` — not touched
+- `static/admin.html` — not touched
+- Database schema — no migration
+
+**Local verification (pre-commit):**
+- `python -m compileall -q .` → no errors ✓
+- `python -c "import main; import page_public; import page_admin; import page_queries; print('imports OK')"` → `imports OK` ✓
+
+**Not yet verified:**
+- No push to remote
+- No VPS deploy
+- No production curl checks
+- No browser live test
+
+**Touched:** `main.py` (modified), `page_admin.py` (modified), `page_public.py` (new), `page_queries.py` (new)
+**Database:** untouched — no migration
+**Schema:** untouched
+**Admin UI:** untouched
+**Nginx:** untouched
+**Auth:** untouched
+
+---
+
 ## Page Engine v1 Phase 4C — Dead Code Removal
 
 **Date:** 2026-06-27

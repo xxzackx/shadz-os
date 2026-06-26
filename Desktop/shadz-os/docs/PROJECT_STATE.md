@@ -281,8 +281,9 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Page Engine v1 Phase 3C — Public Page Rendering (`165c0d3`, deployed 2026-06-26) — `main.py` only; `_render_page_html()` renders `invitation`, `brand_product`, `child_safety` templates; page slug with active attachment → 200 HTML; no active attachment → 404; archived → 410 unchanged; all user text HTML-escaped; visual design acceptable for testing, not yet client-facing polish
 - Page Engine v1 Phase 3D — Admin JSON Helper (`357a85e`, deployed 2026-06-26) — `static/admin.html` only; template guide with field list + Fill sample JSON button; inline JSON validation (valid/invalid hint on blur); null-guarded JS functions; no backend changes; no DB migration; no renderer change
 - Page Engine v1 Phase 4A — Renderer Extraction (`e3965f5`, deployed 2026-06-26) — `_render_page_html()` moved from `main.py` into new `page_renderer.py`; `import html` and `import json` moved with it; `main.py` imports it via `from page_renderer import _render_page_html`; refactor-only, no behavior change, no DB migration, no admin UI change, no route change
-- Page Engine v1 Phase 4B — Admin Extraction (`054b4b6`, deployed 2026-06-27) — 5 Page Engine Pydantic schemas, 4 helper functions, and 6 admin route handlers moved from `main.py` into new `page_admin.py`; `register_page_admin_routes(admin_router)` wires routes back; `_get_active_page_attachment` re-exported for use in public `redirect_slug`; `main.py` reduced by ~386 lines; refactor-only, no behavior change, no DB migration, no admin UI change, no route change; browser live-tested: Create/Edit/Attach/Detach/render all confirmed ✓
+- Page Engine v1 Phase 4B — Admin Extraction (`054b4b6`, deployed 2026-06-27) — 5 Page Engine Pydantic schemas, 4 helper functions, and 6 admin route handlers moved from `main.py` into new `page_admin.py`; `register_page_admin_routes(admin_router)` wires routes back; `main.py` reduced by ~386 lines; refactor-only, no behavior change, no DB migration, no admin UI change, no route change; browser live-tested: Create/Edit/Attach/Detach/render all confirmed ✓
 - Page Engine v1 Phase 4C — Dead Code Removal (`832a753`, 2026-06-27) — `_page_placeholder_html` removed from `main.py` (orphaned in Phase 3C, confirmed no callers anywhere in codebase); `redirect_slug` docstring corrected from stale "placeholder 'Coming soon'" to accurate "renders active attached page via Page Engine (404 if none attached)"; runtime-cleanup only, no behavior change, no schema change, no route change, no admin UI change, no DB migration; `main.py` reduced from 1720 to 1703 lines
+- Page Engine v1 Phase 4D — Public Page Handler Extraction (`d502819`, 2026-06-27) — public page block extracted from `redirect_slug` into new `page_public.py` (`serve_public_page`); shared attachment query moved into new `page_queries.py` (`get_active_page_attachment`); `page_public.py` imports only from `page_queries`/`page_renderer` — no admin coupling; `page_admin.py` updated to use `page_queries`; `main.py` calls `serve_public_page(slug, db)`; refactor-only, no behavior change, no schema change, no route change, no admin UI change, no DB migration; **code-completed locally — not yet pushed/deployed/production-verified**
 
 ### Active slug type policy
 
@@ -301,11 +302,13 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Media attach endpoint guard unchanged: only `content_type == "media"` slugs can attach media
 - Public redirect route: branches on `content_type`, not slug prefix — slug string never changes
 
-### Source file layout (as of Phase 4C)
+### Source file layout (as of Phase 4D)
 
-- `main.py` — FastAPI app composition layer; public routes, redirect/media/auth/migration logic; imports and wires page_renderer and page_admin; `_page_placeholder_html` removed in Phase 4C (dead code, orphaned in Phase 3C)
-- `page_renderer.py` — Page Engine public renderer only (`_render_page_html()`); imported by `main.py`
-- `page_admin.py` — Page Engine admin schemas, helpers, and route registration (`register_page_admin_routes()`); `_get_active_page_attachment` also imported by `main.py` for the public redirect route
+- `main.py` — FastAPI app composition layer; public routes, redirect/media/auth/migration logic; imports and wires `page_admin`, `page_public`; page dispatch delegated to `serve_public_page`
+- `page_renderer.py` — Page Engine public renderer only (`_render_page_html()`); imported by `page_public.py`
+- `page_admin.py` — Page Engine admin schemas, helpers, and route registration (`register_page_admin_routes()`); uses `get_active_page_attachment` from `page_queries`
+- `page_public.py` — public page handler (`serve_public_page(slug, db)`); imports from `page_queries` and `page_renderer` only — no admin coupling
+- `page_queries.py` — shared DB query helpers (`get_active_page_attachment`); no FastAPI or admin dependencies
 - `models.py` — SQLAlchemy ORM models and constants
 - `database.py` — SQLAlchemy engine and session factory
 
