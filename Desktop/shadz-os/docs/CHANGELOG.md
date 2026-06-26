@@ -5,8 +5,9 @@
 ## Page Engine v1 Phase 4D — Public Page Handler Extraction
 
 **Date:** 2026-06-27
-**Commit:** `d502819`
-**Status:** Code-completed locally — not yet pushed, not yet deployed, not yet production-verified
+**Runtime commit:** `d502819`
+**Deploy/docs baseline:** `87f33b0`
+**Status:** Complete, pushed, deployed, production-verified, browser-tested, VPS-synced, and closed
 
 **Summary:**
 Extracted public Page Engine page handling out of `main.py` into a dedicated `page_public.py` module. Shared active-attachment query helper moved into a new `page_queries.py` module so that public runtime code does not depend on the admin module. Refactor-only milestone — no behavior change, no schema change, no admin UI change, no route change, no new features.
@@ -50,11 +51,22 @@ Net: 4 files changed, 36 insertions(+), 20 deletions(−). Two new files created
 - `python -m compileall -q .` → no errors ✓
 - `python -c "import main; import page_public; import page_admin; import page_queries; print('imports OK')"` → `imports OK` ✓
 
-**Not yet verified:**
-- No push to remote
-- No VPS deploy
-- No production curl checks
-- No browser live test
+**Production deploy (2026-06-27):**
+- Runtime commit: `d502819`; docs baseline before closure: `87f33b0`
+- VPS pulled fast-forward from `e19cc4b` to `87f33b0`; new files `page_public.py` and `page_queries.py` confirmed present on VPS
+- `python3 -m compileall -q .` on VPS → no errors ✓
+- `sudo systemctl restart shadz.service` completed; readiness wait used before curl checks; app ready after 3 seconds
+- `shadz.service` confirmed `active (running)`; Uvicorn showed "Application startup complete"
+- Local `GET http://127.0.0.1:8000/health` → 200 `{"status":"ok"}` ✓
+- Public `GET https://shadz.io/health` → 200 `{"status":"ok"}` ✓
+- Unauthenticated `GET https://shadz.io/admin` → 401 ✓
+
+**Browser live test (2026-06-27):**
+- Admin → OK ✓
+- Page slug public render → OK ✓
+- URL slug redirect → OK ✓
+- Media slug render → OK ✓
+- Phase 4D browser test passed ✓
 
 **Touched:** `main.py` (modified), `page_admin.py` (modified), `page_public.py` (new), `page_queries.py` (new)
 **Database:** untouched — no migration
