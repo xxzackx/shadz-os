@@ -2,6 +2,56 @@
 
 ---
 
+## Page Engine v1 Phase 4B — Admin Route Extraction
+
+**Date:** 2026-06-27
+**Commit:** `054b4b6`
+**Status:** Complete, local verified, not yet deployed
+
+**Summary:**
+Refactored Page Engine admin/backend logic out of `main.py` into a dedicated `page_admin.py` module. Refactor-only milestone — no behavior change, no schema change, no admin UI change, no route change, no new features.
+
+**Changes (`main.py`, `page_admin.py` new):**
+
+Moved to `page_admin.py`:
+- Pydantic schemas: `PageCreateRequest`, `PageUpdateRequest`, `PageOut`, `PageAttachRequest`, `PageDetachRequest`
+- Helper functions: `_get_page_or_404`, `_validate_page_template`, `_validate_page_status`, `_get_active_page_attachment`
+- Admin route handlers (all 6): `GET /admin/pages/new`, `POST /admin/pages`, `POST /admin/pages/attach`, `POST /admin/pages/detach`, `GET /admin/pages/{page_id}/edit`, `POST /admin/pages/{page_id}`
+- Route registration via `register_page_admin_routes(admin_router)` — routes inherit the existing router's `/admin` prefix and `verify_admin` dependency unchanged
+
+`main.py` changes:
+- Added: `from page_admin import register_page_admin_routes, _get_active_page_attachment`
+- Added: `register_page_admin_routes(admin_router)` call before `app.include_router(admin_router)`
+- Removed: all 5 Page Engine schemas, 4 helpers, 6 admin route handlers (~386 lines removed)
+- `main.py` is now the app composition layer only
+
+`_get_active_page_attachment` is re-exported from `page_admin.py` and imported back into `main.py` for use in the public `redirect_slug` route. No circular imports — `page_admin.py` never imports from `main.py`.
+
+**Unchanged:**
+- All route paths — identical
+- All response shapes — identical
+- Auth behavior — inherited unchanged from `admin_router`
+- Public rendering — `page_renderer.py` untouched
+- `static/admin.html` — not touched
+- Database schema — no migration
+- All other systems — untouched
+
+**Local test results (2026-06-27):**
+- `python -m compileall .` → no errors ✓
+- `GET /health` → 200 `{"status":"ok"}` ✓
+- `GET /admin` unauthenticated → 401 `{"detail":"Not authenticated"}` ✓
+- `GET /admin/pages/new` unauthenticated → 401 ✓ (route exists, auth protected)
+- OpenAPI confirms: `POST /admin/pages`, `POST /admin/pages/attach`, `POST /admin/pages/detach`, `POST /admin/pages/{page_id}` all registered ✓
+
+**Touched:** `main.py` (modified), `page_admin.py` (new file), `docs/PROJECT_STATE.md`, `docs/CHANGELOG.md`
+**Database:** untouched — no migration
+**Schema:** untouched
+**Admin UI:** untouched
+**Nginx:** untouched
+**Auth:** untouched
+
+---
+
 ## Page Engine v1 Phase 4A — Surgical Renderer Extraction
 
 **Date:** 2026-06-26
