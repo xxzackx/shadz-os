@@ -23,8 +23,8 @@ from sqlalchemy.exc import IntegrityError
 
 import models
 from database import Base, engine, get_db
-from page_renderer import _render_page_html
-from page_admin import register_page_admin_routes, _get_active_page_attachment
+from page_admin import register_page_admin_routes
+from page_public import serve_public_page
 
 Base.metadata.create_all(bind=engine)
 
@@ -1688,13 +1688,7 @@ def redirect_slug(slug: str, request: Request, db: Session = Depends(get_db)):
 
     # ── page ───────────────────────────────────────────────────────────────
     if ct == "page":
-        attachment = _get_active_page_attachment(slug, db)
-        if not attachment:
-            raise HTTPException(status_code=404, detail=f"No active page for '{slug}'")
-        page = db.query(models.Page).filter(models.Page.id == attachment.page_id).first()
-        if not page:
-            raise HTTPException(status_code=404, detail=f"Page not found for '{slug}'")
-        return HTMLResponse(content=_render_page_html(page))
+        return serve_public_page(slug, db)
 
     # ── url + legacy slugs → redirect ──────────────────────────────────────
     if not link.destination_url:

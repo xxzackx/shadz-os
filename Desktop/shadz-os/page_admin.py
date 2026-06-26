@@ -7,6 +7,7 @@ Routes inherit the router's /admin prefix and verify_admin dependency unchanged.
 from datetime import datetime, timezone
 
 from fastapi import Depends, HTTPException
+from page_queries import get_active_page_attachment
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
@@ -84,16 +85,6 @@ def _validate_page_status(status: str) -> None:
             ),
         )
 
-
-def _get_active_page_attachment(slug: str, db: Session) -> models.PageSlugAttachment | None:
-    return (
-        db.query(models.PageSlugAttachment)
-        .filter(
-            models.PageSlugAttachment.slug == slug,
-            models.PageSlugAttachment.is_active == True,
-        )
-        .first()
-    )
 
 
 # ── Page Engine v1 — admin route registration ─────────────────────────────────
@@ -277,7 +268,7 @@ def register_page_admin_routes(admin_router) -> None:
         Safe no-op if no active attachment exists — returns success with a message
         instead of an error. Does not delete records; history is preserved.
         """
-        attachment = _get_active_page_attachment(payload.slug, db)
+        attachment = get_active_page_attachment(payload.slug, db)
         if not attachment:
             return {
                 "success": True,
