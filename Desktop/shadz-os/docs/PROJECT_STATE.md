@@ -212,6 +212,8 @@ Legacy NFC system. Unchanged since v0.1.
 - Nginx config and systemd config should not be touched without a specific infra task
 - Always verify `/admin` returns 401 unauthenticated after any auth-adjacent change
 - `HEAD` or unsupported HTTP methods returning 405 is expected behavior, not a bug
+- On VPS, use `python3` not `python` — `python` is not in PATH
+- After `sudo systemctl restart shadz.service`, wait before curl checks — an immediate check may briefly show `502 Bad Gateway` while Uvicorn is still starting; use `sleep 5` or a retry loop before hitting Nginx endpoints
 
 ---
 
@@ -279,7 +281,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Page Engine v1 Phase 3C — Public Page Rendering (`165c0d3`, deployed 2026-06-26) — `main.py` only; `_render_page_html()` renders `invitation`, `brand_product`, `child_safety` templates; page slug with active attachment → 200 HTML; no active attachment → 404; archived → 410 unchanged; all user text HTML-escaped; visual design acceptable for testing, not yet client-facing polish
 - Page Engine v1 Phase 3D — Admin JSON Helper (`357a85e`, deployed 2026-06-26) — `static/admin.html` only; template guide with field list + Fill sample JSON button; inline JSON validation (valid/invalid hint on blur); null-guarded JS functions; no backend changes; no DB migration; no renderer change
 - Page Engine v1 Phase 4A — Renderer Extraction (`e3965f5`, deployed 2026-06-26) — `_render_page_html()` moved from `main.py` into new `page_renderer.py`; `import html` and `import json` moved with it; `main.py` imports it via `from page_renderer import _render_page_html`; refactor-only, no behavior change, no DB migration, no admin UI change, no route change
-- Page Engine v1 Phase 4B — Admin Extraction (`054b4b6`, local only) — 5 Page Engine Pydantic schemas, 4 helper functions, and 6 admin route handlers moved from `main.py` into new `page_admin.py`; `register_page_admin_routes(admin_router)` wires routes back; `_get_active_page_attachment` re-exported for use in public `redirect_slug`; `main.py` reduced by ~386 lines; refactor-only, no behavior change, no DB migration, no admin UI change, no route change
+- Page Engine v1 Phase 4B — Admin Extraction (`054b4b6`, deployed 2026-06-27) — 5 Page Engine Pydantic schemas, 4 helper functions, and 6 admin route handlers moved from `main.py` into new `page_admin.py`; `register_page_admin_routes(admin_router)` wires routes back; `_get_active_page_attachment` re-exported for use in public `redirect_slug`; `main.py` reduced by ~386 lines; refactor-only, no behavior change, no DB migration, no admin UI change, no route change; browser live-tested: Create/Edit/Attach/Detach/render all confirmed ✓
 
 ### Active slug type policy
 

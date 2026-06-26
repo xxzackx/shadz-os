@@ -6,7 +6,7 @@
 
 **Date:** 2026-06-27
 **Commit:** `054b4b6`
-**Status:** Complete, local verified, not yet deployed
+**Status:** Complete, deployed, production-verified, browser live-tested ✓
 
 **Summary:**
 Refactored Page Engine admin/backend logic out of `main.py` into a dedicated `page_admin.py` module. Refactor-only milestone — no behavior change, no schema change, no admin UI change, no route change, no new features.
@@ -37,11 +37,23 @@ Moved to `page_admin.py`:
 - All other systems — untouched
 
 **Local test results (2026-06-27):**
-- `python -m compileall .` → no errors ✓
+- `python3 -m compileall -f .` → no errors ✓
 - `GET /health` → 200 `{"status":"ok"}` ✓
 - `GET /admin` unauthenticated → 401 `{"detail":"Not authenticated"}` ✓
 - `GET /admin/pages/new` unauthenticated → 401 ✓ (route exists, auth protected)
 - OpenAPI confirms: `POST /admin/pages`, `POST /admin/pages/attach`, `POST /admin/pages/detach`, `POST /admin/pages/{page_id}` all registered ✓
+
+**Production deploy (2026-06-27):**
+- VPS pulled `926dcd9` (docs) + `054b4b6` (runtime) via `git pull origin master`
+- `python3 -m compileall -f .` on VPS → no errors ✓
+- `shadz.service` restarted; confirmed `active (running)`
+- Local `GET /health` → 200 `{"status":"ok"}` ✓
+- Public `GET https://shadz.io/health` → 200 `{"status":"ok"}` ✓
+- Local `GET /admin` unauth → 401 ✓
+- Public `GET https://shadz.io/admin` unauth → 401 ✓
+- Local `GET /admin/pages/new` unauth → 401 ✓
+- Public `GET https://shadz.io/admin/pages/new` unauth → 401 ✓
+- Browser live tests: Create Page ✓, Edit Page ✓, Attach Page ✓, Detach Page ✓, active page render ✓, URL slug ✓, Media slug ✓
 
 **Touched:** `main.py` (modified), `page_admin.py` (new file), `docs/PROJECT_STATE.md`, `docs/CHANGELOG.md`
 **Database:** untouched — no migration
