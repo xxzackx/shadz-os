@@ -2,6 +2,44 @@
 
 ---
 
+## Page Engine v1 Phase 4C — Dead Code Removal
+
+**Date:** 2026-06-27
+**Commit:** `832a753`
+**Status:** Runtime committed locally, docs update in progress, not yet pushed/deployed
+
+**Summary:**
+Removed orphaned dead code and corrected a stale docstring in `main.py`. Runtime-cleanup milestone — no behavior change, no feature addition, no schema change, no route change, no admin UI change.
+
+**Changes (`main.py` only):**
+- Deleted `_page_placeholder_html()` — 18-line function (def + HTML template + blank separators) orphaned in Phase 3C when `redirect_slug` switched from returning a "Coming soon" placeholder to doing an active-attachment lookup + real render via Page Engine. No callers existed anywhere in the codebase; the Phase 3C CHANGELOG entry had already noted it as no longer called.
+- Corrected stale docstring in `redirect_slug`: `page  → placeholder 'Coming soon' page` updated to `page  → renders active attached page via Page Engine (404 if none attached)`, accurately reflecting behavior since Phase 3C.
+
+Net: 1 file changed, 1 insertion(+), 19 deletions(−). `main.py` reduced from 1720 to 1703 lines.
+
+**Unchanged:**
+- All routes — identical
+- All response shapes — identical
+- All public behavior — identical
+- Auth — unchanged
+- `page_renderer.py` — not touched
+- `page_admin.py` — not touched
+- `static/admin.html` — not touched
+- Database schema — no migration
+
+**Local verification (pre-commit):**
+- `python -c "import main; print('import OK')"` → `import OK` ✓
+- `grep -n "_page_placeholder_html" main.py` → no output ✓
+
+**Touched:** `main.py` only
+**Database:** untouched — no migration
+**Schema:** untouched
+**Admin UI:** untouched
+**Nginx:** untouched
+**Auth:** untouched
+
+---
+
 ## Page Engine v1 Phase 4B — Admin Route Extraction
 
 **Date:** 2026-06-27
