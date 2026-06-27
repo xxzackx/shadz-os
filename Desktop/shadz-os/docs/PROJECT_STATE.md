@@ -285,6 +285,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Page Engine v1 Phase 4C — Dead Code Removal (`832a753`, 2026-06-27) — `_page_placeholder_html` removed from `main.py` (orphaned in Phase 3C, confirmed no callers anywhere in codebase); `redirect_slug` docstring corrected from stale "placeholder 'Coming soon'" to accurate "renders active attached page via Page Engine (404 if none attached)"; runtime-cleanup only, no behavior change, no schema change, no route change, no admin UI change, no DB migration; `main.py` reduced from 1720 to 1703 lines
 - Page Engine v1 Phase 4D — Public Page Handler Extraction (`d502819`, deployed 2026-06-27) — public page block extracted from `redirect_slug` into new `page_public.py` (`serve_public_page`); shared attachment query moved into new `page_queries.py` (`get_active_page_attachment`); `page_public.py` imports only from `page_queries`/`page_renderer` — no admin coupling; `page_admin.py` updated to use `page_queries`; `main.py` calls `serve_public_page(slug, db)`; refactor-only, no behavior change, no schema change, no route change, no admin UI change, no DB migration; browser live-tested: Admin ✓, page slug ✓, URL slug ✓, media slug ✓
 - Page Engine v1 Phase 4E — Public Link Handler Extraction (`f32ec27`, deployed 2026-06-28) — 3 HTML generators (`_expired_page_html`, `_media_page_html`, `_media_not_ready_html`) and media dispatch logic moved from `main.py` into new `link_public.py` (`expired_page_response`, `serve_public_media`); `@app.get("/{slug}")` route decorator kept in `main.py` for route-order safety; `HTMLResponse` import removed from `main.py`; refactor-only, no behavior change, no schema change, no route change, no admin UI change, no DB migration; browser live-tested: Admin ✓, URL slug ✓, media slug ✓, page slug ✓, archived 410 ✓
+- Page Engine v1 Phase 4F — Media Engine Admin Extraction (`f490ae8`, deployed 2026-06-28) — 8 Media Engine admin route handlers, 9 Pydantic schemas, and 5 R2 helper functions/constants moved from `main.py` into new `media_admin.py`; `register_media_admin_routes(admin_router)` wires routes back; `boto3`, `botocore`, and `func` imports removed from `main.py`; refactor-only, no behavior change, no schema change, no route change, no admin UI change, no DB migration; browser live-tested: Admin ✓, media upload ✓, media attach/detach ✓, Storage Manager ✓
 
 ### Active slug type policy
 
@@ -303,9 +304,10 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Media attach endpoint guard unchanged: only `content_type == "media"` slugs can attach media
 - Public redirect route: branches on `content_type`, not slug prefix — slug string never changes
 
-### Source file layout (as of Phase 4E)
+### Source file layout (as of Phase 4F)
 
-- `main.py` — FastAPI app composition layer; public routes, routing logic, auth, migration; imports and wires `page_admin`, `page_public`, `link_public`; catch-all `/{slug}` route stays here for route-order safety
+- `main.py` — FastAPI app composition layer; public routes, routing logic, auth, migration; imports and wires `media_admin`, `page_admin`, `page_public`, `link_public`; catch-all `/{slug}` route stays here for route-order safety
+- `media_admin.py` — Media Engine admin schemas, R2 helpers, and route registration (`register_media_admin_routes()`); all 8 `/admin/media/*` routes; no public coupling
 - `link_public.py` — public link/media HTML generators and handlers (`expired_page_response`, `serve_public_media`); no admin coupling
 - `page_renderer.py` — Page Engine public renderer only (`_render_page_html()`); imported by `page_public.py`
 - `page_admin.py` — Page Engine admin schemas, helpers, and route registration (`register_page_admin_routes()`); uses `get_active_page_attachment` from `page_queries`
@@ -317,7 +319,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 ### Not yet implemented
 
 - Phase 3E — Public page visual upgrade (deferred; current v1 rendering is functional and acceptable for internal testing; polish pass planned before official client-facing sales use; when implemented, update `_render_page_html` renderer fields in `page_renderer.py` and `_PE_SAMPLES` in `admin.html` in the same commit if field names change)
-- Next recommended milestone: continue surgical modularization only after review
+- Next recommended milestone: Phase 4G — inspect `main.py` for remaining extractable admin utility routes (CSV export, bulk archive/restore, convert) only if boundaries are clean; keep priority on finishing safe main.py modularization before new Page Engine features
 - Type Conversion v0.2 — page conversion, extended conversion rules (not started)
 - Analytics / Scan Tracking Chart — not started
 - `GET /admin/pages/{page_id}` JSON read endpoint — to support Edit Page pre-fill in admin UI; not required for current v1

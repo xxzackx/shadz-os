@@ -2,6 +2,78 @@
 
 ---
 
+## Page Engine v1 Phase 4F — Media Engine Admin Extraction
+
+**Date:** 2026-06-28
+**Runtime commit:** `f490ae8`
+**Status:** Complete, pushed, deployed, production-verified, browser-tested, VPS-synced, and closed
+
+**Summary:**
+Extracted all Media Engine admin route handlers, schemas, and R2 helpers from `main.py` into a new `media_admin.py` module. Routes are re-registered via `register_media_admin_routes(admin_router)` and inherit the existing router's `/admin` prefix and `verify_admin` dependency unchanged. Refactor-only milestone — no behavior change, no schema change, no route change, no admin UI change, no DB migration.
+
+**Changes:**
+
+New file `media_admin.py`:
+- R2 helpers: `ALLOWED_MEDIA_TYPES`, `_r2_client`, `_get_r2_client()`, `_make_storage_key()`, `_make_public_url()`, `_generate_presigned_put()` — moved from `main.py`
+- Schemas (9): `UploadUrlRequest`, `UploadUrlResponse`, `MediaCompleteRequest`, `MediaCompleteResponse`, `MediaAttachRequest`, `MediaAssetOut`, `SlugMediaOut`, `MediaAssetUpdateRequest`, `MediaDetachRequest` — moved from `main.py`
+- `register_media_admin_routes(admin_router)` — registers all 8 routes
+
+Routes moved (all 8):
+- `POST /admin/media/detach`
+- `POST /admin/media/upload-url`
+- `POST /admin/media/complete`
+- `POST /admin/media/attach`
+- `GET  /admin/media/assets`
+- `GET  /admin/media/slug/{slug}`
+- `PATCH /admin/media/assets/{media_asset_id}`
+- `DELETE /admin/media/assets/{media_asset_id}`
+
+`main.py` changes:
+- Removed `import boto3`, `from botocore.config import Config as BotocoreConfig` (moved to `media_admin.py`)
+- Removed `func` from `from sqlalchemy import text, func, or_` (no longer used in `main.py`)
+- Added `from media_admin import register_media_admin_routes`
+- Added `register_media_admin_routes(admin_router)` call before `register_page_admin_routes(admin_router)`
+- Removed all 8 route handlers, 9 schemas, and R2 helpers block (~426 lines removed)
+
+Net: 2 files changed, 445 insertions(+), 426 deletions(−). One new file created.
+
+**Unchanged:**
+- All route paths, HTTP methods, response models, status codes — identical
+- All error messages and detail strings — identical
+- Auth behavior — `verify_admin` dependency inherited from router unchanged
+- R2 presign flow, upload flow, attach/detach flow — identical
+- `static/admin.html` — not touched
+- Database schema — no migration
+- Public `/{slug}` catch-all — still registered last (index 38 of 39 routes)
+
+**Local verification (pre-commit):**
+- `python3 -m py_compile main.py media_admin.py ...` → no errors ✓
+- `from main import app` → import OK ✓
+- All 8 `/admin/media/*` routes registered exactly once with correct methods ✓
+- `/{slug}` catch-all remains last ✓
+- No `boto3`/`botocore`/`func` remaining in `main.py` ✓
+
+**Production deploy (2026-06-28):**
+- Runtime commit: `f490ae8`; master fast-forwarded `7365374` → `f490ae8`
+- VPS pulled master successfully; new file `media_admin.py` confirmed present
+- `shadz.service` restarted; readiness wait passed; confirmed `active (running)`
+- Local `GET /health` → 200 `{"status":"ok"}` ✓
+- Public `GET https://shadz.io/health` → 200 `{"status":"ok"}` ✓
+- Unauthenticated `GET https://shadz.io/admin` → 401 ✓
+
+**Browser live test (2026-06-28):**
+- All 8 `/admin/media/*` routes confirmed working ✓
+- Admin opens after Basic Auth ✓
+
+**Touched:** `main.py` (modified), `media_admin.py` (new)
+**Database:** untouched — no migration
+**Schema:** untouched
+**Admin UI:** untouched
+**Nginx:** untouched
+**Auth:** untouched
+
+---
+
 ## Page Engine v1 Phase 4E — Public Link Handler Extraction
 
 **Date:** 2026-06-28
