@@ -2,6 +2,86 @@
 
 ---
 
+## Page Engine v1 Phase 4G — Link Engine Admin Extraction
+
+**Date:** 2026-06-28
+**Runtime commit:** `68e9d0e`
+**Status:** Complete, pushed, deployed, production-verified, browser/live-tested, VPS-synced, and closed
+
+**Summary:**
+Extracted all Link Engine admin route handlers, Pydantic schemas, and slug helper utilities from `main.py` into a new `link_admin.py` module. Routes are re-registered via `register_link_admin_routes(admin_router)` and inherit the existing router's `/admin` prefix and `verify_admin` dependency unchanged. `main.py` now acts cleanly as app assembly / public routes / legacy NFC / router registration layer. Refactor-only milestone — no behavior change, no schema change, no route change, no admin UI change, no DB migration.
+
+**Changes:**
+
+New file `link_admin.py`:
+- Slug naming system constants: `VALID_CONTENT_TYPES`, `SLUG_PATTERN`, `_SLUG_CHARS` — moved from `main.py`
+- Slug helpers: `is_valid_slug()`, `infer_content_type_from_slug()`, `generate_slug()` — moved from `main.py`
+- Schemas (8): `LinkCreate`, `LinkUpdate`, `LinkInfo`, `ActiveMediaInfo`, `LinkSearchResult`, `SearchResponse`, `BulkSlugRequest`, `LinkConvertRequest` — moved from `main.py`
+- `register_link_admin_routes(admin_router)` — registers all 10 link admin routes
+
+Routes moved (all 10):
+- `POST /admin/link`
+- `GET  /admin/link/{slug}`
+- `POST /admin/link/{slug}`
+- `POST /admin/link/{slug}/archive`
+- `POST /admin/link/{slug}/restore`
+- `POST /admin/link/{slug}/convert`
+- `POST /admin/links/bulk-archive`
+- `POST /admin/links/bulk-restore`
+- `GET  /admin/links/search`
+- `GET  /admin/links/export.csv`
+
+`main.py` changes:
+- Removed `import csv`, `io`, `re`, `random`, `string` (moved to `link_admin.py`)
+- Removed `Query` from fastapi imports, `StreamingResponse` from fastapi.responses, `or_` from sqlalchemy (moved)
+- `IntegrityError` retained — still used by `create_nfc` in `main.py`
+- Added `from link_admin import register_link_admin_routes`
+- Added `register_link_admin_routes(admin_router)` call before `register_media_admin_routes()`
+- Removed all 10 route handlers, 8 schemas, and slug helpers (~675 lines removed)
+- `main.py` reduced from 1161 to 492 lines
+
+Net: 2 files changed, 711 insertions(+), 675 deletions(−). One new file created.
+
+**Unchanged:**
+- All route paths, HTTP methods, response models, status codes — identical
+- All error messages and detail strings — identical
+- Auth behavior — `verify_admin` dependency inherited from router unchanged
+- CSV export, archive/restore, bulk archive/bulk restore, type conversion, search behavior — identical
+- `static/admin.html` — not touched
+- Database schema — no migration
+- Public `/{slug}` catch-all — still registered last
+
+**Local verification (pre-commit):**
+- `python3 -m py_compile main.py link_admin.py` → no errors ✓
+- `from main import app` → import OK ✓
+- `from link_admin import register_link_admin_routes` → import OK ✓
+- All 10 link admin routes confirmed at correct decorators in `link_admin.py` ✓
+- `git diff --check` → clean ✓
+- No moved symbols remaining in `main.py` ✓
+
+**Production deploy (2026-06-28):**
+- Runtime commit: `68e9d0e`; master fast-forwarded `717fb84` → `68e9d0e`
+- VPS pulled master successfully; new file `link_admin.py` confirmed present
+- `shadz.service` restarted; readiness wait: attempt 1 → `000`, attempt 2 → `200` ✓
+- `shadz.service` confirmed `active (running)`; Uvicorn startup complete ✓
+- Local `GET /health` → 200 ✓
+- Local `GET /admin` unauthenticated → 401 ✓
+- Public `GET https://shadz.io/health` → 200 ✓
+- Public `GET https://shadz.io/admin` unauthenticated → 401 ✓
+
+**Browser/live admin test (2026-06-28):**
+- All admin functions confirmed working ✓
+- User confirmed: all live tests passed ✓
+
+**Touched:** `main.py` (modified), `link_admin.py` (new)
+**Database:** untouched — no migration
+**Schema:** untouched
+**Admin UI:** untouched
+**Nginx:** untouched
+**Auth:** untouched
+
+---
+
 ## Page Engine v1 Phase 4F — Media Engine Admin Extraction
 
 **Date:** 2026-06-28
