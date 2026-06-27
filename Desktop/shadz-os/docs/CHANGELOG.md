@@ -2,6 +2,76 @@
 
 ---
 
+## Page Engine v1 Phase 4E — Public Link Handler Extraction
+
+**Date:** 2026-06-28
+**Runtime commit:** `f32ec27`
+**Status:** Complete, pushed, deployed, production-verified, browser-tested, VPS-synced, and closed
+
+**Summary:**
+Extracted public link/media helper logic from `main.py` into a new `link_public.py` module. The catch-all `@app.get("/{slug}")` route decorator was intentionally kept in `main.py` to preserve FastAPI route ordering safety. Refactor-only milestone — no behavior change, no schema change, no admin UI change, no route change, no new features.
+
+**Changes:**
+
+New file `link_public.py`:
+- `_expired_page_html()` — private HTML generator for the archived/410 expired page (moved from `main.py`)
+- `_media_page_html(asset)` — private HTML generator for the media render page (moved from `main.py`)
+- `_media_not_ready_html(slug)` — private HTML generator for the media-not-ready page (moved from `main.py`)
+- `expired_page_response()` — returns the full 410 `HTMLResponse` with no-cache headers
+- `serve_public_media(slug, db)` — encapsulates the full media content_type dispatch block
+
+`main.py` changes:
+- Added `from link_public import expired_page_response, serve_public_media`
+- Removed `HTMLResponse` from FastAPI responses import (no longer used directly in `main.py`)
+- Removed `_expired_page_html()`, `_media_page_html()`, `_media_not_ready_html()` — all moved to `link_public.py`
+- In `redirect_slug`: archived block → `return expired_page_response()`; media block → `return serve_public_media(slug, db)`
+- `@app.get("/{slug}")` route decorator and all routing logic remain in `main.py`
+
+Net: 2 files changed, 136 insertions(+), 118 deletions(−). One new file created.
+
+**Unchanged:**
+- All route paths — identical
+- All response shapes — identical
+- All status codes — identical
+- All error detail strings — identical
+- Route ordering — `/{slug}` remains last (index 38 of 39 routes)
+- url redirect, media render, page render, archived 410, scan_count increment — all untouched
+- Admin routes — untouched
+- Auth — untouched
+- `page_public.py`, `page_queries.py`, `page_renderer.py` — not touched
+- `static/admin.html` — not touched
+- Database schema — no migration
+
+**Local verification (pre-commit):**
+- `python3 -m py_compile main.py link_public.py page_public.py page_admin.py page_queries.py` → no errors ✓
+- `from main import app` → import OK ✓
+- `import link_public` → `expired_page_response` callable, `serve_public_media` callable ✓
+- Route order assertion: `/{slug}` last, all `/admin/*` before it ✓
+
+**Production deploy (2026-06-28):**
+- Runtime commit: `f32ec27`; master fast-forwarded `8a7ab37` → `f32ec27`
+- VPS pulled master successfully; new file `link_public.py` confirmed present
+- `shadz.service` restarted; readiness wait passed (3 seconds); confirmed `active (running)`
+- Local `GET /health` → 200 `{"status":"ok"}` ✓
+- Public `GET https://shadz.io/health` → 200 `{"status":"ok"}` ✓
+- Unauthenticated `GET https://shadz.io/admin` → 401 ✓
+
+**Browser live test (2026-06-28):**
+- Admin opens after Basic Auth ✓
+- Existing URL slug redirects normally ✓
+- Existing media slug displays media page normally ✓
+- Existing Page Engine page slug displays normally ✓
+- Archived slug displays the expired 410 page correctly ✓
+
+**Touched:** `main.py` (modified), `link_public.py` (new)
+**Database:** untouched — no migration
+**Schema:** untouched
+**Admin UI:** untouched
+**Nginx:** untouched
+**Auth:** untouched
+
+---
+
 ## Page Engine v1 Phase 4D — Public Page Handler Extraction
 
 **Date:** 2026-06-27

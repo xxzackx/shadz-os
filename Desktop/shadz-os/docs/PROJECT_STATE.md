@@ -284,6 +284,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Page Engine v1 Phase 4B — Admin Extraction (`054b4b6`, deployed 2026-06-27) — 5 Page Engine Pydantic schemas, 4 helper functions, and 6 admin route handlers moved from `main.py` into new `page_admin.py`; `register_page_admin_routes(admin_router)` wires routes back; `main.py` reduced by ~386 lines; refactor-only, no behavior change, no DB migration, no admin UI change, no route change; browser live-tested: Create/Edit/Attach/Detach/render all confirmed ✓
 - Page Engine v1 Phase 4C — Dead Code Removal (`832a753`, 2026-06-27) — `_page_placeholder_html` removed from `main.py` (orphaned in Phase 3C, confirmed no callers anywhere in codebase); `redirect_slug` docstring corrected from stale "placeholder 'Coming soon'" to accurate "renders active attached page via Page Engine (404 if none attached)"; runtime-cleanup only, no behavior change, no schema change, no route change, no admin UI change, no DB migration; `main.py` reduced from 1720 to 1703 lines
 - Page Engine v1 Phase 4D — Public Page Handler Extraction (`d502819`, deployed 2026-06-27) — public page block extracted from `redirect_slug` into new `page_public.py` (`serve_public_page`); shared attachment query moved into new `page_queries.py` (`get_active_page_attachment`); `page_public.py` imports only from `page_queries`/`page_renderer` — no admin coupling; `page_admin.py` updated to use `page_queries`; `main.py` calls `serve_public_page(slug, db)`; refactor-only, no behavior change, no schema change, no route change, no admin UI change, no DB migration; browser live-tested: Admin ✓, page slug ✓, URL slug ✓, media slug ✓
+- Page Engine v1 Phase 4E — Public Link Handler Extraction (`f32ec27`, deployed 2026-06-28) — 3 HTML generators (`_expired_page_html`, `_media_page_html`, `_media_not_ready_html`) and media dispatch logic moved from `main.py` into new `link_public.py` (`expired_page_response`, `serve_public_media`); `@app.get("/{slug}")` route decorator kept in `main.py` for route-order safety; `HTMLResponse` import removed from `main.py`; refactor-only, no behavior change, no schema change, no route change, no admin UI change, no DB migration; browser live-tested: Admin ✓, URL slug ✓, media slug ✓, page slug ✓, archived 410 ✓
 
 ### Active slug type policy
 
@@ -302,9 +303,10 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Media attach endpoint guard unchanged: only `content_type == "media"` slugs can attach media
 - Public redirect route: branches on `content_type`, not slug prefix — slug string never changes
 
-### Source file layout (as of Phase 4D)
+### Source file layout (as of Phase 4E)
 
-- `main.py` — FastAPI app composition layer; public routes, redirect/media/auth/migration logic; imports and wires `page_admin`, `page_public`; page dispatch delegated to `serve_public_page`
+- `main.py` — FastAPI app composition layer; public routes, routing logic, auth, migration; imports and wires `page_admin`, `page_public`, `link_public`; catch-all `/{slug}` route stays here for route-order safety
+- `link_public.py` — public link/media HTML generators and handlers (`expired_page_response`, `serve_public_media`); no admin coupling
 - `page_renderer.py` — Page Engine public renderer only (`_render_page_html()`); imported by `page_public.py`
 - `page_admin.py` — Page Engine admin schemas, helpers, and route registration (`register_page_admin_routes()`); uses `get_active_page_attachment` from `page_queries`
 - `page_public.py` — public page handler (`serve_public_page(slug, db)`); imports from `page_queries` and `page_renderer` only — no admin coupling
