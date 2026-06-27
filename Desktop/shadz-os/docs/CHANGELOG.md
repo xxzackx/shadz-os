@@ -2,6 +2,81 @@
 
 ---
 
+## Page Engine v1 Phase 4H — NFC Legacy Route Extraction
+
+**Date:** 2026-06-28
+**Runtime commit:** `77b6f2a`
+**Status:** Complete, pushed, deployed, production-verified, browser/live-tested, VPS-synced, and closed
+
+**Summary:**
+Extracted all NFC legacy and internal utility routes from `main.py` into a new `nfc_legacy.py` module. Routes are re-registered via `register_nfc_routes(app)` (app-level) and `register_nfc_admin_routes(admin_router)` (admin router). `main.py` is now a pure assembly layer — migrations, auth, constants, public routes, and registration calls only. Refactor-only milestone — no behavior change, no schema change, no route change, no admin UI change, no DB migration.
+
+**Changes:**
+
+New file `nfc_legacy.py`:
+- X-API-Key auth: `_API_KEY`, `_api_key_header`, `require_api_key` — moved from `main.py`
+- Constants: `BOOT_TIME`, `_DF_CMD`, `SAFE_COMMANDS` — moved from `main.py`
+- Schemas (8): `CommandRequest`, `CommandResult`, `ServerStatus`, `NFCCreate`, `NFCUpdate`, `NFCAdminUpdate`, `NFCStats`, `NFCResponse` — moved from `main.py`
+- `register_nfc_routes(app)` — registers 6 app-level routes
+- `register_nfc_admin_routes(admin_router)` — registers 1 admin route
+
+Routes moved (all 7):
+- `GET  /status`
+- `POST /run-command`
+- `POST /nfc`
+- `GET  /nfc/{tag_id}`
+- `PUT  /nfc/{tag_id}`
+- `GET  /r/{tag_id}`
+- `PATCH /admin/nfc`
+
+`main.py` changes:
+- Removed `import time`, `platform`, `subprocess`, `psutil` (moved to `nfc_legacy.py`)
+- Removed `Security`, `APIKeyHeader` from fastapi imports; `BaseModel` from pydantic; `IntegrityError` from sqlalchemy.exc (moved)
+- Added `from nfc_legacy import register_nfc_routes, register_nfc_admin_routes`
+- Added `register_nfc_routes(app)` call before `/{slug}` catch-all
+- Added `register_nfc_admin_routes(admin_router)` call before `register_link_admin_routes()`
+- `main.py` reduced from 492 to 302 lines
+
+Net: 2 files changed, 247 insertions(+), 190 deletions(−). One new file created.
+
+**Unchanged:**
+- All route paths, HTTP methods, response models, status codes — identical
+- X-API-Key behavior for `/status`, `/run-command`, `/nfc/*` — identical
+- `/admin/nfc` HTTP Basic auth via `admin_router` — identical
+- `/r/{tag_id}` public behavior — identical
+- DB behavior — identical
+- Public `/{slug}` catch-all — still registered last
+- Database schema — no migration
+- Admin UI — not touched
+- Nginx — not touched
+
+**Local verification (pre-commit):**
+- `python -m py_compile main.py nfc_legacy.py` → no errors ✓
+- `import nfc_legacy` → import OK ✓
+- `import main` → import OK ✓
+
+**Production deploy (2026-06-28):**
+- Runtime commit: `77b6f2a`; master fast-forwarded `c9bf2b0` → `77b6f2a`
+- VPS pulled master successfully; new file `nfc_legacy.py` confirmed present
+- VPS syntax check: `python3 -m py_compile main.py nfc_legacy.py` → passed ✓
+- `shadz.service` restarted; readiness wait completed; health became READY ✓
+- Local `GET /health` → 200 ✓
+- Local `GET /admin` unauthenticated → 401 ✓
+- Public `GET https://shadz.io/health` → 200 ✓
+- Public `GET https://shadz.io/admin` unauthenticated → 401 ✓
+
+**Browser/live test (2026-06-28):**
+- All live tests passed ✓
+- User confirmed: all live tests passed ✓
+
+**Touched:** `main.py` (modified), `nfc_legacy.py` (new)
+**Database:** untouched — no migration
+**Schema:** untouched
+**Admin UI:** untouched
+**Nginx:** untouched
+
+---
+
 ## Page Engine v1 Phase 4G — Link Engine Admin Extraction
 
 **Date:** 2026-06-28
