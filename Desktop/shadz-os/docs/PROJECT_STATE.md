@@ -97,8 +97,9 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 - Page Engine admin routes (Phase 3A, `c6c5a15`) — create/update pages; attach/detach pages to page slugs; all backend-only
 - Page Engine admin UI (Phase 3B, `a57fff7`) — Module C in admin panel; Create Page, Edit Page (partial-update), Attach / Detach; wired to Phase 3A backend routes
 - Page Engine admin JSON helper / template guidance (Phase 3D, `357a85e`) — template guide shows expected content_json fields per template; Fill sample JSON button; inline JSON validation hint on textarea blur
+- Bot Engine admin routes (Phase T1, `28559a3`) — `POST /admin/bot/clients`, `GET /admin/bot/clients`, `POST/DELETE /admin/bot/clients/{id}/slugs`, `POST /admin/bot/clients/{id}/regenerate-code`, `PATCH /admin/bot/clients/{id}`; all behind existing Basic Auth; no admin UI yet
 
-**Admin UI version:** Phase 3D `357a85e` — Page Engine JSON helper guidance (deployed 2026-06-26). Previous: Phase 3B `a57fff7` Page Engine admin UI. Phase 3C (`165c0d3`) added public page rendering — no admin UI change. Phase 1B `1d11005` media asset rename. Phase C `45d2656` CSV export.
+**Admin UI version:** Phase 3D `357a85e` — Page Engine JSON helper guidance (deployed 2026-06-26). Bot Engine Phase T1 (`28559a3`) added backend routes only — no admin UI change. Previous: Phase 3B `a57fff7` Page Engine admin UI. Phase 3C (`165c0d3`) added public page rendering — no admin UI change. Phase 1B `1d11005` media asset rename. Phase C `45d2656` CSV export.
 
 ---
 
@@ -173,6 +174,34 @@ Join between `pages.id` and `redirect_links.slug`. One page may attach to many s
 **Partial unique index:** `idx_page_slug_one_active ON page_slug_attachments(slug) WHERE is_active = 1`
 
 **FK note:** `PRAGMA foreign_keys=ON` is not enabled — FK declarations are ORM metadata only, same as `slug_media`. Application-layer enforcement added in Phase 3A (slug existence + content_type validation in attach route).
+
+### `bot_clients` _(added Phase T1)_
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER | PK |
+| `client_name` | VARCHAR | not null |
+| `access_code` | VARCHAR | not null; unique; indexed; plain text by owner decision |
+| `telegram_user_id` | VARCHAR | nullable — for future Telegram binding |
+| `telegram_username` | VARCHAR | nullable |
+| `is_active` | BOOLEAN | not null; default `True` |
+| `created_at` | DATETIME | |
+| `updated_at` | DATETIME | |
+
+Access code format: 6 chars, A-Z + 0-9, ≥1 letter and ≥1 digit, generated with `secrets.choice`. No `SHADZ-` prefix.
+
+### `bot_client_slugs` _(added Phase T1)_
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER | PK |
+| `bot_client_id` | INTEGER | not null; indexed; FK → `bot_clients.id` (ORM metadata only) |
+| `slug` | VARCHAR | not null; unique; indexed; FK → `redirect_links.slug` (ORM metadata only) |
+| `created_at` | DATETIME | |
+
+UNIQUE on `slug` enforces one-slug-per-bot-client at DB level. FK enforcement relies on application-layer validation, consistent with rest of schema (`PRAGMA foreign_keys=ON` not enabled). Only `url` and `media` slugs may be assigned — `page` slugs rejected. Archived slugs cannot be assigned. Deactivating a bot client does NOT cascade to delete assignments.
+
+Tables created by `Base.metadata.create_all(bind=engine)` on first startup after deploy — no `_run_migrations()` change needed.
 
 ### `nfc_records` / `scan_logs`
 
@@ -288,6 +317,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Page Engine v1 Phase 4F — Media Engine Admin Extraction (`f490ae8`, deployed 2026-06-28) — 8 Media Engine admin route handlers, 9 Pydantic schemas, and 5 R2 helper functions/constants moved from `main.py` into new `media_admin.py`; `register_media_admin_routes(admin_router)` wires routes back; `boto3`, `botocore`, and `func` imports removed from `main.py`; refactor-only, no behavior change, no schema change, no route change, no admin UI change, no DB migration; browser live-tested: Admin ✓, media upload ✓, media attach/detach ✓, Storage Manager ✓
 - Page Engine v1 Phase 4G — Link Engine Admin Extraction (`68e9d0e`, deployed 2026-06-28) — 8 Link Engine Pydantic schemas, 3 slug helpers/constants, and 10 admin route handlers moved from `main.py` into new `link_admin.py`; `register_link_admin_routes(admin_router)` wires routes back; `csv`, `io`, `re`, `random`, `string`, `or_`, `StreamingResponse`, `Query` imports removed from `main.py`; `main.py` reduced to 492 lines; refactor-only, no behavior change, no schema change, no route change, no admin UI change, no DB migration; readiness wait: attempt 1 → `000`, attempt 2 → `200`; browser/live admin tests passed ✓
 - Page Engine v1 Phase 4H — NFC Legacy Route Extraction (`77b6f2a`, deployed 2026-06-28) — 8 schemas, X-API-Key auth (`require_api_key`), constants (`BOOT_TIME`, `_DF_CMD`, `SAFE_COMMANDS`), and 7 route handlers moved from `main.py` into new `nfc_legacy.py`; `register_nfc_routes(app)` and `register_nfc_admin_routes(admin_router)` wire routes back; `time`, `platform`, `subprocess`, `psutil`, `Security`, `APIKeyHeader`, `BaseModel`, `IntegrityError` imports removed from `main.py`; `main.py` reduced to 302 lines; refactor-only, no behavior change, no schema change, no route change, no admin UI change, no DB migration; browser/live tests passed ✓
+- Telegram Bot Self-Service Phase T1 — Bot Engine Foundation (`28559a3`, deployed 2026-06-29) — new `bot_admin.py` module; `BotClient` + `BotClientSlug` ORM models; 6 admin-only CRUD routes for managing bot clients and slug assignments; all routes under existing Basic Auth via `admin_router`; no Telegram webhook/API/token; no admin UI; no `_run_migrations()` change; DB tables auto-created by `create_all` on startup; DB backup `shadz.db.backup-before-bot-phase-t1-20260629-211249`; production verified: `/health` 200, `/admin` 401 unauth, DB tables confirmed ✓
 
 ### Active slug type policy
 
@@ -306,9 +336,10 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Media attach endpoint guard unchanged: only `content_type == "media"` slugs can attach media
 - Public redirect route: branches on `content_type`, not slug prefix — slug string never changes
 
-### Source file layout (as of Phase 4H)
+### Source file layout (as of Phase T1)
 
-- `main.py` — FastAPI app assembly layer; public routes, auth, migrations; imports and wires `link_admin`, `media_admin`, `page_admin`, `page_public`, `link_public`, `nfc_legacy`; catch-all `/{slug}` route stays here for route-order safety; 302 lines
+- `main.py` — FastAPI app assembly layer; public routes, auth, migrations; imports and wires `link_admin`, `media_admin`, `page_admin`, `page_public`, `link_public`, `nfc_legacy`, `bot_admin`; catch-all `/{slug}` route stays here for route-order safety
+- `bot_admin.py` — Bot Engine admin schemas, access code generator, and route registration (`register_bot_admin_routes()`); all 6 `/admin/bot/*` routes; no Telegram API calls; no webhook; no public coupling
 - `nfc_legacy.py` — NFC legacy system and internal utility routes; X-API-Key auth (`require_api_key`); `register_nfc_routes(app)` (6 routes: `/status`, `/run-command`, `/nfc/*`, `/r/{tag_id}`) and `register_nfc_admin_routes(admin_router)` (`PATCH /admin/nfc`); all NFC schemas including `NFCStats`; `BOOT_TIME`, `SAFE_COMMANDS`; no Page Engine coupling
 - `link_admin.py` — Link Engine admin schemas, slug helpers, and route registration (`register_link_admin_routes()`); all 10 `/admin/link*` and `/admin/links/*` routes; slug naming constants (`VALID_CONTENT_TYPES`, `SLUG_PATTERN`) and helpers (`is_valid_slug`, `generate_slug`); no public coupling
 - `media_admin.py` — Media Engine admin schemas, R2 helpers, and route registration (`register_media_admin_routes()`); all 8 `/admin/media/*` routes; no public coupling
@@ -323,17 +354,42 @@ This section exists to give Claude Code a compressed snapshot of current project
 ### Not yet implemented
 
 - Phase 3E — Public page visual upgrade (deferred; current v1 rendering is functional and acceptable for internal testing; polish pass planned before official client-facing sales use; when implemented, update `_render_page_html` renderer fields in `page_renderer.py` and `_PE_SAMPLES` in `admin.html` in the same commit if field names change)
-- Next recommended milestone: Page Engine v1 Completion Track — `main.py` modularization is complete as of Phase 4H; next priority is Page Engine v1 feature completion / polish before Admin Security; Phase 3E visual upgrade remains deferred until closer to official client-facing sales use unless explicitly selected.
 - Type Conversion v0.2 — page conversion, extended conversion rules (not started)
 - Analytics / Scan Tracking Chart — not started
 - `GET /admin/pages/{page_id}` JSON read endpoint — to support Edit Page pre-fill in admin UI; not required for current v1
 - Proper UI login/logout system — deferred; Basic Auth popup is accepted for now
 - Role-based admin security — deferred until multi-admin use case arises
+- **Bot Engine — not yet implemented:**
+  - Phase T1B — Admin UI for Bot Self-Service: section in `static/admin.html` to create/list bot clients, show access codes, assign/remove slugs; no Telegram runtime
+  - Phase T2 — Telegram Bot Runtime: webhook endpoint, bot token config, access-code binding flow, customer chat state machine
+  - Customer self-service: destination URL replacement for `url` slugs; media replacement for `media` slugs; confirmation UX
+  - Telegram `sendMessage` calls; media upload from Telegram
+  - Client portal; role-based access
+
+**Next recommended milestone (owner decision required):** Phase T1B first (admin needs UI to manage bot clients before bot runtime is useful), or Phase T2 directly if Telegram runtime is the priority.
+
+### Local Git / repo structure (discovered Phase T1)
+
+During Phase T1, the user's Mac working area at `/Users/Who Am I/Desktop/shadz-os` was found to have its Git root at the home directory (`/Users/Who Am I`), not at the project folder. `git rev-parse --show-toplevel` returned `/Users/Who Am I`. This caused `git status` to surface unrelated private folders as untracked files.
+
+**This is dangerous — `git add .` from that context could stage sensitive home-directory files. Do not use it.**
+
+To safely complete Phase T1, the user created a clean clone:
+- Clean clone root: `/Users/Who Am I/Desktop/shadz-os-clean`
+- Project code inside clone: `/Users/Who Am I/Desktop/shadz-os-clean/Desktop/shadz-os/`
+
+**Future local workflow:**
+- Use the clean clone for all git operations
+- Always stage files explicitly by name — never `git add .`
+- The old path `/Users/Who Am I/Desktop/shadz-os` must not be used for git operations until the `.git` root problem is resolved in a separately planned task
+
+Repo structure cleanup (moving `.git` to the correct location) has not been done and must be planned and approved explicitly before execution.
 
 ### Guardrails for future sessions
 
 - Future work must be explicitly prompted per session
 - Do not infer or start roadmap tasks from this document
-- Do not implement Analytics, Page Engine, login/logout, or any other future feature unless the current prompt explicitly asks for it
+- Do not implement Analytics, Page Engine, Bot Engine, login/logout, or any other future feature unless the current prompt explicitly asks for it
 - Do not modify `main.py`, database schema, Nginx, or auth unless the task explicitly requires it
 - Always verify `/`, `/admin` (→ 401), `/health` (→ 200) after any deploy using GET-based curl only
+- Do not move `.git`, run `git reset --hard`, or restructure the local repo without an explicit approved plan

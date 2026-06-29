@@ -2,6 +2,81 @@
 
 ---
 
+## Telegram Bot Self-Service Phase T1 — Bot Engine Foundation
+
+**Date:** 2026-06-29
+**Runtime commit:** `28559a3`
+**Status:** Complete, pushed, deployed, production-verified, VPS-synced, and closed
+
+**Summary:**
+Added backend foundation for Telegram customer self-service. Phase T1 adds DB tables and admin-only CRUD routes only — no Telegram webhook, no bot token, no Telegram API calls, no chat state machine. New module `bot_admin.py` follows the existing `register_x_admin_routes(admin_router)` pattern. All routes inherit existing Basic Auth from the shared admin router. `main.py` received registration-only changes. Public slug behavior unchanged.
+
+**Changes:**
+
+New file `bot_admin.py`:
+- `_generate_access_code(db)` — 6-char code, A-Z + 0-9, `secrets.choice`, must contain ≥1 letter and ≥1 digit, retry up to 10 on collision
+- Schemas: `BotClientCreateRequest`, `BotClientUpdateRequest`, `BotSlugAssignRequest`, `AssignedSlugOut`, `BotClientOut`
+- Helpers: `_get_bot_client_or_404`, `_build_assigned_slugs`, `_client_out`
+- `register_bot_admin_routes(admin_router)` — registers 6 admin routes
+
+Routes added (all 6, all behind existing Basic Auth):
+- `POST   /admin/bot/clients` — create client; auto-generate access code
+- `GET    /admin/bot/clients` — list all clients with assigned slug metadata
+- `POST   /admin/bot/clients/{client_id}/slugs` — assign existing `url`/`media` slug
+- `DELETE /admin/bot/clients/{client_id}/slugs/{slug}` — remove assignment (hard-delete row only)
+- `POST   /admin/bot/clients/{client_id}/regenerate-code` — regenerate access code
+- `PATCH  /admin/bot/clients/{client_id}` — update `client_name` / `is_active`
+
+`models.py` changes:
+- Added `BotClient` ORM model → `bot_clients` table
+- Added `BotClientSlug` ORM model → `bot_client_slugs` table
+- Tables created automatically by existing `Base.metadata.create_all(bind=engine)` on startup — no `_run_migrations()` change needed
+
+`main.py` changes:
+- Added `from bot_admin import register_bot_admin_routes`
+- Added `register_bot_admin_routes(admin_router)` call after Page Engine registration, before `app.include_router(admin_router)`
+- No bot business logic in `main.py`; `/{slug}` catch-all remains last
+
+**Product rules locked in this phase:**
+- Access code plain text by owner decision — admin must be able to view it when customers forget
+- No phone number verification
+- No n8n
+- Only `url` and `media` slugs assignable; `page` slugs rejected
+- Archived slugs cannot be assigned
+- One slug → one bot client only (UNIQUE index on `bot_client_slugs.slug`)
+- Deactivating a bot client does NOT delete its slug assignments
+- List response includes `content_type`, `notes`, `is_archived`, `assigned_at` per slug for future bot display
+
+**Unchanged:**
+- All existing route paths, HTTP methods, response models, status codes
+- `/{slug}` catch-all — still registered last
+- Public redirect / media / page behavior — identical
+- Admin UI (`static/admin.html`) — not touched
+- `_run_migrations()` — not touched
+- Nginx — not touched
+
+**Production deploy (2026-06-29):**
+- DB backup before restart: `shadz.db.backup-before-bot-phase-t1-20260629-211249`
+- VPS pulled `28559a3` successfully; `bot_admin.py` confirmed present
+- VPS syntax check: `python3 -m py_compile main.py models.py bot_admin.py` → passed ✓
+- `shadz.service` restarted; readiness wait used; health became 200 on attempt 3
+- `GET /health` local → 200 ✓
+- `GET https://shadz.io/health` → 200 ✓
+- `GET https://shadz.io/admin` unauthenticated → 401 ✓
+- DB tables verified on VPS: `bot_clients`, `bot_client_slugs` present ✓
+- Service state: active/running ✓
+
+**Local repo note:**
+Runtime commit was pushed from a clean clone at `/Users/Who Am I/Desktop/shadz-os-clean` due to a local Git root problem discovered during this phase (home directory acting as repo root). See PROJECT_STATE.md for full context and future workflow guardrail.
+
+**Touched:** `main.py` (modified), `models.py` (modified), `bot_admin.py` (new)
+**Database:** 2 new tables created on startup — no manual migration
+**Schema:** `bot_clients` and `bot_client_slugs` added
+**Admin UI:** untouched
+**Nginx:** untouched
+
+---
+
 ## Page Engine v1 Phase 4H — NFC Legacy Route Extraction
 
 **Date:** 2026-06-28

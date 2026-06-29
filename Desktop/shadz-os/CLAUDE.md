@@ -93,3 +93,7 @@ If you genuinely think a convention is harmful, surface it. Don't fork silently.
 "Completed" is wrong if anything was skipped silently.
 "Tests pass" is wrong if any were skipped.
 Default to surfacing uncertainty, not hiding it.
+
+## Rule 13 — Local repo safety (Mac)
+
+The local Mac repo at `/Users/Who Am I/Desktop/shadz-os` has its `.git` root at the home directory, not the project folder. This is a known unresolved issue. Do NOT run `git add .` or any broad staging command from that path — it will surface private home-directory contents. Use the clean clone at `/Users/Who Am I/Desktop/shadz-os-clean` for all git operations and stage files explicitly by name only. Do not move `.git` or restructure the local repo without an explicit approved plan.
