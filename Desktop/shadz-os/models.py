@@ -166,6 +166,61 @@ class PageSlugAttachment(Base):
     )
 
 
+# ── Telegram Bot Self-Service — Phase T1 ────────────────────────────────────
+
+class BotClient(Base):
+    """One row per customer bot client.
+
+    access_code is stored plain text (admin must be able to view it when a
+    customer forgets their code).  telegram_user_id / telegram_username are
+    nullable — populated later when the customer binds their Telegram account.
+    """
+    __tablename__ = "bot_clients"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    client_name: Mapped[str] = mapped_column(String, nullable=False)
+    access_code: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    telegram_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    telegram_username: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class BotClientSlug(Base):
+    """Join between a BotClient and a redirect_links slug.
+
+    One bot client can manage many slugs.  A slug may only be assigned to one
+    bot client at a time (enforced by UNIQUE on slug).  Only url and media
+    slugs are in scope — page slugs are rejected at the application layer.
+    Assignments are hard-deleted when removed; no history preserved.
+    Deactivating a bot client does NOT cascade to delete these rows.
+    """
+    __tablename__ = "bot_client_slugs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    bot_client_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("bot_clients.id"), index=True, nullable=False
+    )
+    slug: Mapped[str] = mapped_column(
+        String, ForeignKey("redirect_links.slug"), unique=True, index=True, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
 class SlugMedia(Base):
     """Join between a slug (RedirectLink) and a MediaAsset.
 

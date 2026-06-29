@@ -16,6 +16,7 @@ from page_admin import register_page_admin_routes
 from page_public import serve_public_page
 from link_public import expired_page_response, serve_public_media
 from nfc_legacy import register_nfc_routes, register_nfc_admin_routes
+from bot_admin import register_bot_admin_routes
 
 Base.metadata.create_all(bind=engine)
 
@@ -259,6 +260,9 @@ register_media_admin_routes(admin_router)
 
 # Page Engine v1 admin routes live in page_admin.py — registered here.
 register_page_admin_routes(admin_router)
+
+# Bot Engine admin routes live in bot_admin.py — registered here.
+register_bot_admin_routes(admin_router)
 
 # Register admin_router BEFORE /{slug} — ensures /admin is never captured
 # by the catch-all slug route below.
