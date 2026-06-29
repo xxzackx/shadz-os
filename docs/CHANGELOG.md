@@ -2,6 +2,39 @@
 
 ---
 
+## Phase T1A — Repo Structure Flattening
+
+**Date:** 2026-06-30
+**Status:** Staged, pending commit approval
+
+**Summary:**
+All project files previously lived under a `Desktop/shadz-os/` subfolder inside the git repo — i.e. `git ls-files` showed paths like `Desktop/shadz-os/main.py` instead of `main.py`. This phase moves all 28 tracked files/dirs to the repo root using `git mv`, preserving 100% rename history (R100). The empty `Desktop/shadz-os/` and `Desktop/` wrapper directories were removed after confirming no files remained.
+
+**What moved:**
+All 21 Python/config files and 2 directories (`docs/`, `static/`) — moved from `Desktop/shadz-os/…` to repo root.
+
+**What was not touched:**
+- No Python logic changed
+- No database models changed
+- No routes changed
+- No admin UI changed
+- No Nginx changed
+- No `.git` touched
+
+**Docs updated:**
+- `CLAUDE.md` Rule 13 — reflects resolved nested-path issue; canonical repo path and verification steps
+- `docs/PROJECT_STATE.md` — Local Git / repo structure section updated; VPS path-change note added
+
+**VPS deploy note (not done yet):**
+VPS still serves from `/opt/shadz-os/Desktop/shadz-os`. After pulling this commit, the Nginx `location ^~ /static/` alias and `shadz.service` WorkingDirectory must be updated to the new flat root. Plan this separately before deploying.
+
+**Touched:** 28 file renames (all R100), `CLAUDE.md`, `docs/PROJECT_STATE.md`, `docs/CHANGELOG.md`
+**Runtime code:** untouched
+**Database:** untouched
+**Admin UI:** untouched
+
+---
+
 ## Telegram Bot Self-Service Phase T1 — Bot Engine Foundation
 
 **Date:** 2026-06-29
