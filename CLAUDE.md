@@ -9,7 +9,7 @@ SHADZ is a live production system. Bias toward caution over speed on non-trivial
 Current production system:
 - FastAPI app behind Nginx
 - Uvicorn service: shadz.service
-- Project path on VPS: /opt/shadz-os/Desktop/shadz-os
+- Project path on VPS: /opt/shadz-os
 - Domain: https://shadz.io
 - Admin: /admin protected by Basic Auth
 - Database: SQLite
@@ -94,19 +94,20 @@ If you genuinely think a convention is harmful, surface it. Don't fork silently.
 "Tests pass" is wrong if any were skipped.
 Default to surfacing uncertainty, not hiding it.
 
-## Rule 13 — Local repo safety (Mac)
+## Rule 13 — Local and VPS repo safety (resolved Phase T1A — 2026-06-30)
 
-**Canonical local repo:** `/Users/Who Am I/Desktop/shadz-os-clean`
+**Canonical local repo root:** `~/Desktop/shadz-os`
+**Canonical VPS app/repo root:** `/opt/shadz-os`
 
-Do NOT use or operate from `/Users/Who Am I/Desktop/shadz-os` — that path previously had its `.git` root at the home directory (`/Users/Who Am I`), not the project folder. Running `git add .` from that context would surface private home-directory contents.
+Do NOT use any nested path of the form `…/Desktop/shadz-os/Desktop/shadz-os` or `/opt/shadz-os/Desktop/shadz-os` — these were the old nested layouts eliminated in Phase T1A. All project files now live directly at the repo root.
 
-Do NOT use any path of the form `…/Desktop/shadz-os/Desktop/shadz-os` — this was the old nested file layout that Phase T1A (2026-06-30) resolved. All project files now live at the repo root (`/`), not under a `Desktop/shadz-os/` subfolder within git.
-
-**Verify root before any git operation:**
+**Verify root before any git or VPS operation:**
 ```bash
-pwd                   # must be inside the clean clone
+pwd                   # local: ~/Desktop/shadz-os | VPS: /opt/shadz-os
 git status --short    # confirm clean or expected changes
-ls CLAUDE.md          # CLAUDE.md must exist at the current directory — if not, you are in the wrong place
+ls CLAUDE.md          # CLAUDE.md must exist here — if not, you are in the wrong place
 ```
 
-For all git operations, stage files explicitly by name. Never use `git add .` or `git add -A` without first confirming the working directory is the clean clone root.
+For all git operations, stage files explicitly by name. Never use `git add .` or `git add -A`.
+
+After `sudo systemctl restart shadz.service`, do not immediately run public curl checks — wait/poll local health (`curl http://127.0.0.1:8000/health`) until it returns 200, then run public checks.

@@ -5,33 +5,50 @@
 ## Phase T1A — Repo Structure Flattening
 
 **Date:** 2026-06-30
-**Status:** Staged, pending commit approval
+**Feature commit:** `ffb526e`
+**Merge commit:** `3596ecb`
+**Status:** Complete, pushed, deployed, production-verified, VPS-synced, and closed
 
 **Summary:**
-All project files previously lived under a `Desktop/shadz-os/` subfolder inside the git repo — i.e. `git ls-files` showed paths like `Desktop/shadz-os/main.py` instead of `main.py`. This phase moves all 28 tracked files/dirs to the repo root using `git mv`, preserving 100% rename history (R100). The empty `Desktop/shadz-os/` and `Desktop/` wrapper directories were removed after confirming no files remained.
+All project files previously lived under a `Desktop/shadz-os/` subfolder inside the git repo (`git ls-files` showed paths like `Desktop/shadz-os/main.py`). Phase T1A moved all 28 tracked files/dirs to the repo root using `git mv`, preserving 100% rename history (R100). Local `Desktop/` wrapper removed. VPS fully migrated to the flat layout.
 
-**What moved:**
-All 21 Python/config files and 2 directories (`docs/`, `static/`) — moved from `Desktop/shadz-os/…` to repo root.
+**Git changes:**
+- 28 file renames from `Desktop/shadz-os/…` → repo root (all R100)
+- `CLAUDE.md` — Rule 13 updated: canonical paths, VPS guardrails
+- `docs/PROJECT_STATE.md` — VPS section, Front Page note, Local Git section updated
+- `docs/CHANGELOG.md` — this entry
 
-**What was not touched:**
-- No Python logic changed
-- No database models changed
-- No routes changed
-- No admin UI changed
-- No Nginx changed
-- No `.git` touched
+**VPS migration (2026-06-30):**
+- `git pull origin master` on VPS — pulled `3596ecb`
+- `shadz.db` moved: `/opt/shadz-os/Desktop/shadz-os/shadz.db` → `/opt/shadz-os/shadz.db`
+- `.env` moved: `/opt/shadz-os/Desktop/shadz-os/.env` → `/opt/shadz-os/.env`
+- `shadz.service` `WorkingDirectory` updated: `/opt/shadz-os/Desktop/shadz-os` → `/opt/shadz-os`
+- Nginx `location ^~ /static/` alias updated: `/opt/shadz-os/Desktop/shadz-os/static/` → `/opt/shadz-os/static/`
+- Old `/opt/shadz-os/Desktop/shadz-os` wrapper removed from VPS filesystem
+- Backups preserved at: `/opt/shadz-os-backups/phase-t1a-wrapper-cleanup-20260629-222954` (do not delete)
+- `sudo systemctl daemon-reload && sudo systemctl restart shadz.service`
 
-**Docs updated:**
-- `CLAUDE.md` Rule 13 — reflects resolved nested-path issue; canonical repo path and verification steps
-- `docs/PROJECT_STATE.md` — Local Git / repo structure section updated; VPS path-change note added
+**Production verification (2026-06-30):**
+- `shadz.service` active/running ✓
+- Local `GET /health` → 200 ✓
+- Public `GET https://shadz.io/health` → 200 ✓
+- Public `GET https://shadz.io/admin` unauthenticated → 401 ✓
+- Public `GET https://shadz.io/` → 200 ✓
+- `/static/index.html` → 200 ✓ | `/static/admin.html` → 200 ✓
+- DB intact: `redirect_links=35`, `pages=6`, `bot_clients=0`, `bot_client_slugs=0` ✓
+- No `/opt/shadz-os/Desktop/shadz-os` path remains in systemd or Nginx configs ✓
 
-**VPS deploy note (not done yet):**
-VPS still serves from `/opt/shadz-os/Desktop/shadz-os`. After pulling this commit, the Nginx `location ^~ /static/` alias and `shadz.service` WorkingDirectory must be updated to the new flat root. Plan this separately before deploying.
+**Canonical roots after T1A:**
+- Local: `~/Desktop/shadz-os`
+- VPS: `/opt/shadz-os`
 
-**Touched:** 28 file renames (all R100), `CLAUDE.md`, `docs/PROJECT_STATE.md`, `docs/CHANGELOG.md`
+**Touched:** 28 file renames, `CLAUDE.md`, `docs/PROJECT_STATE.md`, `docs/CHANGELOG.md`
 **Runtime code:** untouched
-**Database:** untouched
+**Database schema:** untouched
 **Admin UI:** untouched
+**Routes:** untouched
+
+**Next:** Phase T1B — Admin UI for Bot Self-Service (only after this docs closure is committed, pushed, and VPS-synced)
 
 ---
 

@@ -31,7 +31,7 @@ Nginx proxies HTTPS traffic to `127.0.0.1:8000`.
 
 ## VPS
 
-- Project path: `/opt/shadz-os/Desktop/shadz-os`
+- Project path: `/opt/shadz-os`
 - systemd service: `shadz.service`
 
 Useful commands:
@@ -268,7 +268,7 @@ Legacy NFC system. Unchanged since v0.1.
 - Front page remains lightweight CSS + vanilla JS — no Three.js or heavy dependencies
 - Mobile-first layout approved: logo stacks above hero copy, wordmark tightly grouped below core
 - Hero assets served from `/static/assets/` — both return `200` in production
-- Production Nginx has a `location ^~ /static/` alias route pointing to `/opt/shadz-os/Desktop/shadz-os/static/` (added manually on VPS)
+- Production Nginx has a `location ^~ /static/` alias route pointing to `/opt/shadz-os/static/` (updated Phase T1A)
 - Backend / admin / redirect / media systems unchanged
 
 ---
@@ -318,6 +318,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Page Engine v1 Phase 4G — Link Engine Admin Extraction (`68e9d0e`, deployed 2026-06-28) — 8 Link Engine Pydantic schemas, 3 slug helpers/constants, and 10 admin route handlers moved from `main.py` into new `link_admin.py`; `register_link_admin_routes(admin_router)` wires routes back; `csv`, `io`, `re`, `random`, `string`, `or_`, `StreamingResponse`, `Query` imports removed from `main.py`; `main.py` reduced to 492 lines; refactor-only, no behavior change, no schema change, no route change, no admin UI change, no DB migration; readiness wait: attempt 1 → `000`, attempt 2 → `200`; browser/live admin tests passed ✓
 - Page Engine v1 Phase 4H — NFC Legacy Route Extraction (`77b6f2a`, deployed 2026-06-28) — 8 schemas, X-API-Key auth (`require_api_key`), constants (`BOOT_TIME`, `_DF_CMD`, `SAFE_COMMANDS`), and 7 route handlers moved from `main.py` into new `nfc_legacy.py`; `register_nfc_routes(app)` and `register_nfc_admin_routes(admin_router)` wire routes back; `time`, `platform`, `subprocess`, `psutil`, `Security`, `APIKeyHeader`, `BaseModel`, `IntegrityError` imports removed from `main.py`; `main.py` reduced to 302 lines; refactor-only, no behavior change, no schema change, no route change, no admin UI change, no DB migration; browser/live tests passed ✓
 - Telegram Bot Self-Service Phase T1 — Bot Engine Foundation (`28559a3`, deployed 2026-06-29) — new `bot_admin.py` module; `BotClient` + `BotClientSlug` ORM models; 6 admin-only CRUD routes for managing bot clients and slug assignments; all routes under existing Basic Auth via `admin_router`; no Telegram webhook/API/token; no admin UI; no `_run_migrations()` change; DB tables auto-created by `create_all` on startup; DB backup `shadz.db.backup-before-bot-phase-t1-20260629-211249`; production verified: `/health` 200, `/admin` 401 unauth, DB tables confirmed ✓
+- Phase T1A — Repo Structure Flattening (`ffb526e` + merge `3596ecb`, deployed 2026-06-30) — all 28 tracked files moved from `Desktop/shadz-os/` prefix to repo root via `git mv` (all R100); local `Desktop/` wrapper removed; VPS: `shadz.db` + `.env` moved to `/opt/shadz-os/`, `shadz.service` WorkingDirectory updated to `/opt/shadz-os`, Nginx static alias updated to `/opt/shadz-os/static/`, old `/opt/shadz-os/Desktop/shadz-os` wrapper removed; backups at `/opt/shadz-os-backups/phase-t1a-wrapper-cleanup-20260629-222954`; production verified: `/health` 200, `/admin` 401, `/` 200, static files 200, DB intact (redirect_links=35, pages=6) ✓
 
 ### Active slug type policy
 
@@ -368,22 +369,28 @@ This section exists to give Claude Code a compressed snapshot of current project
 
 **Next recommended milestone (owner decision required):** Phase T1B first (admin needs UI to manage bot clients before bot runtime is useful), or Phase T2 directly if Telegram runtime is the priority.
 
-### Local Git / repo structure (Phase T1A — resolved 2026-06-30)
+### Local Git / repo structure (Phase T1A — completed 2026-06-30)
 
-**Canonical local repo:** `/Users/Who Am I/Desktop/shadz-os-clean`
+**Canonical local repo root:** `~/Desktop/shadz-os`
+**Canonical VPS app/repo root:** `/opt/shadz-os`
 
-**File nesting resolved (Phase T1A):** All project files previously lived inside a `Desktop/shadz-os/` subfolder within the git repo (i.e. `git ls-files` showed paths like `Desktop/shadz-os/main.py`). Phase T1A moved all files to the repo root using `git mv`. All 28 items show R100 renames — history preserved.
+Phase T1A resolved the file-nesting problem. All 28 tracked files/dirs were moved from `Desktop/shadz-os/` to repo root using `git mv` (all R100 renames — history preserved). Deployed and production-verified.
 
-**Dangerous path — do not use:** `/Users/Who Am I/Desktop/shadz-os` — this path has its `.git` root at the home directory (`/Users/Who Am I`). `git add .` from that context would stage sensitive home-directory files.
-
-**Also do not use:** any path of the form `…/Desktop/shadz-os/Desktop/shadz-os` — this was the old nested layout, now eliminated.
+Do NOT use: `~/Desktop/shadz-os/Desktop/shadz-os` or `/opt/shadz-os/Desktop/shadz-os` — old nested paths, eliminated.
 
 **Local workflow:**
-- Use `/Users/Who Am I/Desktop/shadz-os-clean` for all git operations
+- Repo root: `~/Desktop/shadz-os`
 - Stage files explicitly by name — never `git add .` or `git add -A`
-- Verify before any git op: `pwd`, `git status --short`, and `ls CLAUDE.md` to confirm you are at repo root
+- Verify: `pwd`, `git status --short`, `ls CLAUDE.md`
 
-**VPS path note:** VPS still serves from `/opt/shadz-os/Desktop/shadz-os`. After the next deploy pulling this commit, the Nginx static alias and `shadz.service` WorkingDirectory must be updated to `/opt/shadz-os` (or the VPS repo must be recloned). Do not deploy without a plan for this path change.
+**VPS workflow:**
+- App root: `cd /opt/shadz-os`
+- Never: `cd /opt/shadz-os/Desktop/shadz-os`
+- `shadz.service` WorkingDirectory: `/opt/shadz-os`
+- Nginx static alias: `/opt/shadz-os/static/`
+- DB: `/opt/shadz-os/shadz.db`
+- `.env`: `/opt/shadz-os/.env`
+- Backups from T1A migration: `/opt/shadz-os-backups/phase-t1a-wrapper-cleanup-20260629-222954` (do not delete)
 
 ### Guardrails for future sessions
 
