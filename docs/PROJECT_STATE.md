@@ -368,22 +368,22 @@ This section exists to give Claude Code a compressed snapshot of current project
 
 **Next recommended milestone (owner decision required):** Phase T1B first (admin needs UI to manage bot clients before bot runtime is useful), or Phase T2 directly if Telegram runtime is the priority.
 
-### Local Git / repo structure (discovered Phase T1)
+### Local Git / repo structure (Phase T1A — resolved 2026-06-30)
 
-During Phase T1, the user's Mac working area at `/Users/Who Am I/Desktop/shadz-os` was found to have its Git root at the home directory (`/Users/Who Am I`), not at the project folder. `git rev-parse --show-toplevel` returned `/Users/Who Am I`. This caused `git status` to surface unrelated private folders as untracked files.
+**Canonical local repo:** `/Users/Who Am I/Desktop/shadz-os-clean`
 
-**This is dangerous — `git add .` from that context could stage sensitive home-directory files. Do not use it.**
+**File nesting resolved (Phase T1A):** All project files previously lived inside a `Desktop/shadz-os/` subfolder within the git repo (i.e. `git ls-files` showed paths like `Desktop/shadz-os/main.py`). Phase T1A moved all files to the repo root using `git mv`. All 28 items show R100 renames — history preserved.
 
-To safely complete Phase T1, the user created a clean clone:
-- Clean clone root: `/Users/Who Am I/Desktop/shadz-os-clean`
-- Project code inside clone: `/Users/Who Am I/Desktop/shadz-os-clean/Desktop/shadz-os/`
+**Dangerous path — do not use:** `/Users/Who Am I/Desktop/shadz-os` — this path has its `.git` root at the home directory (`/Users/Who Am I`). `git add .` from that context would stage sensitive home-directory files.
 
-**Future local workflow:**
-- Use the clean clone for all git operations
-- Always stage files explicitly by name — never `git add .`
-- The old path `/Users/Who Am I/Desktop/shadz-os` must not be used for git operations until the `.git` root problem is resolved in a separately planned task
+**Also do not use:** any path of the form `…/Desktop/shadz-os/Desktop/shadz-os` — this was the old nested layout, now eliminated.
 
-Repo structure cleanup (moving `.git` to the correct location) has not been done and must be planned and approved explicitly before execution.
+**Local workflow:**
+- Use `/Users/Who Am I/Desktop/shadz-os-clean` for all git operations
+- Stage files explicitly by name — never `git add .` or `git add -A`
+- Verify before any git op: `pwd`, `git status --short`, and `ls CLAUDE.md` to confirm you are at repo root
+
+**VPS path note:** VPS still serves from `/opt/shadz-os/Desktop/shadz-os`. After the next deploy pulling this commit, the Nginx static alias and `shadz.service` WorkingDirectory must be updated to `/opt/shadz-os` (or the VPS repo must be recloned). Do not deploy without a plan for this path change.
 
 ### Guardrails for future sessions
 

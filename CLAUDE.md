@@ -96,4 +96,17 @@ Default to surfacing uncertainty, not hiding it.
 
 ## Rule 13 — Local repo safety (Mac)
 
-The local Mac repo at `/Users/Who Am I/Desktop/shadz-os` has its `.git` root at the home directory, not the project folder. This is a known unresolved issue. Do NOT run `git add .` or any broad staging command from that path — it will surface private home-directory contents. Use the clean clone at `/Users/Who Am I/Desktop/shadz-os-clean` for all git operations and stage files explicitly by name only. Do not move `.git` or restructure the local repo without an explicit approved plan.
+**Canonical local repo:** `/Users/Who Am I/Desktop/shadz-os-clean`
+
+Do NOT use or operate from `/Users/Who Am I/Desktop/shadz-os` — that path previously had its `.git` root at the home directory (`/Users/Who Am I`), not the project folder. Running `git add .` from that context would surface private home-directory contents.
+
+Do NOT use any path of the form `…/Desktop/shadz-os/Desktop/shadz-os` — this was the old nested file layout that Phase T1A (2026-06-30) resolved. All project files now live at the repo root (`/`), not under a `Desktop/shadz-os/` subfolder within git.
+
+**Verify root before any git operation:**
+```bash
+pwd                   # must be inside the clean clone
+git status --short    # confirm clean or expected changes
+ls CLAUDE.md          # CLAUDE.md must exist at the current directory — if not, you are in the wrong place
+```
+
+For all git operations, stage files explicitly by name. Never use `git add .` or `git add -A` without first confirming the working directory is the clean clone root.
