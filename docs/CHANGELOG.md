@@ -2,6 +2,74 @@
 
 ---
 
+## Telegram Bot Self-Service Phase T1C — Media Slug Replacement
+
+**Date:** 2026-07-02
+**Runtime commit:** `d126dbc`
+**Status:** Complete, pushed, deployed, production-verified, live-tested, and closed
+
+**Summary:**
+Added Telegram media slug replacement on top of Phase T1B. Customers with an assigned `media` slug can now send a replacement photo, document, video, or GIF directly in the Telegram chat; the bot downloads it from Telegram, validates it, uploads it to R2, and swaps it in as the new active media — replacing the previous "not available yet, contact support" deferred message. `url` slug replacement behavior from T1B is unchanged.
+
+**Code changes (`bot_runtime.py` only — no other file modified):**
+- New session state `awaiting_media_upload`, entered when a customer selects an assigned `media` slug (replaces the old deferred-message branch)
+- `_extract_media_candidate(message)` — pulls `(file_id, mime_type, file_size, file_name)` from Telegram `document` / `video` / `animation` / `photo` message fields; returns `None` for plain text or any unsupported message type (voice, sticker, contact, location, etc.)
+- `_media_type_for_mime(mime_type)` — reverse-lookup against the **existing** `ALLOWED_MEDIA_TYPES` allowlist, imported directly from `media_admin.py` (not duplicated) — same mime rules the browser upload flow already enforces (JPEG/PNG/WEBP images, MP4/QuickTime/WEBM video, GIF)
+- `_download_telegram_file(file_id)` — `getFile` + Telegram file URL download via `httpx.AsyncClient`, hardened to verify `ok == true` and a non-empty `file_path` before proceeding, raising an internal `RuntimeError` (never leaking raw Telegram response text to the customer) on any anomaly
+- `_upload_bytes_to_r2(storage_key, data, mime_type)` — new server-side R2 upload path (direct `put_object` via `_get_r2_client()`, imported from `media_admin.py`) — distinct from the existing browser presigned-PUT flow, since the bot has actual file bytes in hand rather than a browser doing the PUT
+- Size guard: rejects files above 20 MB (Telegram's own hard cap on `getFile` downloads for the standard cloud Bot API — not an invented limit, since no project-level media size limit exists to reuse) — checked against both Telegram's reported `file_size` (fails fast, no download) and the actual downloaded byte count
+- On success: creates a new `MediaAsset` row, deactivates the previous active `SlugMedia` row for the slug, creates a new active `SlugMedia` row, commits — same pattern as the existing `POST /admin/media/attach` route
+- Errors (Telegram download failure, unsupported message type, unsupported mime, oversized file, R2 upload failure, DB failure) each get a distinct customer-facing message; internal exception details only reach server logs via `logger.exception`, never the Telegram user
+- `_handle_message()` signature extended with a `message: dict` parameter so media fields are available to the state machine; webhook call site updated accordingly
+
+**Reuse note (not a refactor):**
+`bot_runtime.py` imports `ALLOWED_MEDIA_TYPES`, `_get_r2_client`, `_make_storage_key`, `_make_public_url` directly from `media_admin.py`. `media_admin.py` itself was not modified — all existing admin media behavior (presigned-PUT browser upload, attach/detach, Storage Manager) is untouched. This mirrors an existing codebase pattern (e.g. Phase 4B's cross-module import of `_get_active_page_attachment`). **Cleanup debt flagged for later:** if a third module ever needs these helpers, extract them into a shared media storage module — deliberately not done in T1C to keep the change surgical.
+
+**Unchanged:**
+- `url` slug replacement flow (T1B) — regression-tested, byte-identical behavior
+- Database schema — no migration; reuses `media_assets` / `slug_media` (Media Engine v0.1) and `bot_clients` / `bot_client_slugs` (Phase T1)
+- `media_admin.py` — not modified
+- `.env.example` — no new env vars required
+- Admin UI (`static/admin.html`) — not touched; no Bot Self-Service admin UI exists yet
+
+**Local verification (pre-commit):**
+- `python3 -m py_compile bot_runtime.py media_admin.py main.py models.py database.py` → no errors ✓
+- `from main import app` → import OK, 46 routes registered ✓
+- Route table check: `/bot/telegram/webhook` (POST) and `/{slug}` (GET, last) unchanged; all `/admin/*` routes unchanged ✓
+- Mocked-payload functional test (in-memory SQLite, mocked `_send_message` / `_download_telegram_file` / `_upload_bytes_to_r2`): plain text rejected, unsupported mime rejected, oversized file rejected, valid photo → uploaded → `MediaAsset` + active `SlugMedia` row created correctly → session resets to menu ✓
+- Regression test: full `url` slug access-code → menu → view → replace → confirm flow passed unchanged ✓
+
+**Production deploy (2026-07-02):**
+- Pushed to `origin master` as a clean fast-forward: `ba2c31a..d126dbc`
+- VPS pulled `d126dbc` by fast-forward
+- `shadz.service` restarted; readiness wait passed on attempt 3
+- Local `GET /health` → `200 {"status":"ok"}` ✓
+- Public `GET https://shadz.io/health` → `200` ✓
+- Public `GET https://shadz.io/admin` unauthenticated → `401` ✓
+- Public `GET https://shadz.io/bot/telegram/webhook` → `405` (expected — webhook is POST-only) ✓
+- `shadz.service` confirmed active/running
+
+**Live Telegram test (2026-07-02):**
+- No Admin UI exists for Bot Client management — live test used the existing `/admin/bot/*` API routes directly (`POST /admin/bot/clients`, `POST /admin/bot/clients/{id}/slugs`, `GET /admin/bot/clients`, `DELETE /admin/bot/clients/{id}/slugs/{slug}`, `PATCH /admin/bot/clients/{id}`)
+- Temporary `BotClient` "T1C Live Test" created; plaintext `access_code` generated
+- Active media slug `media-s9g945` assigned to the temporary client
+- Telegram login linked to the customer's Telegram user successfully
+- Media replacement flow passed live end to end
+- Cleanup performed after test: slug assignment removed (`DELETE /admin/bot/clients/{id}/slugs/{slug}`), temporary `BotClient` deactivated (`PATCH .../is_active=false` — no hard-delete route exists for `BotClient`, so deactivation is the correct and only cleanup path; history is preserved by design)
+- No manual DB edits at any point; no schema migration
+
+**Known VPS-only artifact (flagged, not a repo concern):**
+An untracked DB backup file, `shadz.db.backup-before-t1b-live-test-20260701-204318`, remains present on the VPS filesystem from live-test prep. It is a local backup artifact only — it must not be committed to the repo and is not referenced by any tracked file.
+
+**Touched:** `bot_runtime.py` (modified only)
+**Database:** untouched — no migration
+**Schema:** untouched
+**Admin UI:** untouched — does not exist yet for Bot Self-Service
+**Nginx:** untouched
+**New env vars:** none
+
+---
+
 ## Telegram Bot Self-Service Phase T1B — Webhook Runtime
 
 **Date:** 2026-07-02
