@@ -2,6 +2,103 @@
 
 ---
 
+## Telegram Bot Self-Service Phase T1B — Webhook Runtime
+
+**Date:** 2026-07-02
+**Runtime commit:** `6a0439c`
+**Status:** Complete, pushed, deployed, production-verified, live-tested, and closed (media replacement explicitly deferred to Phase T1C)
+
+**Naming note:** an earlier roadmap draft used "Phase T1B" for the admin UI and "Phase T2" for the webhook runtime. The actual commit and this deployment used "Phase T1B" for the webhook runtime instead. This entry and `PROJECT_STATE.md` follow the commit's naming; the admin UI work is retitled Phase T1C. Flagged for owner awareness, not silently resolved.
+
+**Summary:**
+Added the Telegram webhook and customer self-service chat flow on top of the Phase T1 (`28559a3`) Bot Engine admin foundation. Customers authenticate with their plain-text `access_code`, see their assigned `url`/`media` slugs, and can view/replace the `destination_url` of an assigned `url` slug through a confirm step. Media slug replacement is intentionally not implemented — no server-side path exists yet to accept a file from Telegram and push it to R2.
+
+**Code changes:**
+
+New file `bot_runtime.py`:
+- `register_bot_webhook_routes(app)` — registers `POST /bot/telegram/webhook`, `include_in_schema=False`; called from `main.py` before the `/{slug}` catch-all
+- Webhook auth: mandatory shared-secret header check against `TELEGRAM_WEBHOOK_SECRET`
+  - `TELEGRAM_WEBHOOK_SECRET` unset on server → `503`
+  - `X-Telegram-Bot-Api-Secret-Token` missing or wrong → `401`
+  - Correct header → `200 {"ok": true}`
+  - No Basic Auth on this route — Telegram cannot supply it; the shared secret is the sole gate
+- `_send_message(chat_id, text)` — outbound Telegram `sendMessage` via `httpx.AsyncClient(timeout=10)` + `response.raise_for_status()`; fails safe (logs an error, does not crash) if `TELEGRAM_BOT_TOKEN` is unset
+- `_SESSIONS: dict[int, dict]` — in-memory chat state per `chat_id`; acceptable for a single Uvicorn process (no `--workers`); lost on service restart (owner-approved for T1B)
+- `_SEEN_UPDATE_IDS: deque(maxlen=500)` — bounded in-memory dedup of Telegram `update_id`, no DB table
+- Chat flow states: access-code entry → slug menu → (url slug) view current destination → submit replacement → confirm → update `redirect_links.destination_url`; media slug selection returns a "replacement not available yet" message and returns to the menu
+- No admin functionality reachable through this module
+
+`main.py` changes:
+- Added `from bot_runtime import register_bot_webhook_routes`
+- Added `register_bot_webhook_routes(app)` call, placed after `register_nfc_routes(app)` and before the `/{slug}` catch-all
+
+`requirements.txt`:
+- Added `httpx==0.27.2`
+
+`.env.example`:
+- Added `TELEGRAM_BOT_TOKEN` — bot token from @BotFather; if unset, sends fail safe (logged, not crashed)
+- Added `TELEGRAM_WEBHOOK_SECRET` — required in production; shared secret checked against Telegram's `X-Telegram-Bot-Api-Secret-Token` header; if unset, webhook fails closed (`503`)
+
+Net: 4 files changed, 330 insertions(+). One new file created. No DB schema change — reuses `bot_clients`/`bot_client_slugs` from Phase T1 (`28559a3`).
+
+**Production deploy (manually performed by Mr.Zack, 2026-07-02):**
+- `git pull origin master` on VPS → `6a0439c` pulled successfully
+- `httpx` installed on production successfully
+- `/opt/shadz-os/.env` updated with `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` (values not recorded in docs)
+- `shadz.service` restarted; readiness wait used before checks
+- Local `GET /health` → `200 {"status":"ok"}` ✓
+- Public `GET https://shadz.io/health` → `200` ✓
+- Public `GET https://shadz.io/admin` unauthenticated → `401` ✓
+
+**Production Nginx update (manually performed):**
+- Existing config only proxied `/`, `/admin`, `/health`, `/static/`, and the single-segment slug regex — public `/bot/telegram/webhook` initially returned Nginx `404`
+- `/etc/nginx/sites-available/shadz.io` backed up before editing
+- New `location` block added: `/bot/telegram/webhook` → `http://127.0.0.1:8000/bot/telegram/webhook`, forwarding proxy headers including `X-Telegram-Bot-Api-Secret-Token $http_x_telegram_bot_api_secret_token`
+- `nginx -t` passed; `nginx` reloaded successfully
+- Public webhook security test: no header → `401`; wrong secret → `401`; correct secret → `200 {"ok":true}` ✓
+
+**Telegram production setup (manually performed):**
+- `setWebhook` succeeded for `https://shadz.io/bot/telegram/webhook`
+- `getWebhookInfo` confirmed: `url=https://shadz.io/bot/telegram/webhook`, `pending_update_count=0`, no `last_error_message`
+- Token/secret values not recorded in docs
+
+**Live Telegram bot verification (2026-07-02):**
+- `/start` works ✓
+- Wrong access code rejected ✓
+- Correct active access code accepted ✓
+- Assigned `url` slug list displayed ✓
+- Selecting an assigned `url` slug showed current `destination_url` ✓
+- Replacement destination URL submitted and confirmed (`YES`) → `redirect_links.destination_url` updated ✓
+- Public slug redirect worked after the update ✓
+- `scan_count` increment confirmed after public access ✓
+
+**Live test data note:**
+- Production DB backup taken before creating T1B live test data
+- Test bot client + test `url` slug (`t1b-test-ioayej`) created for live testing; destination pointed at `https://shadz.io/health`
+- Test data only — cleanup deferred to Phase T1C if desired
+
+**Deferred to Phase T1C (explicitly not complete):**
+- Media slug replacement via Telegram — not implemented; menu/state only, customer told it's deferred
+- Any server-side Telegram file-download / R2-upload path
+- Live/manual testing of the media-slug deferred-flow message
+- Admin UI for Bot Self-Service (bot clients currently managed via raw `/admin/bot/*` API only)
+- Optional cleanup of T1B test data
+
+**Unchanged:**
+- Database schema — no migration; reuses Phase T1 `bot_clients`/`bot_client_slugs`
+- Admin UI (`static/admin.html`) — not touched
+- All existing route paths, HTTP methods, response models, status codes
+- `/{slug}` catch-all — still registered last
+- Public redirect / media / page behavior — identical
+
+**Touched:** `main.py` (modified), `requirements.txt` (modified), `.env.example` (modified), `bot_runtime.py` (new)
+**Database:** untouched — no migration
+**Schema:** untouched
+**Admin UI:** untouched
+**Nginx:** new location block added for `/bot/telegram/webhook` (production infrastructure change; no secret values recorded)
+
+---
+
 ## Phase T1A — Repo Structure Flattening
 
 **Date:** 2026-06-30

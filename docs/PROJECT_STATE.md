@@ -33,6 +33,7 @@ Nginx proxies HTTPS traffic to `127.0.0.1:8000`.
 
 - Project path: `/opt/shadz-os`
 - systemd service: `shadz.service`
+- `.env` holds `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` (Phase T1B, added 2026-07-02) — values not recorded in docs; webhook route fails closed if `TELEGRAM_WEBHOOK_SECRET` is unset
 
 Useful commands:
 ```bash
@@ -100,6 +101,25 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 - Bot Engine admin routes (Phase T1, `28559a3`) — `POST /admin/bot/clients`, `GET /admin/bot/clients`, `POST/DELETE /admin/bot/clients/{id}/slugs`, `POST /admin/bot/clients/{id}/regenerate-code`, `PATCH /admin/bot/clients/{id}`; all behind existing Basic Auth; no admin UI yet
 
 **Admin UI version:** Phase 3D `357a85e` — Page Engine JSON helper guidance (deployed 2026-06-26). Bot Engine Phase T1 (`28559a3`) added backend routes only — no admin UI change. Previous: Phase 3B `a57fff7` Page Engine admin UI. Phase 3C (`165c0d3`) added public page rendering — no admin UI change. Phase 1B `1d11005` media asset rename. Phase C `45d2656` CSV export.
+
+---
+
+## Telegram Bot Runtime (Phase T1B — deployed 2026-07-02)
+
+- Public webhook: `POST /bot/telegram/webhook` — registered in `main.py` via `register_bot_webhook_routes(app)`, before the `/{slug}` catch-all
+- No Basic Auth (Telegram cannot supply it); protected instead by a mandatory shared-secret header check — `X-Telegram-Bot-Api-Secret-Token` must match `TELEGRAM_WEBHOOK_SECRET`
+  - Secret not configured on server → `503`
+  - Missing/wrong header → `401`
+  - Correct header → `200 {"ok": true}`
+- Customer flow (via Telegram chat): enter `access_code` (from Bot Engine admin, Phase T1) → see assigned `url`/`media` slugs → select a `url` slug → view current `destination_url` → submit replacement → confirm → `redirect_links.destination_url` updated
+- **Media slug replacement is NOT implemented** — menu/state only; customer is told replacement is deferred. No server-side path exists yet to accept a file from Telegram and push it to R2 (existing Media Engine upload flow is a browser-side presigned-PUT flow only)
+- Conversation state (`_SESSIONS`) and update-id dedup (`_SEEN_UPDATE_IDS`) are in-memory only — acceptable for a single Uvicorn process (no `--workers`), lost on service restart (owner-approved for T1B)
+- Outbound Telegram messages sent via `httpx.AsyncClient` (`_send_message`); fails safe (logs, does not crash) if `TELEGRAM_BOT_TOKEN` is unset
+- Nginx: new `location` block proxies `/bot/telegram/webhook` to `127.0.0.1:8000`, forwarding `X-Telegram-Bot-Api-Secret-Token`; added alongside existing `/`, `/admin`, `/health`, `/static/`, and slug routes
+- `requirements.txt`: `httpx==0.27.2` added
+- `.env.example`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` documented (no real values in repo)
+- No DB schema change — reuses `bot_clients` / `bot_client_slugs` from Phase T1
+- Telegram `setWebhook` pointed at `https://shadz.io/bot/telegram/webhook`; `getWebhookInfo` confirmed no pending updates, no last error
 
 ---
 
@@ -319,6 +339,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Page Engine v1 Phase 4H — NFC Legacy Route Extraction (`77b6f2a`, deployed 2026-06-28) — 8 schemas, X-API-Key auth (`require_api_key`), constants (`BOOT_TIME`, `_DF_CMD`, `SAFE_COMMANDS`), and 7 route handlers moved from `main.py` into new `nfc_legacy.py`; `register_nfc_routes(app)` and `register_nfc_admin_routes(admin_router)` wire routes back; `time`, `platform`, `subprocess`, `psutil`, `Security`, `APIKeyHeader`, `BaseModel`, `IntegrityError` imports removed from `main.py`; `main.py` reduced to 302 lines; refactor-only, no behavior change, no schema change, no route change, no admin UI change, no DB migration; browser/live tests passed ✓
 - Telegram Bot Self-Service Phase T1 — Bot Engine Foundation (`28559a3`, deployed 2026-06-29) — new `bot_admin.py` module; `BotClient` + `BotClientSlug` ORM models; 6 admin-only CRUD routes for managing bot clients and slug assignments; all routes under existing Basic Auth via `admin_router`; no Telegram webhook/API/token; no admin UI; no `_run_migrations()` change; DB tables auto-created by `create_all` on startup; DB backup `shadz.db.backup-before-bot-phase-t1-20260629-211249`; production verified: `/health` 200, `/admin` 401 unauth, DB tables confirmed ✓
 - Phase T1A — Repo Structure Flattening (`ffb526e` + merge `3596ecb`, deployed 2026-06-30) — all 28 tracked files moved from `Desktop/shadz-os/` prefix to repo root via `git mv` (all R100); local `Desktop/` wrapper removed; VPS: `shadz.db` + `.env` moved to `/opt/shadz-os/`, `shadz.service` WorkingDirectory updated to `/opt/shadz-os`, Nginx static alias updated to `/opt/shadz-os/static/`, old `/opt/shadz-os/Desktop/shadz-os` wrapper removed; backups at `/opt/shadz-os-backups/phase-t1a-wrapper-cleanup-20260629-222954`; production verified: `/health` 200, `/admin` 401, `/` 200, static files 200, DB intact (redirect_links=35, pages=6) ✓
+- Telegram Bot Self-Service Phase T1B — Webhook Runtime (`6a0439c`, deployed 2026-07-02) — new `bot_runtime.py`; public `POST /bot/telegram/webhook` protected by mandatory `TELEGRAM_WEBHOOK_SECRET` shared-secret header (fails closed if unset); `url` slug customer self-service (access code → slug menu → view/replace `destination_url` → confirm) fully live-tested end to end; `media` slug replacement explicitly NOT implemented (menu/state only, deferred to Phase T1C); in-memory session + update-id dedup state; `httpx==0.27.2` added; `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_SECRET` added to `.env.example` (no real values in repo); production Nginx got a new `/bot/telegram/webhook` location block (config backed up first, `nginx -t` passed, reload verified, header/secret checks confirmed 401/401/200); Telegram `setWebhook`/`getWebhookInfo` confirmed live with no errors; no DB schema change; no admin UI change; DB backup taken before creating live test data (test bot client + test slug `t1b-test-ioayej` pointed at `https://shadz.io/health`, scan_count increment confirmed) — test data cleanup deferred to T1C if desired
 
 ### Active slug type policy
 
@@ -341,6 +362,7 @@ This section exists to give Claude Code a compressed snapshot of current project
 
 - `main.py` — FastAPI app assembly layer; public routes, auth, migrations; imports and wires `link_admin`, `media_admin`, `page_admin`, `page_public`, `link_public`, `nfc_legacy`, `bot_admin`; catch-all `/{slug}` route stays here for route-order safety
 - `bot_admin.py` — Bot Engine admin schemas, access code generator, and route registration (`register_bot_admin_routes()`); all 6 `/admin/bot/*` routes; no Telegram API calls; no webhook; no public coupling
+- `bot_runtime.py` — Telegram webhook route (`register_bot_webhook_routes(app)`), in-memory chat session/dedup state, `httpx`-based `_send_message`; customer-facing `url` slug self-service only; media slug replacement deferred to Phase T1C; no admin coupling
 - `nfc_legacy.py` — NFC legacy system and internal utility routes; X-API-Key auth (`require_api_key`); `register_nfc_routes(app)` (6 routes: `/status`, `/run-command`, `/nfc/*`, `/r/{tag_id}`) and `register_nfc_admin_routes(admin_router)` (`PATCH /admin/nfc`); all NFC schemas including `NFCStats`; `BOOT_TIME`, `SAFE_COMMANDS`; no Page Engine coupling
 - `link_admin.py` — Link Engine admin schemas, slug helpers, and route registration (`register_link_admin_routes()`); all 10 `/admin/link*` and `/admin/links/*` routes; slug naming constants (`VALID_CONTENT_TYPES`, `SLUG_PATTERN`) and helpers (`is_valid_slug`, `generate_slug`); no public coupling
 - `media_admin.py` — Media Engine admin schemas, R2 helpers, and route registration (`register_media_admin_routes()`); all 8 `/admin/media/*` routes; no public coupling
@@ -360,14 +382,14 @@ This section exists to give Claude Code a compressed snapshot of current project
 - `GET /admin/pages/{page_id}` JSON read endpoint — to support Edit Page pre-fill in admin UI; not required for current v1
 - Proper UI login/logout system — deferred; Basic Auth popup is accepted for now
 - Role-based admin security — deferred until multi-admin use case arises
-- **Bot Engine — not yet implemented:**
-  - Phase T1B — Admin UI for Bot Self-Service: section in `static/admin.html` to create/list bot clients, show access codes, assign/remove slugs; no Telegram runtime
-  - Phase T2 — Telegram Bot Runtime: webhook endpoint, bot token config, access-code binding flow, customer chat state machine
-  - Customer self-service: destination URL replacement for `url` slugs; media replacement for `media` slugs; confirmation UX
-  - Telegram `sendMessage` calls; media upload from Telegram
+- **Bot Engine — remaining work (Phase T1C, not yet implemented):**
+  - Media slug replacement via Telegram — no server-side path exists to accept a file from Telegram and push it to R2 (current Media Engine upload is browser-side presigned-PUT only); needs its own design pass
+  - Live/manual testing of the media-slug deferred-flow message path
+  - Admin UI for Bot Self-Service — section in `static/admin.html` to create/list bot clients, show access codes, assign/remove slugs (bot clients are currently managed via raw `/admin/bot/*` API calls only)
+  - Optional cleanup of Phase T1B live test data (test bot client + slug `t1b-test-ioayej`)
   - Client portal; role-based access
 
-**Next recommended milestone (owner decision required):** Phase T1B first (admin needs UI to manage bot clients before bot runtime is useful), or Phase T2 directly if Telegram runtime is the priority.
+**Naming note (flagged, not resolved):** an earlier version of this roadmap labeled the Telegram webhook runtime "Phase T2" and reserved "Phase T1B" for the admin UI. The commit that shipped the webhook runtime (`6a0439c`) and the work session that deployed it both used the name "Phase T1B" instead. This doc now follows the commit's naming (T1B = webhook runtime); the admin UI work is retitled T1C above. If this conflicts with owner intent, rename before starting the next phase.
 
 ### Local Git / repo structure (Phase T1A — completed 2026-06-30)
 
