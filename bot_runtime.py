@@ -1,17 +1,16 @@
-"""Telegram Bot Runtime — Phase T1B.
+"""Telegram Bot Runtime — Phase T1B + T1C.
 
 Webhook-based customer self-service chat flow. Customers authenticate with the
 plain-text access_code issued via the admin Bot Engine (bot_admin.py), then
-self-serve destination_url updates for their assigned 'url' slugs.
+self-serve their assigned 'url' and 'media' slugs.
 
-Scope (T1B):
-  - url slugs: full self-service (view current destination, submit new one,
-    confirm, update destination_url only).
-  - media slugs: menu/state only. No file is ever received or uploaded from
-    Telegram — the existing R2 upload flow (media_admin.py) is a browser-side
-    presigned-PUT flow with no server-side "accept raw bytes" path, so a safe
-    Telegram upload path does not yet exist. Replacement is reported to the
-    customer as deferred.
+Scope:
+  - url slugs (T1B): full self-service (view current destination, submit new
+    one, confirm, update destination_url only).
+  - media slugs (T1C): customer sends a replacement file (photo/document/
+    video/GIF); it's downloaded from Telegram via getFile, validated against
+    the same ALLOWED_MEDIA_TYPES mime allowlist used by the browser upload
+    flow, uploaded to R2, and swapped in as the new active SlugMedia record.
 
 Conversation state is held in an in-memory dict, acceptable for a single
 uvicorn process (no --workers flag in this deployment) and acceptable to lose
@@ -31,10 +30,35 @@ from sqlalchemy.orm import Session
 
 import models
 from database import get_db
+# T1C intentionally reuses these existing media_admin storage helpers instead
+# of extracting a shared module — avoids a broad refactor for a single
+# consumer. Future cleanup: move into a shared media storage module if a
+# third caller needs them.
+from media_admin import (
+    ALLOWED_MEDIA_TYPES,
+    _get_r2_client,
+    _make_public_url,
+    _make_storage_key,
+)
 
 logger = logging.getLogger("bot_runtime")
 
 _TELEGRAM_API_BASE = "https://api.telegram.org/bot{token}"
+
+# Telegram's standard (non-local) Bot API enforces a hard 20 MB cap on file
+# downloads via getFile — matching it here means we reject early instead of
+# attempting a download that Telegram itself would already refuse.
+_MAX_TELEGRAM_MEDIA_BYTES = 20 * 1024 * 1024
+
+_EXT_BY_MIME = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "video/mp4": "mp4",
+    "video/quicktime": "mov",
+    "video/webm": "webm",
+    "image/gif": "gif",
+}
 
 # ---------------------------------------------------------------------------
 # In-memory conversation state — {chat_id: {...}}
@@ -134,10 +158,107 @@ def _current_media_status_text(slug: str, db: Session) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Media replacement helpers (Phase T1C)
+# ---------------------------------------------------------------------------
+
+def _extract_media_candidate(message: dict) -> tuple[str, str, int | None, str | None] | None:
+    """Pull (file_id, mime_type, file_size, file_name) out of a Telegram message.
+
+    Only document / video / animation / photo are considered. Returns None if
+    the message carries no supported media field (e.g. plain text, voice,
+    sticker, contact, location).
+    """
+    document = message.get("document")
+    if document:
+        return (
+            document.get("file_id"),
+            document.get("mime_type") or "",
+            document.get("file_size"),
+            document.get("file_name"),
+        )
+
+    video = message.get("video")
+    if video:
+        return (
+            video.get("file_id"),
+            video.get("mime_type") or "video/mp4",
+            video.get("file_size"),
+            video.get("file_name"),
+        )
+
+    animation = message.get("animation")
+    if animation:
+        return (
+            animation.get("file_id"),
+            animation.get("mime_type") or "video/mp4",
+            animation.get("file_size"),
+            animation.get("file_name"),
+        )
+
+    photos = message.get("photo")
+    if photos:
+        largest = photos[-1]
+        return (largest.get("file_id"), "image/jpeg", largest.get("file_size"), None)
+
+    return None
+
+
+def _media_type_for_mime(mime_type: str) -> str | None:
+    """Reverse-lookup against media_admin.ALLOWED_MEDIA_TYPES."""
+    for media_type, mimes in ALLOWED_MEDIA_TYPES.items():
+        if mime_type in mimes:
+            return media_type
+    return None
+
+
+def _default_filename(media_type: str, mime_type: str) -> str:
+    ext = _EXT_BY_MIME.get(mime_type, media_type)
+    return f"telegram_{media_type}.{ext}"
+
+
+async def _download_telegram_file(file_id: str) -> bytes:
+    """Fetch raw bytes for a Telegram file_id via getFile + the file download URL."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if not token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
+    async with httpx.AsyncClient(timeout=30) as client:
+        get_file_resp = await client.get(
+            _TELEGRAM_API_BASE.format(token=token) + "/getFile",
+            params={"file_id": file_id},
+        )
+        get_file_resp.raise_for_status()
+        try:
+            payload = get_file_resp.json()
+        except ValueError as exc:
+            raise RuntimeError("getFile response was not valid JSON") from exc
+
+        if payload.get("ok") is not True:
+            raise RuntimeError("getFile response was not ok")
+
+        file_path = (payload.get("result") or {}).get("file_path")
+        if not file_path:
+            raise RuntimeError("getFile response missing file_path")
+
+        download_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+        file_resp = await client.get(download_url)
+        file_resp.raise_for_status()
+        return file_resp.content
+
+
+def _upload_bytes_to_r2(storage_key: str, data: bytes, mime_type: str) -> None:
+    """Server-side R2 upload for bot-sourced bytes (distinct from the browser
+    presigned-PUT flow in media_admin.py, which never routes bytes through
+    the VPS)."""
+    client = _get_r2_client()
+    bucket = os.environ.get("R2_BUCKET_NAME", "shadz-media")
+    client.put_object(Bucket=bucket, Key=storage_key, Body=data, ContentType=mime_type)
+
+
+# ---------------------------------------------------------------------------
 # Conversation state machine
 # ---------------------------------------------------------------------------
 
-async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session) -> None:
+async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session, message: dict) -> None:
     text = (text or "").strip()
 
     if text.lower() in ("/start", "start"):
@@ -195,14 +316,15 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session)
 
         if chosen["content_type"] == "media":
             status = _current_media_status_text(chosen["slug"], db)
+            session["state"] = "awaiting_media_upload"
+            session["selected_slug"] = chosen["slug"]
+            _SESSIONS[chat_id] = session
             await _send_message(
                 chat_id,
                 f"Current media: {status}\n\n"
-                "Media replacement via Telegram isn't available yet — please contact "
-                "SHADZ support to update this slug's media. Reply with another number to "
-                "select a different slug.",
+                "Send a replacement file (photo, document, video, or GIF) to update "
+                "this slug's media, or /cancel.",
             )
-            _SESSIONS[chat_id] = session  # stay on the slug menu state
             return
 
         session["state"] = "awaiting_new_url"
@@ -233,6 +355,111 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session)
             f"Update '{session['selected_slug']}' destination to:\n{text}\n\n"
             "Reply YES to confirm or NO to cancel.",
         )
+        return
+
+    if state == "awaiting_media_upload":
+        if text.lower() == "/cancel":
+            _SESSIONS[chat_id] = _reset_to_slug_menu(session)
+            await _send_message(chat_id, "Cancelled.")
+            return
+
+        candidate = _extract_media_candidate(message)
+        if candidate is None:
+            await _send_message(
+                chat_id,
+                "Please send a photo, document, video, or GIF to replace the media — "
+                "plain text isn't accepted. Or reply /cancel.",
+            )
+            return
+
+        file_id, mime_type, reported_size, file_name = candidate
+
+        if not file_id:
+            await _send_message(
+                chat_id,
+                "That file isn't supported. Please send a photo, document, video, or GIF, "
+                "or reply /cancel.",
+            )
+            return
+
+        media_type = _media_type_for_mime(mime_type)
+        if media_type is None:
+            await _send_message(
+                chat_id,
+                f"That file type ({mime_type or 'unknown'}) isn't supported. "
+                "Supported: JPEG/PNG/WEBP images, MP4/QuickTime/WEBM video, GIF.",
+            )
+            return
+
+        if reported_size is not None and reported_size > _MAX_TELEGRAM_MEDIA_BYTES:
+            await _send_message(
+                chat_id,
+                f"That file is too large ({reported_size // (1024 * 1024)} MB). "
+                f"Max supported size is {_MAX_TELEGRAM_MEDIA_BYTES // (1024 * 1024)} MB.",
+            )
+            return
+
+        slug = session["selected_slug"]
+        link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
+        if not link or link.is_archived is True or link.content_type != "media":
+            await _send_message(chat_id, "That slug is no longer available.")
+            _SESSIONS[chat_id] = _reset_to_slug_menu(session)
+            return
+
+        await _send_message(chat_id, "Uploading...")
+
+        try:
+            data = await _download_telegram_file(file_id)
+        except Exception:
+            logger.exception(
+                "Telegram file download failed for chat_id=%s file_id=%s", chat_id, file_id
+            )
+            await _send_message(chat_id, "Couldn't download that file from Telegram. Please try again.")
+            return
+
+        if len(data) > _MAX_TELEGRAM_MEDIA_BYTES:
+            await _send_message(chat_id, "That file is too large. Please send a smaller file.")
+            return
+
+        safe_name = file_name or _default_filename(media_type, mime_type)
+        storage_key = _make_storage_key(media_type, safe_name)
+        public_url = _make_public_url(storage_key)
+
+        try:
+            _upload_bytes_to_r2(storage_key, data, mime_type)
+        except Exception:
+            logger.exception("R2 upload failed for chat_id=%s slug=%s", chat_id, slug)
+            await _send_message(chat_id, "Upload failed. Please try again in a moment.")
+            return
+
+        try:
+            asset = models.MediaAsset(
+                media_type=media_type,
+                storage_provider="r2",
+                storage_key=storage_key,
+                public_url=public_url,
+                original_filename=safe_name,
+                mime_type=mime_type,
+                file_size=len(data),
+            )
+            db.add(asset)
+            db.flush()
+
+            (db.query(models.SlugMedia)
+               .filter(models.SlugMedia.slug == slug, models.SlugMedia.is_active == True)
+               .update({"is_active": False}))
+
+            sm = models.SlugMedia(slug=slug, media_asset_id=asset.id, is_active=True)
+            db.add(sm)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("DB commit failed for chat_id=%s slug=%s", chat_id, slug)
+            await _send_message(chat_id, "Something went wrong saving the new media. Please try again.")
+            return
+
+        await _send_message(chat_id, f"Done. Media for '{slug}' has been replaced.")
+        _SESSIONS[chat_id] = _reset_to_slug_menu(session)
         return
 
     if state == "awaiting_confirmation":
@@ -308,7 +535,7 @@ def register_bot_webhook_routes(app) -> None:
         from_user = message.get("from") or {}
 
         try:
-            await _handle_message(chat_id, text, from_user, db)
+            await _handle_message(chat_id, text, from_user, db, message)
         except Exception:
             logger.exception("Unhandled error processing update_id=%s chat_id=%s", update_id, chat_id)
 
