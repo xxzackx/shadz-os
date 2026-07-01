@@ -17,6 +17,7 @@ from page_public import serve_public_page
 from link_public import expired_page_response, serve_public_media
 from nfc_legacy import register_nfc_routes, register_nfc_admin_routes
 from bot_admin import register_bot_admin_routes
+from bot_runtime import register_bot_webhook_routes
 
 Base.metadata.create_all(bind=engine)
 
@@ -213,6 +214,10 @@ def home():
 # NFC and legacy utility routes live in nfc_legacy.py — registered here.
 # Must be registered before the /{slug} catch-all.
 register_nfc_routes(app)
+
+# Telegram Bot webhook route lives in bot_runtime.py — registered here.
+# Must be registered before the /{slug} catch-all.
+register_bot_webhook_routes(app)
 
 
 # ---------------------------------------------------------------------------
