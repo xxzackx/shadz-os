@@ -520,6 +520,21 @@
         </div>
       </div>
 
+      <!-- Module D: Telegram Bot Clients -->
+      <div class="module-group">
+        <div class="module-header">
+          <span class="module-header-label">Telegram Bot Clients</span>
+          <div class="module-header-line"></div>
+        </div>
+        <div class="home-grid">
+          <div class="home-card" onclick="loadBotClients(); show('botSection')">
+            <div class="home-card-title">Manage Bot Clients</div>
+            <div class="home-card-desc">Create clients, view access codes, assign slugs</div>
+            <div class="home-card-arrow">›</div>
+          </div>
+        </div>
+      </div>
+
     </div>
 
     <!-- Create new link section -->
@@ -900,10 +915,63 @@
       </div>
     </div>
 
+    <!-- Telegram Bot Clients section -->
+    <div id="botSection" class="section">
+      <div class="section-header">
+        <button class="back-btn" onclick="goHome()">← Back</button>
+        <span class="section-title">Telegram Bot Clients</span>
+      </div>
+
+      <!-- Create bot client -->
+      <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:0.75rem">Create Bot Client</div>
+
+      <label for="bc-name">Client Name</label>
+      <input type="text" id="bc-name" placeholder="e.g. Jane's Keychain" autocomplete="off" />
+
+      <button class="action-btn" id="bc-btn" onclick="createBotClient()">Create Bot Client</button>
+
+      <div id="bc-result" class="result-box" style="display:none">
+        <div class="result-row">
+          <span class="result-label">Client ID</span>
+          <span class="result-value big" id="bc-resId">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Access Code</span>
+          <span class="result-value gold" id="bc-resCode">—</span>
+        </div>
+      </div>
+
+      <div id="bc-msg" class="msg"></div>
+
+      <!-- Divider -->
+      <div style="height:1px;background:var(--border-2);margin-top:1.25rem;margin-bottom:1.5rem"></div>
+
+      <!-- Assign slug -->
+      <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:0.75rem">Assign Slug to Bot Client</div>
+
+      <label for="bs-clientId">Bot Client ID</label>
+      <input type="number" id="bs-clientId" placeholder="e.g. 3" autocomplete="off" />
+
+      <label for="bs-slug">Slug <span style="color:var(--text-muted);font-size:0.7em">(url or media slug only)</span></label>
+      <input type="text" id="bs-slug" placeholder="url-a1b2c3" autocomplete="off" />
+
+      <button class="action-btn" id="bs-btn" onclick="assignBotSlug()">Assign Slug</button>
+      <div id="bs-msg" class="msg"></div>
+
+      <!-- Client list -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:1.5rem;margin-bottom:0.6rem">
+        <span style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em">All Bot Clients</span>
+        <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadBotClients()">Refresh</button>
+      </div>
+      <div id="botClientList" class="card-grid"></div>
+
+      <div id="bl-msg" class="msg"></div>
+    </div>
+
   </div>
 
   <script>
-    const GRID_SECTIONS = new Set(['statsSection', 'storageSection']);
+    const GRID_SECTIONS = new Set(['statsSection', 'storageSection', 'botSection']);
 
     // Keyed by asset id (number). Populated by loadStorage() before rendering.
     // renameAsset() reads current display_name from here — avoids passing any
@@ -2129,6 +2197,160 @@
 
     // Initialize template guide for Create Page (invitation is pre-selected)
     updateTemplateGuide('pc');
+
+    // ── Telegram Bot Clients ─────────────────────────────────────────────────
+
+    async function createBotClient() {
+      const nameInput = document.getElementById('bc-name');
+      const clientName = nameInput.value.trim();
+
+      document.getElementById('bc-result').style.display = 'none';
+
+      if (!clientName) { showMsg('bc-msg', 'error', 'Client name is required.'); return; }
+
+      const btn = document.getElementById('bc-btn');
+      btn.disabled = true;
+      showMsg('bc-msg', '', '');
+
+      try {
+        const res  = await fetch('/admin/bot/clients', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ client_name: clientName }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showMsg('bc-msg', 'error', data.detail || `Error ${res.status}`);
+        } else {
+          document.getElementById('bc-resId').textContent = data.id;
+          document.getElementById('bc-resCode').textContent = data.access_code;
+          document.getElementById('bc-result').style.display = 'block';
+          showMsg('bc-msg', 'ok', 'Bot client created.');
+          nameInput.value = '';
+          loadBotClients();
+        }
+      } catch {
+        showMsg('bc-msg', 'error', 'Network error.');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function assignBotSlug() {
+      const clientId = document.getElementById('bs-clientId').value.trim();
+      const slug     = document.getElementById('bs-slug').value.trim();
+
+      if (!clientId) { showMsg('bs-msg', 'error', 'Bot client ID is required.'); return; }
+      if (!slug)     { showMsg('bs-msg', 'error', 'Slug is required.'); return; }
+
+      const btn = document.getElementById('bs-btn');
+      btn.disabled = true;
+      showMsg('bs-msg', '', '');
+
+      try {
+        const res  = await fetch(`/admin/bot/clients/${encodeURIComponent(clientId)}/slugs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ slug }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showMsg('bs-msg', 'error', data.detail || `Error ${res.status}`);
+        } else {
+          showMsg('bs-msg', 'ok', data.message || 'Slug assigned.');
+          document.getElementById('bs-slug').value = '';
+          loadBotClients();
+        }
+      } catch {
+        showMsg('bs-msg', 'error', 'Network error.');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function unassignBotSlug(clientId, slug) {
+      if (!confirm(`Remove slug '${slug}' from bot client ${clientId}?`)) return;
+      try {
+        const res  = await fetch(`/admin/bot/clients/${clientId}/slugs/${encodeURIComponent(slug)}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showMsg('bl-msg', 'ok', data.message || 'Slug removed.');
+          loadBotClients();
+        } else {
+          showMsg('bl-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('bl-msg', 'error', 'Network error.');
+      }
+    }
+
+    async function loadBotClients() {
+      const container = document.getElementById('botClientList');
+      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+
+      try {
+        const res  = await fetch('/admin/bot/clients', { credentials: 'same-origin' });
+        const data = await res.json();
+
+        if (!res.ok) {
+          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          return;
+        }
+
+        if (data.length === 0) {
+          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No bot clients yet.</div>';
+          return;
+        }
+
+        container.innerHTML = data.map(c => buildBotClientCard(c)).join('');
+      } catch {
+        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+      }
+    }
+
+    function buildBotClientCard(c) {
+      const statusBadge = c.is_active
+        ? '<span style="color:var(--gold-light)">Active</span>'
+        : '<span style="color:var(--text-muted)">Inactive</span>';
+
+      const assignedSlugs = Array.isArray(c.assigned_slugs) ? c.assigned_slugs : [];
+      const slugsHtml = assignedSlugs.length
+        ? assignedSlugs.map(s => `
+            <div class="stats-row" style="justify-content:space-between;align-items:center">
+              <span class="stats-value value-overflow">${esc(s.slug)} <span style="color:var(--text-muted);font-size:0.85em">(${esc(s.content_type)})</span></span>
+              <button class="ghost-btn sm danger" onclick="unassignBotSlug(${c.id}, '${escVal(s.slug)}')">Unassign</button>
+            </div>`).join('')
+        : '<div style="font-size:0.72rem;color:var(--text-muted)">No slugs assigned.</div>';
+
+      return `
+        <div class="stats-box" style="display:block">
+          <div class="stats-row">
+            <span class="stats-label">ID</span>
+            <span class="stats-value gold">${esc(c.id)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Client</span>
+            <span class="stats-value value-overflow">${esc(c.client_name)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Access Code</span>
+            <span class="stats-value gold">${esc(c.access_code)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Status</span>
+            <span class="stats-value">${statusBadge}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Assigned Slugs</span>
+          </div>
+          ${slugsHtml}
+        </div>`;
+    }
   </script>
 </body>
 </html>
