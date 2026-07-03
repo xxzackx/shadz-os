@@ -2,6 +2,65 @@
 
 ---
 
+## Telegram Bot Self-Service Phase T1E — Bot Admin UI Polish
+
+**Date:** 2026-07-04
+**Runtime commits:** `e74665b`, `23d9934`
+**Status:** Complete, pushed, deployed, production-verified, browser/live-tested, and closed
+
+**Summary:**
+Frontend-only cleanup pass on the Phase T1D Bot Admin UI. No new routes, no backend, DB, bot runtime, Nginx, or R2 changes. Two commits, both touching `static/admin.html` only.
+
+**Frontend changes (`static/admin.html` only):**
+
+`e74665b` — Polish bot admin UI state handling:
+- `goHome()` now also resets the Bot Client create result box (`bc-result`), matching the existing reset pattern already used for `createResult` (Link Engine) and `mu-result` (Media Engine) — the create result no longer shows a stale client ID/access code from a previous visit to the section
+- `createBotClient()` auto-fills the Assign Slug `Bot Client ID` field (`bs-clientId`) with the newly created client's `id`, removing a manual re-typing step between Create Bot Client and Assign Slug
+
+`23d9934` — Polish bot admin client status and errors:
+- `buildBotClientCard()` adds a `Telegram` status row, using the `telegram_username` / `telegram_user_id` fields already returned by `GET /admin/bot/clients` (no backend change — these fields existed since Phase T1 and are populated by `bot_runtime.py` on customer login): shows `@username` if linked with a username, `Linked` if only the numeric Telegram user id is set, or a muted `Not linked yet` otherwise
+- `assignBotSlug()` now detects when the backend's error `detail` is an array (FastAPI's validation-error shape, e.g. a non-integer Bot Client ID) and shows a readable `"Invalid Bot Client ID. Please enter a whole number."` message instead of `[object Object]`; this fix is scoped to `assignBotSlug()`'s own error branch only — the shared `showMsg()` helper and every other section's `data.detail || ...` error handling (Link/Media/Page Engine) are untouched
+
+**Explicitly NOT part of T1E (deferred, per scope):**
+- Campaign / shared-content / bulk keychain management architecture
+- Delete/deactivate bot client UI (backend routes `POST /admin/bot/clients/{id}/regenerate-code` and `PATCH /admin/bot/clients/{id}` still exist but remain unexposed in the UI, same as T1D)
+- Check Slug card integration for bot client assignment
+- Any bot runtime (`bot_runtime.py`) redesign or behavior change
+
+**Unchanged:**
+- `bot_admin.py`, `bot_runtime.py`, `models.py` — not modified
+- All existing `/admin/bot/*` route paths, HTTP methods, response models, status codes — identical
+- Database schema — no migration
+- Page Engine / Link Engine / Media Engine — not touched
+- Nginx, R2 — not touched
+
+**Local verification (pre-commit, both commits):**
+- `python3 -m py_compile` on all `.py` files → no errors (no `.py` files touched) ✓
+- `git diff --name-only` confirmed only `static/admin.html` changed in each commit ✓
+- ID/reference sanity grep (`bc-result`, `bs-clientId`, `telegramStatus`, `Invalid Bot Client ID`) confirmed no dangling or duplicate DOM references ✓
+- `from main import app; import bot_admin, bot_runtime` → import OK; all 7 bot-related routes still registered correctly ✓
+
+**Production deploy (2026-07-04):**
+- Pushed to `origin master`: `deadfb6..23d9934`
+- VPS pulled `23d9934`; `shadz.service` restarted; readiness wait used before checks
+- Local `/health` → 200, public `/health` → 200 ✓
+- Local and public `/admin` unauthenticated → 401 ✓
+- `shadz.service` confirmed active ✓
+
+**Browser/live test (2026-07-04):**
+- User confirmed: Bot client cards show Telegram linked status / "Not linked yet" correctly ✓
+- User confirmed: Create Bot Client auto-fills Assign Slug Bot Client ID ✓
+- User confirmed: an invalid decimal Bot Client ID shows the readable error message instead of `[object Object]` ✓
+
+**Touched:** `static/admin.html` only (both commits)
+**Database:** untouched — no migration
+**Schema:** untouched
+**Backend:** untouched
+**Bot runtime:** untouched
+**Nginx:** untouched
+
+---
+
 ## Telegram Bot Self-Service Phase T1D — Basic Bot Admin UI
 
 **Date:** 2026-07-04
