@@ -995,6 +995,7 @@
       document.getElementById('storageList').innerHTML = '';
       document.getElementById('st-historyResults').innerHTML = '';
       document.getElementById('mu-result').style.display = 'none';
+      document.getElementById('bc-result').style.display = 'none';
       // Reset upload progress UI so it never shows stale state on re-entry
       document.getElementById('mu-progress-wrap').style.display = 'none';
       document.getElementById('mu-progress-bar').style.width = '0%';
@@ -2226,6 +2227,7 @@
           document.getElementById('bc-resId').textContent = data.id;
           document.getElementById('bc-resCode').textContent = data.access_code;
           document.getElementById('bc-result').style.display = 'block';
+          document.getElementById('bs-clientId').value = data.id;
           showMsg('bc-msg', 'ok', 'Bot client created.');
           nameInput.value = '';
           loadBotClients();
