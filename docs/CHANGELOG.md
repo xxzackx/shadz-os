@@ -2,6 +2,58 @@
 
 ---
 
+## Telegram Bot Self-Service Phase T1D — Basic Bot Admin UI
+
+**Date:** 2026-07-04
+**Runtime commit:** `67fad4e`
+**Status:** Complete, pushed, deployed, production-verified, browser/live-tested, and closed
+
+**Summary:**
+Added a basic Admin Panel UI section for managing Telegram Bot Self-Service clients, wired to the existing `/admin/bot/*` backend routes from Phase T1. No backend, webhook, DB schema, or route behavior changed.
+
+**Frontend changes (`static/admin.html` only):**
+- New "Telegram Bot Clients" module on the admin home screen (Module D)
+- `botSection` — create bot client (client name → returns and displays `access_code`), assign slug to bot client (client ID + slug), client list (card grid) showing id, client name, access code, active/inactive status, and assigned slugs with per-slug Unassign button, plus a Refresh button
+- `createBotClient()`, `assignBotSlug()`, `unassignBotSlug()`, `loadBotClients()`, `buildBotClientCard()` — follow existing JS patterns (`credentials: 'same-origin'`, `esc()`/`escVal()` XSS-safe rendering, `showMsg()`)
+
+**Backend routes reused (no backend changes):**
+- `POST /admin/bot/clients` — create client
+- `GET /admin/bot/clients` — list clients + assigned slugs
+- `POST /admin/bot/clients/{id}/slugs` — assign slug
+- `DELETE /admin/bot/clients/{id}/slugs/{slug}` — unassign slug
+
+**Unchanged:**
+- No backend changes — `bot_admin.py` not modified
+- No webhook/runtime flow changes — `bot_runtime.py` not modified
+- No DB schema changes
+- No Page Engine / Link Engine / Media Engine behavior changes
+
+**Local verification (pre-commit):**
+- `python3 -m py_compile` on all `.py` files → no errors ✓
+- Local server started against a throwaway SQLite DB: `/health` → 200, `/admin` unauth → 401, `/admin` auth → 200 ✓
+- Full create → assign → list → unassign flow exercised via curl against the real routes to confirm JSON shape matches the new JS ✓
+- Served `/admin` HTML diffed byte-for-byte against the file on disk ✓
+
+**Production deploy (2026-07-04):**
+- Pushed to `origin master`: `a4a26c0..67fad4e`
+- VPS pulled `67fad4e`; `shadz.service` restarted; readiness wait used before checks
+- Local `/health` → 200, public `/health` → 200 ✓
+- Local and public `/admin` unauthenticated → 401 ✓
+- Deployed `/admin` HTML confirmed to contain the Telegram Bot Clients UI markers ✓
+- No service errors in recent logs ✓
+
+**Browser/live test (2026-07-04):**
+- User confirmed: Create Bot Client, Assign Slug, assigned slug appears on refresh, Unassign all passed ✓
+
+**Touched:** `static/admin.html` only
+**Database:** untouched — no migration
+**Schema:** untouched
+**Backend:** untouched
+**Webhook/runtime:** untouched
+**Nginx:** untouched
+
+---
+
 ## Telegram Bot Self-Service Phase T1C — Media Slug Replacement
 
 **Date:** 2026-07-02
