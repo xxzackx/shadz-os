@@ -2259,7 +2259,10 @@
         });
         const data = await res.json();
         if (!res.ok) {
-          showMsg('bs-msg', 'error', data.detail || `Error ${res.status}`);
+          const detail = Array.isArray(data.detail)
+            ? 'Invalid Bot Client ID. Please enter a whole number.'
+            : (data.detail || `Error ${res.status}`);
+          showMsg('bs-msg', 'error', detail);
         } else {
           showMsg('bs-msg', 'ok', data.message || 'Slug assigned.');
           document.getElementById('bs-slug').value = '';
@@ -2320,6 +2323,12 @@
         ? '<span style="color:var(--gold-light)">Active</span>'
         : '<span style="color:var(--text-muted)">Inactive</span>';
 
+      const telegramStatus = c.telegram_username
+        ? `<span style="color:var(--gold-light)">@${esc(c.telegram_username)}</span>`
+        : c.telegram_user_id
+          ? '<span style="color:var(--gold-light)">Linked</span>'
+          : '<span style="color:var(--text-muted)">Not linked yet</span>';
+
       const assignedSlugs = Array.isArray(c.assigned_slugs) ? c.assigned_slugs : [];
       const slugsHtml = assignedSlugs.length
         ? assignedSlugs.map(s => `
@@ -2346,6 +2355,10 @@
           <div class="stats-row">
             <span class="stats-label">Status</span>
             <span class="stats-value">${statusBadge}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Telegram</span>
+            <span class="stats-value">${telegramStatus}</span>
           </div>
           <div class="stats-row">
             <span class="stats-label">Assigned Slugs</span>
