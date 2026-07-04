@@ -2,6 +2,63 @@
 
 ---
 
+## Telegram Bot Self-Service Phase T1G — Bot Client Deactivate/Delete Control
+
+**Date:** 2026-07-05
+**Runtime commit:** `df4d384`
+**Status:** Complete, pushed, deployed, production-verified, live-tested, and closed
+
+**Summary:**
+Adds Bot Client deactivate/reactivate/delete controls, closing the gap flagged in T1D/T1E where the backend routes existed (`PATCH /admin/bot/clients/{id}`) but had no Admin UI exposure, and no hard-delete route existed at all. Also closes a live-session gap: a client deactivated mid-Telegram-conversation previously stayed authenticated until session expiry/service restart.
+
+**Backend change (`bot_admin.py` only):**
+- New `DELETE /admin/bot/clients/{client_id}` route — deletes the client's `BotClientSlug` assignment rows (join table only), then the `BotClient` row itself
+- Does **not** delete `RedirectLink` slugs, `MediaAsset` records, or scan/history data — only unassigns them from the deleted client
+- Assignment cleanup on delete verified necessary and safe: SQLite has no FK enforcement configured (`database.py`), so leaving orphaned `BotClientSlug` rows would permanently block reassignment of those slugs to any future client; deleting the join rows first avoids that
+
+**Runtime change (`bot_runtime.py` only):**
+- `_handle_message` now re-checks `BotClient.is_active` on every authenticated state transition (not just at `awaiting_code` login) — a client deactivated mid-session is immediately kicked back to `awaiting_code` with a clear message, instead of retaining access until the in-memory session naturally expires or the service restarts
+- Existing login-time active check (`awaiting_code` state) unchanged in behavior — reused `models.BotClient.is_active.is_(True)` (SQLAlchemy boolean-comparison style, not `== True`) in both the pre-existing login check and the new mid-session check
+
+**Admin UI change (`static/admin.html` only):**
+- Each Bot Client card now has a Deactivate/Activate toggle button (label and target state reflect current `is_active`) and a Delete button, both confirm-gated
+- Wired to the existing `PATCH /admin/bot/clients/{id}` route and the new `DELETE /admin/bot/clients/{id}` route; reuses the existing `bl-msg` message pattern
+- No new sections, no redesign — additive to the existing Bot Client card layout from T1D/T1E
+
+**Unchanged:**
+- Slug/URL/media replacement flows — untouched except for the mid-session active re-check gating access to them
+- Database schema — no migration (`is_active` column already existed on `bot_clients` since Phase T1)
+- Page Engine, Link Engine, Media Engine, R2, Nginx, Cloudflare — untouched
+
+**Local verification (pre-commit):**
+- `python3 -m py_compile bot_admin.py bot_runtime.py` → no errors
+- `python3 -c "import main"` → succeeds
+- Local uvicorn boot: `/health` → 200, `/admin` unauth → 401, `/admin` with Basic Auth → 200, `/` → 200
+- Full curl-driven lifecycle: create client → assign slug → deactivate (second assign attempt correctly blocked with 400) → reactivate → delete (assignment row removed; slug immediately reassignable to a new client, confirming no orphan)
+- Direct `bot_runtime._handle_message` simulation: deactivating a client mid-session immediately blocks further Telegram actions and resets to login; reactivating restores normal flow on the next message
+
+**Production deploy (2026-07-05):**
+- Pushed to `origin master`: `59869e1..df4d384`
+- VPS pulled `df4d384`; `shadz.service` restarted; readiness wait passed
+- Local `/health` → 200, public `/health` → 200 ✓
+- Local `/admin` unauth → 401, public `/admin` unauth → 401 ✓
+
+**Live test (2026-07-05):**
+- Admin UI: Deactivate/Activate toggle and Delete confirmed live for a test Bot Client
+- Telegram: inactive Bot Client confirmed blocked from login/management; reactivated Bot Client confirmed working again
+- Delete tested only on a test client — confirmed the assigned slug itself remained untouched (RedirectLink record intact, unaffected by the delete)
+
+**Touched:** `bot_admin.py`, `bot_runtime.py`, `static/admin.html`
+**Database:** untouched — no migration
+**Schema:** untouched
+**Nginx:** untouched
+
+**Explicitly NOT part of T1G (deferred to Phase T1H):**
+- Restore / cleanup polish for Bot Client lifecycle
+- Bulk Bot Client management
+
+---
+
 ## Telegram Bot Self-Service Phase T1F — Link Safety Guard
 
 **Date:** 2026-07-04
