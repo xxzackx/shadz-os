@@ -23,6 +23,7 @@ step (setWebhook call) after deploy.
 import logging
 import os
 from collections import deque
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import Depends, HTTPException, Request
@@ -141,6 +142,25 @@ def _parse_index(text: str, count: int) -> int | None:
     if n < 1 or n > count:
         return None
     return n - 1
+
+
+# ---------------------------------------------------------------------------
+# Link Safety Guard (Phase T1F) — blocks customers from pointing a bot-managed
+# url slug back at SHADZ itself or an internal/local address, which would
+# otherwise allow slug chaining or route confusion.
+# ---------------------------------------------------------------------------
+
+_BLOCKED_HOSTS = {"shadz.io", "www.shadz.io", "localhost", "127.0.0.1", "0.0.0.0"}
+
+
+def _is_blocked_destination_url(url: str) -> bool:
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in ("http", "https"):
+        return True
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        return True
+    return hostname in _BLOCKED_HOSTS
 
 
 def _current_media_status_text(slug: str, db: Session) -> str:
@@ -345,6 +365,13 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
             return
         if not (text.startswith("http://") or text.startswith("https://")):
             await _send_message(chat_id, "That doesn't look like a valid URL — it must start with http:// or https://. Try again, or /cancel.")
+            return
+        if _is_blocked_destination_url(text):
+            await _send_message(
+                chat_id,
+                "This link cannot be used because it points back to SHADZ or an internal address. "
+                "Please send an external public link instead.",
+            )
             return
 
         session["pending_value"] = text
