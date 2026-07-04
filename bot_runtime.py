@@ -289,11 +289,31 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
     session = _SESSIONS.get(chat_id) or {"state": "awaiting_code"}
     state = session.get("state")
 
+    # Phase T1G: a client authenticated earlier in this session may have been
+    # deactivated since — re-check on every authenticated action, not just at
+    # login, so deactivation takes effect immediately instead of at next login.
+    if state != "awaiting_code":
+        bot_client_id = session.get("bot_client_id")
+        if bot_client_id is not None:
+            active_client = (
+                db.query(models.BotClient)
+                .filter(models.BotClient.id == bot_client_id, models.BotClient.is_active.is_(True))
+                .first()
+            )
+            if not active_client:
+                _SESSIONS[chat_id] = {"state": "awaiting_code"}
+                await _send_message(
+                    chat_id,
+                    "Your access has been deactivated. Please contact the admin, "
+                    "or enter a new access code if you have one.",
+                )
+                return
+
     if state == "awaiting_code":
         code = text.strip()
         client = (
             db.query(models.BotClient)
-            .filter(models.BotClient.access_code == code, models.BotClient.is_active == True)
+            .filter(models.BotClient.access_code == code, models.BotClient.is_active.is_(True))
             .first()
         )
         if not client:

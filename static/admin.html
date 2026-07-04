@@ -2323,6 +2323,10 @@
         ? '<span style="color:var(--gold-light)">Active</span>'
         : '<span style="color:var(--text-muted)">Inactive</span>';
 
+      const toggleBtn = c.is_active
+        ? `<button class="ghost-btn sm danger" onclick="setBotClientActive(${c.id}, false)">Deactivate</button>`
+        : `<button class="ghost-btn sm" onclick="setBotClientActive(${c.id}, true)">Activate</button>`;
+
       const telegramStatus = c.telegram_username
         ? `<span style="color:var(--gold-light)">@${esc(c.telegram_username)}</span>`
         : c.telegram_user_id
@@ -2360,11 +2364,56 @@
             <span class="stats-label">Telegram</span>
             <span class="stats-value">${telegramStatus}</span>
           </div>
+          <div class="stats-row" style="justify-content:flex-end;gap:0.5rem">
+            ${toggleBtn}
+            <button class="ghost-btn sm danger" onclick="deleteBotClient(${c.id})">Delete</button>
+          </div>
           <div class="stats-row">
             <span class="stats-label">Assigned Slugs</span>
           </div>
           ${slugsHtml}
         </div>`;
+    }
+
+    async function setBotClientActive(clientId, active) {
+      const verb = active ? 'Activate' : 'Deactivate';
+      if (!confirm(`${verb} bot client ${clientId}?`)) return;
+      try {
+        const res  = await fetch(`/admin/bot/clients/${clientId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ is_active: active }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showMsg('bl-msg', 'ok', `Bot client ${clientId} ${active ? 'activated' : 'deactivated'}.`);
+          loadBotClients();
+        } else {
+          showMsg('bl-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('bl-msg', 'error', 'Network error.');
+      }
+    }
+
+    async function deleteBotClient(clientId) {
+      if (!confirm(`Permanently delete bot client ${clientId}? This removes its slug assignments (slugs themselves are untouched) and cannot be undone.`)) return;
+      try {
+        const res  = await fetch(`/admin/bot/clients/${clientId}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showMsg('bl-msg', 'ok', data.message || 'Bot client deleted.');
+          loadBotClients();
+        } else {
+          showMsg('bl-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('bl-msg', 'error', 'Network error.');
+      }
     }
   </script>
 </body>

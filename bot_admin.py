@@ -335,6 +335,30 @@ def register_bot_admin_routes(admin_router) -> None:
             "message": f"Access code regenerated for bot client {client_id}",
         }
 
+    @admin_router.delete("/bot/clients/{client_id}")
+    def delete_bot_client(client_id: int, db: Session = Depends(get_db)):
+        """Hard-delete a bot client and its slug assignment rows.
+
+        Only the BotClient row and its BotClientSlug assignment rows (join
+        table) are removed. The underlying RedirectLink slugs, media, and
+        redirect history are never touched — this only unassigns them.
+        """
+        client = _get_bot_client_or_404(client_id, db)
+
+        (
+            db.query(models.BotClientSlug)
+            .filter(models.BotClientSlug.bot_client_id == client_id)
+            .delete()
+        )
+        db.delete(client)
+        db.commit()
+
+        return {
+            "success": True,
+            "bot_client_id": client_id,
+            "message": f"Bot client {client_id} deleted",
+        }
+
     @admin_router.patch("/bot/clients/{client_id}", response_model=BotClientOut)
     def update_bot_client(
         client_id: int,
