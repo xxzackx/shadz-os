@@ -2,6 +2,53 @@
 
 ---
 
+## Telegram Bot Self-Service Phase T1F — Link Safety Guard
+
+**Date:** 2026-07-04
+**Runtime commit:** `a7510e1`
+**Status:** Complete, pushed, deployed, production-verified, live-tested via Telegram, and closed
+
+**Summary:**
+Adds a link safety guard to the bot's `url` slug replacement flow so customers cannot point a slug back at SHADZ itself or an internal/local address (slug chaining / route confusion prevention). `bot_runtime.py` only.
+
+**Runtime change (`bot_runtime.py` only):**
+- New `_is_blocked_destination_url()` helper (stdlib `urllib.parse.urlparse`); strips whitespace, lowercases hostname, exact-hostname match against a blocklist
+- Called in the `awaiting_new_url` state, after the existing `http://`/`https://` prefix check and before the destination is staged for confirmation/save
+- Blocks: `shadz.io`, `www.shadz.io`, `localhost`, `127.0.0.1`, `0.0.0.0` (exact hostname only, not substring — e.g. `notshadz.io` is not blocked), any scheme other than `http`/`https`, and missing/unparseable hostnames
+- Blocked attempt: customer stays in `awaiting_new_url` and sees "This link cannot be used because it points back to SHADZ or an internal address. Please send an external public link instead." — no technical detail exposed, retry/`/cancel` unaffected
+- Allowed external URLs proceed to confirmation exactly as before
+
+**Unchanged:**
+- Media slug replacement flow — untouched
+- Admin UI (`static/admin.html`) and admin routes (`bot_admin.py`) — untouched
+- Database schema — no migration
+- Nginx, auth, existing route paths/response shapes — untouched
+
+**Local verification (pre-commit):**
+- `python3 -m py_compile bot_runtime.py` → no errors
+- Standalone validator check — allowed (`https://google.com`, `https://instagram.com/example`, `https://t.me/xshadzx`, `https://example.com/path?x=1`) all pass through; blocked (`https://shadz.io/test`, `http://www.shadz.io/test`, `http://localhost:8000/test`, `http://127.0.0.1/test`, `http://0.0.0.0/test`, `ftp://example.com`, `example.com`) all blocked; exact-hostname-only confirmed (`notshadz.io`, `shadz.io.evil.com` not blocked)
+
+**Production deploy (2026-07-04):**
+- Pushed to `origin master`: `7453bcb..a7510e1`
+- VPS pulled `a7510e1`; `shadz.service` restarted
+- Local `/health` → 200, public `/health` → 200 ✓
+- Public `/admin` unauthenticated → 401 ✓
+- `shadz.service` confirmed active ✓
+
+**Live Telegram test (2026-07-04):**
+- User confirmed: `https://shadz.io` blocked with the safety message ✓
+- User confirmed: `https://google.com` reached confirmation ✓
+- User confirmed: replying `no` cancelled safely ✓
+- User confirmed: a blocked link did not break the retry flow ✓
+
+**Touched:** `bot_runtime.py` only
+**Database:** untouched — no migration
+**Schema:** untouched
+**Admin UI/backend:** untouched
+**Nginx:** untouched
+
+---
+
 ## Telegram Bot Self-Service Phase T1E — Bot Admin UI Polish
 
 **Date:** 2026-07-04

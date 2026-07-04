@@ -106,7 +106,7 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 
 ---
 
-## Telegram Bot Runtime (Phase T1B — deployed 2026-07-02; Phase T1C — deployed 2026-07-02)
+## Telegram Bot Runtime (Phase T1B — deployed 2026-07-02; Phase T1C — deployed 2026-07-02; Phase T1F — deployed 2026-07-04)
 
 - Public webhook: `POST /bot/telegram/webhook` — registered in `main.py` via `register_bot_webhook_routes(app)`, before the `/{slug}` catch-all
 - No Basic Auth (Telegram cannot supply it); protected instead by a mandatory shared-secret header check — `X-Telegram-Bot-Api-Secret-Token` must match `TELEGRAM_WEBHOOK_SECRET`
@@ -114,7 +114,7 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
   - Missing/wrong header → `401`
   - Correct header → `200 {"ok": true}`
 - Customer flow (via Telegram chat): enter `access_code` (from Bot Engine admin, Phase T1) → see assigned `url`/`media` slugs → select a slug
-  - `url` slug: view current `destination_url` → submit replacement → confirm → `redirect_links.destination_url` updated (T1B)
+  - `url` slug: view current `destination_url` → submit replacement → Link Safety Guard blocks SHADZ/internal destinations before confirmation (T1F, `a7510e1`) → confirm → `redirect_links.destination_url` updated (T1B)
   - `media` slug: send a replacement photo/document/video/GIF → validated against the existing `ALLOWED_MEDIA_TYPES` mime allowlist (`media_admin.py`) → downloaded from Telegram via `getFile` → uploaded server-side to R2 → new `MediaAsset` created → previous active `SlugMedia` deactivated → new active `SlugMedia` created (T1C, `d126dbc`)
 - Conversation state (`_SESSIONS`) and update-id dedup (`_SEEN_UPDATE_IDS`) are in-memory only — acceptable for a single Uvicorn process (no `--workers`), lost on service restart (owner-approved for T1B)
 - Outbound Telegram messages sent via `httpx.AsyncClient` (`_send_message`); fails safe (logs, does not crash) if `TELEGRAM_BOT_TOKEN` is unset
@@ -125,6 +125,7 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 - Telegram `setWebhook` pointed at `https://shadz.io/bot/telegram/webhook`; `getWebhookInfo` confirmed no pending updates, no last error
 - **T1C reuse note:** `bot_runtime.py` imports `ALLOWED_MEDIA_TYPES`, `_get_r2_client`, `_make_storage_key`, `_make_public_url` directly from `media_admin.py` to avoid duplicating R2/upload logic. This is intentional reuse, not a refactor — `media_admin.py` itself was not modified. Future cleanup debt: if a third module needs these helpers, extract them into a shared media storage module; not done in T1C to keep the change surgical.
 - **Admin UI note:** Phase T1C live testing used the existing `/admin/bot/*` API routes directly (create client, assign slug, confirm, remove assignment, deactivate) — no new routes, no UI added at the time. Phase T1D (`67fad4e`, deployed 2026-07-04) added a basic Admin UI for Bot Client management in `static/admin.html`; Phase T1E (`e74665b` + `23d9934`, deployed 2026-07-04) polished that same UI (stale-state fix, Assign Slug auto-fill, Telegram link status, readable validation error) — no new routes — see Completed milestones below.
+- **Link Safety Guard (Phase T1F, `a7510e1`, deployed 2026-07-04):** `bot_runtime.py` only — the `url` slug replacement flow now blocks destinations pointing back at SHADZ (`shadz.io`, `www.shadz.io`) or internal/local addresses (`localhost`, `127.0.0.1`, `0.0.0.0`), plus any non-`http`/`https` scheme or missing/invalid scheme, before the destination reaches confirmation/save. Normal external URLs are unaffected. Media replacement flow, admin UI, routes, and DB schema untouched — see Completed milestones below.
 
 ---
 
@@ -353,6 +354,7 @@ This section exists to give Claude Code a compressed snapshot of current project
   - Explicitly NOT included in T1E: campaign/shared-content architecture, bulk keychain management, delete/deactivate bot client UI, Check Slug card integration, any bot runtime redesign — all remain deferred (see Not yet implemented, below)
   - No backend, DB, bot runtime, route, Nginx, or R2 changes in either commit
   - Pushed `deadfb6..23d9934`; VPS pulled `23d9934` and restarted; local `/health` 200, public `/health` 200, public `/admin` unauth 401, `shadz.service` active ✓; browser/live test confirmed: Telegram linked status / "Not linked yet" displays correctly on client cards, Create Bot Client auto-fills Assign Slug Bot Client ID, an invalid decimal Bot Client ID shows the readable error message instead of `[object Object]` ✓
+- Telegram Bot Self-Service Phase T1F — Link Safety Guard (`a7510e1`, deployed 2026-07-04) — completed and closed. Added bot-only URL destination safety guard in `bot_runtime.py` for the Telegram `url` slug replacement flow: blocks SHADZ/internal/local destinations before confirmation/save, while normal external URLs still proceed to confirmation. Scope unchanged: media replacement, admin UI/routes, DB schema, Nginx, and auth untouched. Production verified (`/health` local/public 200, public `/admin` unauth 401, service active) and Telegram live-tested successfully.
 
 ### Active slug type policy
 
