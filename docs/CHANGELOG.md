@@ -2,6 +2,28 @@
 
 ---
 
+## Telegram Bot Self-Service Phase T1H — Lifecycle Audit / Closure (No-Op)
+
+**Date:** 2026-07-06
+**Status:** Complete and closed — no runtime changes
+
+**Summary:**
+T1H was scoped to add restore/cleanup polish for Bot Client lifecycle. Inspection confirmed the required T1H lifecycle polish was already present after T1G (`df4d384`): deactivate, reactivate (via existing `PATCH is_active`), delete, active/inactive Admin UI state + safe action labels, slug-assignment preservation across deactivate/reactivate, inactive-client blocking in `bot_runtime.py` (login + mid-session), and rejection of new slug assignments to inactive clients. No functional gap was found within T1H's stated scope.
+
+**Verification performed (read-only):**
+- `python3 -m py_compile bot_admin.py bot_runtime.py models.py main.py` → no errors
+- Confirmed `is_active` gating present in: login check, mid-session re-check, assign-slug guard, PATCH toggle (both directions), delete route
+- Confirmed Admin UI status badge, Deactivate/Activate toggle, Delete button, and success/error messaging already implemented in `static/admin.html`
+
+**Runtime touched:** none (`bot_admin.py`, `bot_runtime.py`, `static/admin.html`, DB schema untouched)
+**Docs touched:** `docs/PROJECT_STATE.md`, `docs/CHANGELOG.md`
+
+**Explicitly out of scope / future backlog:**
+- Bulk Bot Client management
+- Deleted-client history / audit trail (would require schema change — deferred until a real need arises)
+
+---
+
 ## Telegram Bot Self-Service Phase T1G — Bot Client Deactivate/Delete Control
 
 **Date:** 2026-07-05
