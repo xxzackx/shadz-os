@@ -1270,7 +1270,17 @@
                  onchange="toggleCardSelect(this)" />
         </div>`;
 
-      return `<div class="stats-box"><div class="card-body">${selectRow}${rowsBeforeHtml}${r.content_type !== 'media' ? destinationRowHtml : ''}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${lifecycleRow}${convertRow}${editForm}</div>`;
+      const botAssignRow = `
+        <div class="edit-toggle-row" style="flex-direction:column;align-items:stretch;gap:0.4rem">
+          <label for="card-bot-clientId-${index}" style="font-size:0.62rem;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:var(--gold-dim)">Assign to Bot Client</label>
+          <div style="display:flex;gap:0.4rem">
+            <input type="number" id="card-bot-clientId-${index}" placeholder="Bot Client ID" autocomplete="off" inputmode="numeric" step="1" style="flex:1" />
+            <button class="ghost-btn sm" onclick="assignSlugFromCard('${escVal(r.slug)}', ${index})">Assign</button>
+          </div>
+          <div id="card-bot-msg-${index}" class="msg"></div>
+        </div>`;
+
+      return `<div class="stats-box"><div class="card-body">${selectRow}${rowsBeforeHtml}${r.content_type !== 'media' ? destinationRowHtml : ''}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${lifecycleRow}${convertRow}${botAssignRow}${editForm}</div>`;
     }
 
     function toggleEdit(index) {
@@ -2272,6 +2282,41 @@
         showMsg('bs-msg', 'error', 'Network error.');
       } finally {
         btn.disabled = false;
+      }
+    }
+
+    async function assignSlugFromCard(slug, index) {
+      const msgId = `card-bot-msg-${index}`;
+      const input = document.getElementById(`card-bot-clientId-${index}`);
+      if (!input) { showMsg(msgId, 'error', 'Unable to find Bot Client ID input.'); return; }
+
+      const clientId = input.value.trim();
+
+      if (!clientId)              { showMsg(msgId, 'error', 'Bot Client ID is required.'); return; }
+      if (!/^\d+$/.test(clientId)) { showMsg(msgId, 'error', 'Bot Client ID must be a whole number.'); return; }
+
+      showMsg(msgId, '', '');
+
+      try {
+        const res  = await fetch(`/admin/bot/clients/${encodeURIComponent(clientId)}/slugs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ slug }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          const detail = Array.isArray(data.detail)
+            ? 'Invalid Bot Client ID. Please enter a whole number.'
+            : (data.detail || `Error ${res.status}`);
+          showMsg(msgId, 'error', detail);
+        } else {
+          showMsg(msgId, 'ok', data.message || 'Slug assigned.');
+          input.value = '';
+          loadBotClients();
+        }
+      } catch {
+        showMsg(msgId, 'error', 'Network error.');
       }
     }
 
