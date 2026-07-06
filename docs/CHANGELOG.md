@@ -2,6 +2,34 @@
 
 ---
 
+## Telegram Bot Self-Service Phase T1I — Check Slug → Bot Client Assign Shortcut
+
+**Date:** 2026-07-06
+**Runtime commit:** `57b2229`
+**Status:** Complete, pushed, deployed, production-verified, and closed
+
+**Summary:**
+Adds a small "Assign to Bot Client" control directly on each Check Slug result card, so the operator no longer has to scroll to the Bot Client section and copy/paste the slug manually.
+
+**Frontend change (`static/admin.html` only):**
+- `buildResultCard()` gets a new per-card block (Bot Client ID input + Assign button + message area), inserted after the existing Convert row and before the Edit form — no other row reordered or removed
+- New `assignSlugFromCard(slug, index)` reuses the existing `assignBotSlug()` fetch/error-handling pattern: validates Bot Client ID (required, integer-only, readable per-card error), POSTs to the existing `POST /admin/bot/clients/{client_id}/slugs` route with the card's own slug, surfaces the backend's `detail` message on error (including the array-shaped FastAPI validation-error case), and calls `loadBotClients()` to refresh the Bot Client list on success
+
+**Backend:** untouched — reuses `POST /admin/bot/clients/{client_id}/slugs` (`bot_admin.py`) as-is. Existing rules continue to apply unchanged: rejects archived slugs, `page`-type slugs, inactive bot clients, already-assigned slugs, and unknown slugs, each with a readable error surfaced on the card.
+
+**Unchanged:** DB/schema, bot runtime, public routes, Page Engine, Media Engine, Link Engine, NFC legacy routes, analytics, shared-content/campaign logic. Existing Check Slug card controls (Edit Info, Archive/Restore, Convert row, Active Media panel, Destination row visibility rules) verified unaffected.
+
+**Local verification (pre-commit):** manual diff review, brace/paren/bracket balance check on the extracted `<script>` block (no JS runtime available in sandbox), sanity `py_compile` on unmodified backend files.
+
+**Production deploy (2026-07-06):** pushed `f36a72c..57b2229` to `origin master`; VPS pulled and restarted; local/public `/health` 200, public `/admin` unauth 401; manual production browser/live test confirmed: empty ID error, non-integer ID error, valid assign success + Bot Client list refresh, already-assigned error, archived-slug block, and all pre-existing card controls unaffected.
+
+**Touched:** `static/admin.html` only
+**Database:** untouched
+**Schema:** untouched
+**Bot runtime:** untouched
+
+---
+
 ## Telegram Bot Self-Service Phase T1H — Lifecycle Audit / Closure (No-Op)
 
 **Date:** 2026-07-06
