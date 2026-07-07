@@ -963,6 +963,22 @@
         <span style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em">All Bot Clients</span>
         <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadBotClients()">Refresh</button>
       </div>
+
+      <!-- Test data cleanup selection tools -->
+      <div id="bot-selection-tools" style="display:none;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
+        <button class="ghost-btn sm" onclick="selectAllBotClients()">Select All</button>
+        <button class="ghost-btn sm" onclick="clearBotClientSelection()">Clear Selection</button>
+      </div>
+
+      <!-- Bulk cleanup bar — visible when one or more bot client cards are selected -->
+      <div id="bot-bulk-bar" class="bulk-bar">
+        <span id="bot-bulk-count" class="bulk-count">0 selected</span>
+        <button id="bot-bulk-delete-btn" class="ghost-btn sm danger" onclick="bulkDeleteBotClients()">Delete Selected (Cleanup)</button>
+      </div>
+      <div style="font-size:0.65rem;color:var(--text-muted);margin-bottom:0.6rem">
+        Cleanup deletes only the selected Bot Client records and their slug assignments — assigned slugs, media, and scan data are never affected or modified.
+      </div>
+
       <div id="botClientList" class="card-grid"></div>
 
       <div id="bl-msg" class="msg"></div>
@@ -978,6 +994,7 @@
     // string data through inline onclick attributes (XSS-safe).
     let _assetMap = {};
     const selectedSlugs = new Set();
+    const selectedBotClients = new Set();
 
     function show(sectionId) {
       document.getElementById('home').style.display = 'none';
@@ -2342,6 +2359,7 @@
     async function loadBotClients() {
       const container = document.getElementById('botClientList');
       container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+      clearBotClientSelection();
 
       try {
         const res  = await fetch('/admin/bot/clients', { credentials: 'same-origin' });
@@ -2349,17 +2367,93 @@
 
         if (!res.ok) {
           container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          document.getElementById('bot-selection-tools').style.display = 'none';
           return;
         }
 
         if (data.length === 0) {
           container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No bot clients yet.</div>';
+          document.getElementById('bot-selection-tools').style.display = 'none';
           return;
         }
 
         container.innerHTML = data.map(c => buildBotClientCard(c)).join('');
+        document.getElementById('bot-selection-tools').style.display = 'flex';
       } catch {
         container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+        document.getElementById('bot-selection-tools').style.display = 'none';
+      }
+    }
+
+    // ── Bot Client cleanup selection ────────────────────────────────────────
+
+    function toggleBotClientSelect(checkbox) {
+      const clientId = checkbox.dataset.clientId;
+      if (checkbox.checked) {
+        selectedBotClients.add(clientId);
+      } else {
+        selectedBotClients.delete(clientId);
+      }
+      updateBotBulkBar();
+    }
+
+    function selectAllBotClients() {
+      document.querySelectorAll('#botClientList .bot-bulk-check').forEach(cb => {
+        cb.checked = true;
+        if (cb.dataset.clientId) selectedBotClients.add(cb.dataset.clientId);
+      });
+      updateBotBulkBar();
+    }
+
+    function clearBotClientSelection() {
+      selectedBotClients.clear();
+      document.querySelectorAll('.bot-bulk-check').forEach(cb => { cb.checked = false; });
+      updateBotBulkBar();
+    }
+
+    function updateBotBulkBar() {
+      const bar   = document.getElementById('bot-bulk-bar');
+      const count = document.getElementById('bot-bulk-count');
+      if (selectedBotClients.size > 0) {
+        bar.style.display = 'flex';
+        count.textContent = `${selectedBotClients.size} selected`;
+      } else {
+        bar.style.display = 'none';
+      }
+    }
+
+    async function bulkDeleteBotClients() {
+      const n = selectedBotClients.size;
+      if (n === 0) return;
+      const ids = [...selectedBotClients].join(', ');
+      if (!confirm(
+        `Permanently delete ${n} selected bot client${n > 1 ? 's' : ''} (ID${n > 1 ? 's' : ''}: ${ids})? ` +
+        `If any selected client is a real customer, this will remove their bot access and slug assignments immediately. ` +
+        `Slugs, media, and scan data are untouched either way. This cannot be undone.`
+      )) return;
+
+      const btn = document.getElementById('bot-bulk-delete-btn');
+      btn.disabled = true;
+
+      try {
+        const res  = await fetch('/admin/bot/clients/bulk-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ client_ids: [...selectedBotClients].map(Number) }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          const skippedNote = data.skipped > 0 ? ` (${data.skipped} not found)` : '';
+          showMsg('bl-msg', 'ok', `Deleted ${data.deleted} bot client${data.deleted !== 1 ? 's' : ''}${skippedNote}.`);
+          loadBotClients();
+        } else {
+          showMsg('bl-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('bl-msg', 'error', 'Network error.');
+      } finally {
+        btn.disabled = false;
       }
     }
 
@@ -2389,6 +2483,11 @@
 
       return `
         <div class="stats-box" style="display:block">
+          <div class="stats-row">
+            <span class="stats-label">Select for Cleanup</span>
+            <input type="checkbox" class="bot-bulk-check" data-client-id="${esc(c.id)}"
+                   onchange="toggleBotClientSelect(this)" />
+          </div>
           <div class="stats-row">
             <span class="stats-label">ID</span>
             <span class="stats-value gold">${esc(c.id)}</span>

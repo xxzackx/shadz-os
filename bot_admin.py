@@ -71,6 +71,11 @@ class BotSlugAssignRequest(BaseModel):
     slug: str
 
 
+class BulkClientIdsRequest(BaseModel):
+    """Body for POST /admin/bot/clients/bulk-delete."""
+    client_ids: list[int]
+
+
 class AssignedSlugOut(BaseModel):
     slug: str
     content_type: str | None = None
@@ -334,6 +339,60 @@ def register_bot_admin_routes(admin_router) -> None:
             "access_code": new_code,
             "message": f"Access code regenerated for bot client {client_id}",
         }
+
+    @admin_router.post("/bot/clients/bulk-delete")
+    def bulk_delete_bot_clients(payload: BulkClientIdsRequest, db: Session = Depends(get_db)):
+        """Bulk hard-delete bot clients and their slug assignment rows.
+
+        Test-data cleanup helper. For each client_id: deletes only that
+        client's BotClientSlug assignment rows (join table) and the BotClient
+        row itself. RedirectLink slugs, media_assets, slug_media, and
+        scan_logs are never touched — only unassigned.
+
+        De-duplicates client_ids (preserving order). Unknown ids are skipped,
+        not errored. Single commit at the end. Never crashes on empty input.
+        """
+        seen: set[int] = set()
+        clean: list[int] = []
+        for cid in payload.client_ids:
+            if cid not in seen:
+                seen.add(cid)
+                clean.append(cid)
+
+        if not clean:
+            return {"deleted": 0, "skipped": 0, "errors": [], "results": []}
+
+        deleted = 0
+        skipped = 0
+        results = []
+
+        try:
+            for client_id in clean:
+                client = (
+                    db.query(models.BotClient)
+                    .filter(models.BotClient.id == client_id)
+                    .first()
+                )
+                if not client:
+                    skipped += 1
+                    results.append({"client_id": client_id, "status": "not_found"})
+                    continue
+
+                (
+                    db.query(models.BotClientSlug)
+                    .filter(models.BotClientSlug.bot_client_id == client_id)
+                    .delete()
+                )
+                db.delete(client)
+                deleted += 1
+                results.append({"client_id": client_id, "status": "deleted"})
+
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+
+        return {"deleted": deleted, "skipped": skipped, "errors": [], "results": results}
 
     @admin_router.delete("/bot/clients/{client_id}")
     def delete_bot_client(client_id: int, db: Session = Depends(get_db)):
