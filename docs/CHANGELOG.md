@@ -2,6 +2,38 @@
 
 ---
 
+## Telegram Bot Self-Service Phase T1L — Final Audit / Closure
+
+**Date:** 2026-07-08
+**Status:** Complete and closed — docs-only, no runtime changes
+
+**Summary:**
+Telegram Bot Self-Service v1 Phase T1L Final Audit / Closure completed. This was a final audit/closure phase, not a feature phase — no new bot features, no runtime redesign, no Admin UI redesign.
+
+**Audit confirmed intact:**
+- Route wiring: all `/admin/bot/*` routes protected by existing Basic Auth via `admin_router`; public `POST /bot/telegram/webhook` protected by mandatory `TELEGRAM_WEBHOOK_SECRET` shared-secret header (fails closed if unset); webhook registered before the `/{slug}` catch-all
+- Bot client lifecycle: create, list, regenerate access code, deactivate/reactivate, delete, and bulk-delete cleanup (T1K) all present and wired as designed and admin-only
+- Slug assignment: only `url`/`media` slugs assignable, archived and `page` slugs rejected, one-slug-per-bot-client enforced
+- URL replacement safety: Link Safety Guard (T1F) still blocks SHADZ/internal/local destinations while allowing normal external URLs; Link Engine redirect behavior outside the bot unaffected
+- Media replacement safety: still validated against the existing `ALLOWED_MEDIA_TYPES` allowlist from `media_admin.py`, 20 MB size cap enforced, only replaces active media for the assigned media slug
+- Admin UI: create/assign/deactivate/regenerate/delete/bulk-delete cleanup controls (T1E–T1K) all wired correctly to their existing routes; no stale state found
+
+**Verification performed (read-only):**
+- `python3 -m py_compile main.py bot_admin.py bot_runtime.py` → no errors
+- Route registration order and dependency wiring confirmed in `main.py`
+- Code inspection of `bot_admin.py`, `bot_runtime.py`, and the bot sections of `static/admin.html`
+
+**Result:**
+No runtime/backend/frontend/DB/schema/deployment changes were required. Telegram Bot Self-Service v1 is now closed under current v1 scope and ready for production use.
+
+**Touched:** `docs/PROJECT_STATE.md`, `docs/CHANGELOG.md` only
+**Runtime code:** untouched
+**Database:** untouched — no migration
+**Admin UI:** untouched
+**Nginx/Cloudflare/systemd/R2:** untouched
+
+---
+
 ## Telegram Bot Self-Service Phase T1K — Bot Test Data Cleanup
 
 **Date:** 2026-07-08
