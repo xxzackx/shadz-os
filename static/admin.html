@@ -2410,6 +2410,7 @@
             <span class="stats-value">${telegramStatus}</span>
           </div>
           <div class="stats-row" style="justify-content:flex-end;gap:0.5rem">
+            <button class="ghost-btn sm" onclick="regenerateAccessCode(${c.id})">Regenerate Access Code</button>
             ${toggleBtn}
             <button class="ghost-btn sm danger" onclick="deleteBotClient(${c.id})">Delete</button>
           </div>
@@ -2433,6 +2434,25 @@
         const data = await res.json();
         if (res.ok) {
           showMsg('bl-msg', 'ok', `Bot client ${clientId} ${active ? 'activated' : 'deactivated'}.`);
+          loadBotClients();
+        } else {
+          showMsg('bl-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('bl-msg', 'error', 'Network error.');
+      }
+    }
+
+    async function regenerateAccessCode(clientId) {
+      if (!confirm(`Regenerate access code for bot client ${clientId}? The old code will stop working immediately.`)) return;
+      try {
+        const res  = await fetch(`/admin/bot/clients/${clientId}/regenerate-code`, {
+          method: 'POST',
+          credentials: 'same-origin',
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showMsg('bl-msg', 'ok', `New access code for bot client ${clientId}: ${data.access_code}`);
           loadBotClients();
         } else {
           showMsg('bl-msg', 'error', data.detail || `Error ${res.status}`);
