@@ -2,6 +2,36 @@
 
 ---
 
+## Telegram Bot Self-Service Phase T1J — Regenerate Access Code UI
+
+**Date:** 2026-07-08
+**Runtime commit:** `9b13c23`
+**Status:** Complete, pushed, deployed, production-verified, live-tested, and closed
+
+**Summary:**
+Adds a `Regenerate Access Code` control to each Bot Client card in the Admin panel, so the operator no longer needs curl/manual backend calls to rotate a client's access code.
+
+**Frontend change (`static/admin.html` only):**
+- `buildBotClientCard()` gets a new confirmation-gated `Regenerate Access Code` button in the existing button row, alongside Deactivate/Delete
+- New `regenerateAccessCode(clientId)` confirms via `confirm()`, POSTs to the existing regenerate-code route, shows the newly generated access code via the existing `bl-msg` message pattern, and calls `loadBotClients()` to refresh all cards so the displayed Access Code field updates immediately
+
+**Backend:** untouched — reuses `POST /admin/bot/clients/{client_id}/regenerate-code` (`bot_admin.py`, added Phase T1) as-is. Route verifies the client exists (404 if not), generates a new 6-char mixed alphanumeric code (existing `_generate_access_code` policy), stores it plain text, and does not touch assigned slugs, Telegram-linked fields, or active status. Old access code is overwritten immediately and cannot be recovered.
+
+**Unchanged:** DB/schema, bot runtime, public routes, assigned slugs, Telegram linked status, Page Engine, Media Engine, Link Engine, NFC legacy routes, redirect behavior, scan tracking, R2 logic, Nginx, systemd.
+
+**Local verification (pre-commit):** `python3 -m py_compile main.py bot_admin.py bot_runtime.py` passed; manual diff review of the isolated `static/admin.html` change.
+
+**Production deploy (2026-07-08):** pushed `33a8df7..9b13c23` to `origin master`; VPS pulled `9b13c23`, `shadz.service` restarted; local readiness loop against `http://127.0.0.1:8000/health` passed before checking public endpoints; public `/health` 200, public `/admin` unauth 401. Manual production browser/live test confirmed: `Regenerate Access Code` button visible on every Bot Client card, Cancel leaves the code unchanged, Confirm shows the new code and refreshes the card, refreshing the Admin page persists the new code, assigned slugs unchanged, Telegram linked status unchanged.
+
+**New operational guardrail documented (`docs/PROJECT_STATE.md`):** after `sudo systemctl restart shadz.service`, wait for local Uvicorn readiness (poll `http://127.0.0.1:8000/health`) before running any production health check — Uvicorn can take a few seconds to become ready after systemd reports the service started, and checking too early can produce a false `502` alarm.
+
+**Touched:** `static/admin.html` only
+**Database:** untouched
+**Schema:** untouched
+**Bot runtime:** untouched
+
+---
+
 ## Telegram Bot Self-Service Phase T1I — Check Slug → Bot Client Assign Shortcut
 
 **Date:** 2026-07-06
