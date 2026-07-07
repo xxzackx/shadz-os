@@ -2,6 +2,56 @@
 
 ---
 
+## Telegram Bot Self-Service Phase T1K — Bot Test Data Cleanup
+
+**Date:** 2026-07-08
+**Runtime commit:** `6523079`
+**Status:** Complete, pushed, deployed, production-verified, live-tested, and closed
+
+**Summary:**
+Adds an admin-only bulk cleanup workflow so test Bot Clients created during development or live testing can be removed without manual DB edits, while protecting real production slugs, redirect links, media assets, and scan logs.
+
+**Backend change (`bot_admin.py` only):**
+- New `BulkClientIdsRequest` schema (`client_ids: list[int]`)
+- New `POST /admin/bot/clients/bulk-delete` route — de-duplicates `client_ids`, then for each: deletes only that client's `BotClientSlug` assignment rows (join table) and the `BotClient` row itself; unknown ids are skipped (`status: "not_found"`), not errored
+- Delete loop + `db.commit()` wrapped in `try/except Exception: db.rollback(); raise` for transaction safety; no broad exception swallowing
+- Does **not** delete or modify `redirect_links`, `slug_media`, `media_assets`, `scan_logs`, or actual slug records — mirrors the existing single-client `DELETE /admin/bot/clients/{id}` route from Phase T1G, just batched
+- Returns `{deleted, skipped, errors, results}` — never crashes on empty input
+
+**Admin UI change (`static/admin.html` only):**
+- Each Bot Client card gets a "Select for Cleanup" checkbox
+- New Select All / Clear Selection controls and a "Delete Selected (Cleanup)" bulk bar, mirroring the existing Check Slug bulk-archive/restore selection pattern
+- Confirmation dialog lists the selected Bot Client IDs and explicitly warns that a real customer's bot access/assignments will be removed if selected, while slugs/media/scan data remain untouched either way — plain browser `confirm()`, no type-to-confirm
+- Static warning copy above the client list clarifies cleanup only affects Bot Client records, not slugs/media/scan data
+
+**Unchanged:**
+- All existing `/admin/bot/*` routes, HTTP methods, response shapes, status codes
+- Bot runtime (`bot_runtime.py`), Telegram webhook, public redirect/media/page behavior
+- Database schema — no migration
+- Page Engine, Media Engine, Link Engine, NFC legacy routes
+- Nginx, Cloudflare, systemd, R2
+
+**Local verification (pre-commit):**
+- `python3 -m py_compile bot_admin.py` → no errors
+- Local throwaway-SQLite-DB testing: full lifecycle (create → list → assign → regenerate code → deactivate → reactivate → single delete → bulk-delete) passed
+- Bulk-delete specific cases: mixed valid/duplicate/unknown ids (`[1,2,999,1]`) → correct `deleted:2, skipped:1`; empty array → no-op; a client with an assigned slug left untouched while unrelated test clients were bulk-deleted; the slug previously owned by a deleted test client stayed intact (destination, scan_count, public 302 redirect) and was successfully reassigned afterward with no orphan-row block
+- `/health` local 200, `/admin` unauth 401, `/admin` auth 200 confirmed against a running local instance before commit
+
+**Production deploy (2026-07-08):**
+- Pushed to `origin master`: `a2c7c3f..6523079`
+- VPS pulled `6523079`; `shadz.service` restarted; local readiness loop against `http://127.0.0.1:8000/health` passed before public checks
+- Local `/health` → 200 `{"status":"ok"}`, public `https://shadz.io/health` → 200 `{"status":"ok"}`
+- Public `https://shadz.io/admin` unauthenticated → 401
+- Manual production browser/live tests passed
+
+**Touched:** `bot_admin.py`, `static/admin.html`
+**Database:** untouched — no migration
+**Schema:** untouched
+**Bot runtime:** untouched
+**Nginx/Cloudflare/systemd/R2:** untouched
+
+---
+
 ## Telegram Bot Self-Service Phase T1J — Regenerate Access Code UI
 
 **Date:** 2026-07-08
