@@ -2,6 +2,25 @@
 
 ---
 
+## Page Engine v1 Phase 4J — Public Page Visual Polish
+
+**Date:** 2026-07-11
+**Status:** Complete and closed — deployed and live-tested
+
+**Runtime commits:** `81656d2` (Polish Page Engine public page visuals), `33b088a` (Fix Page Engine contact-link regressions from Phase 4J)
+**Files changed at runtime:** `page_renderer.py` only
+
+**Summary:**
+Premium, mobile-first visual polish pass on the public Page Engine templates (`invitation`, `brand_product`, `child_safety`) — the item previously tracked as deferred "Phase 3E." Shared dark/neutral SHADZ visual system with restrained gold accents, stronger typography/spacing hierarchy, hero/header presentation, card-based fact rows, primary/secondary CTA buttons, and safe long-text/long-URL wrapping across all three templates. Adds safe contact-link handling (`tel:`/`mailto:`/`http(s)` only; anything else renders as inert escaped text, never a link). `33b088a` closed three regressions found in post-polish audit: no more double-prefixed `mailto:`/`tel:` links, `tel:` links only generated from genuinely phone-formatted values (so `wa.me/...`/`t.me/...`-style strings are never misread as phone numbers), and Child Safety pages show the actual phone number as visible text again alongside the Call buttons.
+
+**Safety boundaries:** no DB/schema, API/route, scan-tracking, archive/restore, slug-attachment, Admin UI, Link Engine, Media Engine, Telegram Bot, Nginx, Cloudflare, R2, or systemd changes.
+
+**Verification:** local renderer regression checks passed (55 automated checks — templates, XSS/escaping, missing fields, long text, full contact-link classification matrix); production deployment passed — readiness-loop verification against `http://127.0.0.1:8000/health` passed before public checks; public `/health` 200, public `/` 200, public `/admin` unauthenticated 401; manual browser live tests passed for all three templates (mobile + desktop); cross-engine smoke tests passed (`url` slug, `media` slug, archived 410, scan-count increment).
+
+**Final production runtime state:** `33b088a`
+
+---
+
 ## Page Engine v1 Phase 4I — Completion Audit
 
 **Date:** 2026-07-11
