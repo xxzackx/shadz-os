@@ -2,6 +2,40 @@
 
 ---
 
+## Page Engine v1 Phase 4I — Completion Audit
+
+**Date:** 2026-07-11
+**Status:** Complete and closed — docs-only, no runtime changes
+
+**Summary:**
+Page Engine v1 Phase 4I Completion Audit performed after Phase 4H (NFC legacy route extraction). This was a completion/readiness audit, not a feature phase — no new Page Engine features, no refactors, no Telegram Bot changes beyond read-only conflict verification.
+
+**Audit confirmed intact:**
+- Route structure: all route modules correctly registered in `main.py`; `GET /{slug}` public catch-all registered last and guarded by `RESERVED_SLUGS`; `/admin/*` routes protected by the shared `verify_admin` Basic Auth dependency at router level; Telegram bot webhook and admin routes registered before the catch-all with no path overlap with Page Engine routes
+- Page slug readiness: `content_type == "page"` has clear, working behavior — public `/{slug}` dispatches to `serve_public_page` (`page_public.py`), which renders the active `PageSlugAttachment` → `Page` row via `_render_page_html` (`page_renderer.py`); no redirect loop or slug-collision risk found (`idx_page_slug_one_active` partial unique index plus deactivate-then-insert logic in `attach_page` enforce one active attachment per slug)
+- Redirect/media safety: `url` slugs still 302-redirect correctly; `media` slugs still serve active media or "Media not ready yet" correctly; archived slugs of any content type return the 410 expired-page response before the content_type branch is ever reached; `scan_count`/`updated_at` increment uniformly for all slug types
+- Admin UI readiness: Create/Edit/Attach/Detach Page Engine sections in `static/admin.html` are correctly wired to their Phase 3A/4B backend routes; `page` type handling in the Check Slug result cards is cosmetic-only (Destination row shows "Not set", per Patch 5.2) and not misleading or dangerous; existing lifecycle controls (archive/restore/convert) correctly continue to exclude `page` as a conversion target
+- Cross-engine boundaries: `attach_page` requires `content_type == "page"`, `attach_media` requires `content_type == "media"`, `convert_link_type` explicitly rejects `page` as source or target — no ambiguity between engines
+- Telegram Bot Self-Service conflict check: `bot_admin.py` explicitly rejects `content_type == "page"` slugs from bot client assignment at the application layer; no Page Engine route path overlaps any bot route; Telegram Bot Self-Service code was not modified, only read for this verification
+
+**Verification performed (read-only):**
+- `python3 -c "import ast; ast.parse(...)"` on all 12 backend modules (`main.py`, `link_admin.py`, `media_admin.py`, `page_admin.py`, `page_public.py`, `page_queries.py`, `page_renderer.py`, `link_public.py`, `nfc_legacy.py`, `bot_admin.py`, `bot_runtime.py`, `models.py`) → no syntax errors
+- `git status --short` → clean before and after audit
+- Route registration order, slug-type dispatch, and cross-engine guard clauses inspected directly in source
+- `static/admin.html` inspected for Page Engine UI wiring and Destination-row behavior on `page` slugs
+
+**Result:**
+No blocking route, lifecycle, or bot-conflict issue found. Page Engine v1 is structurally complete and safe to move forward. Only documentation was updated — the stale "Active slug type policy" section in `docs/PROJECT_STATE.md`, which still described `page` as a future/reserved type, has been corrected to reflect that Page Engine is live and `page` slugs render through it. Deferred items (`GET /admin/pages/{page_id}` read endpoint / Edit Page prefill, Phase 3E visual polish, future Page Engine UX improvements) remain explicitly deferred and were not started as part of Phase 4I.
+
+**Touched:** `docs/PROJECT_STATE.md`, `docs/CHANGELOG.md` only
+**Runtime code:** untouched
+**Database:** untouched — no migration
+**Admin UI:** untouched
+**Telegram Bot files:** untouched (read-only verification only)
+**Nginx/Cloudflare/systemd/R2:** untouched
+
+---
+
 ## Telegram Bot Self-Service Phase T1L — Final Audit / Closure
 
 **Date:** 2026-07-08
