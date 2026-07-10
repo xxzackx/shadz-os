@@ -6,6 +6,7 @@ import models
 
 
 _PHONE_RE = re.compile(r'^\+?\d{5,15}$')
+_PHONE_CHARS_RE = re.compile(r'^[\d+\-\s()]+$')
 _EMAIL_RE = re.compile(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
 _URL_RE = re.compile(r'^https?://\S+$')
 
@@ -13,17 +14,31 @@ _URL_RE = re.compile(r'^https?://\S+$')
 def _contact_href(raw: str) -> str:
     """Return a safe href (tel:/mailto:/http(s):) for a freeform contact
     string, or "" if it doesn't match a known safe pattern.
+
+    Values already prefixed with "mailto:" or "tel:" are normalized
+    against that scheme rather than re-prefixed. A tel: link is only
+    produced when the original value consists solely of phone-number
+    characters (digits, +, -, spaces, parentheses) -- URL-like strings
+    such as "wa.me/..." or "t.me/..." are never reclassified as phones.
     """
     s = raw.strip()
     if not s:
         return ""
+    low = s.lower()
+    if low.startswith("mailto:"):
+        addr = s[len("mailto:"):].strip()
+        return html.escape(f"mailto:{addr}", quote=True) if _EMAIL_RE.match(addr) else ""
+    if low.startswith("tel:"):
+        digits = re.sub(r"[^\d+]", "", s[len("tel:"):])
+        return html.escape(f"tel:{digits}", quote=True) if _PHONE_RE.match(digits) else ""
     if _URL_RE.match(s):
         return html.escape(s, quote=True)
     if _EMAIL_RE.match(s):
         return html.escape(f"mailto:{s}", quote=True)
-    digits = re.sub(r"[^\d+]", "", s)
-    if _PHONE_RE.match(digits):
-        return html.escape(f"tel:{digits}", quote=True)
+    if _PHONE_CHARS_RE.match(s):
+        digits = re.sub(r"[^\d+]", "", s)
+        if _PHONE_RE.match(digits):
+            return html.escape(f"tel:{digits}", quote=True)
     return ""
 
 
@@ -169,6 +184,7 @@ def _render_page_html(page: "models.Page") -> str:
         facts = _fact_rows([
             ("Name", "child_name"), ("Age", "age"),
             ("Last seen", "description"), ("Contact", "contact_name"),
+            ("Phone", "contact_phone"), ("Alt phone", "contact_phone_2"),
         ])
         call_btn = _contact_button("contact_phone", "Call Now", primary=True)
         call_btn_2 = _contact_button("contact_phone_2", "Call Alt. Number", primary=False)
