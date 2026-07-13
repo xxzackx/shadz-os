@@ -2,6 +2,45 @@
 
 ---
 
+## Page Engine v1 Phase 4Ka — Check Slug Page Optimisation
+
+**Date:** 2026-07-14
+**Status:** Completed and production live-tested
+
+**Runtime commit:**
+- `38e476f` — Optimize check slug page attachment workflow
+
+**Files changed at runtime:** `static/admin.html` only (frontend-only)
+
+**Delivered:**
+- Page-type Check Slug cards now open Attach/Detach controls inline, at the bottom of the selected card, instead of navigating to the standalone `pageAttachSection`
+- Inline panel spans the width of the selected card; no desktop panel-width shift
+- Only one inline attachment panel is open at a time — opening another page card's panel closes the previously open one
+- Page ID input and attach/detach messages reset correctly whenever a panel is (re)opened
+- Attach/Detach success/error messages stay scoped to the correct card
+- Resolves the navigation/layout issue deferred from Phase 4K test 6
+
+**Safety boundaries:** URL/media slug cards, the standalone home-menu Attach/Detach Page workflow, backend routes/API contracts, database/schema/models, authentication, Telegram Bot flows, and public Page Engine rendering are all unchanged.
+
+**Verification:**
+- Local implementation audit passed (markup placement, escaping, payload/endpoint parity with the standalone workflow, message/state scoping)
+- Local browser verification passed: inline panel placement/width, panel toggle/close, cross-card open/close state isolation, mobile layout, URL/media cards unaffected, home-menu standalone workflow unaffected, neighboring grid-row stretching visually acceptable
+- Deployed to production; VPS `HEAD`/`origin/master`/`origin/HEAD` aligned at `38e476f`; `shadz.service` restarted; local readiness against `http://127.0.0.1:8000/health` passed before public checks
+- Public checks passed: `/health` → 200, `/` → 200, `/admin` unauthenticated → 401
+- Production browser live tests passed for all Phase 4Ka behaviors listed above
+
+**Touched:** `static/admin.html` only
+**Database:** untouched — no migration
+**Schema:** untouched
+**Backend/routes/API:** untouched
+**Authentication:** untouched
+**Telegram Bot:** untouched
+**Public Page Engine rendering:** untouched
+
+**Final production runtime state:** `38e476f`
+
+---
+
 ## Page Engine v1 Phase 4K — Admin Page UX Polish
 
 **Date:** 2026-07-14
