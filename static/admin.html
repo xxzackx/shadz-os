@@ -1013,6 +1013,8 @@
       document.getElementById('st-historyResults').innerHTML = '';
       document.getElementById('mu-result').style.display = 'none';
       document.getElementById('bc-result').style.display = 'none';
+      document.getElementById('pc-result').style.display = 'none';
+      document.getElementById('pe-result').style.display = 'none';
       // Reset upload progress UI so it never shows stale state on re-entry
       document.getElementById('mu-progress-wrap').style.display = 'none';
       document.getElementById('mu-progress-bar').style.width = '0%';
@@ -2155,6 +2157,11 @@
           document.getElementById('pe-resStatus').textContent   = data.status;
           document.getElementById('pe-resUpdated').textContent  = new Date(data.updated_at).toLocaleString();
           showMsg('pe-msg', 'ok', `Page ${data.id} updated.`);
+          document.getElementById('pe-id').value       = '';
+          document.getElementById('pe-title').value    = '';
+          document.getElementById('pe-template').value = '';
+          document.getElementById('pe-status').value   = '';
+          document.getElementById('pe-content').value  = '';
         }
       } catch {
         showMsg('pe-msg', 'error', 'Network error.');
