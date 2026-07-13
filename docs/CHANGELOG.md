@@ -2,6 +2,44 @@
 
 ---
 
+## Page Engine v1 Phase 4K — Admin Page UX Polish
+
+**Date:** 2026-07-14
+**Status:** Completed and production live-tested
+
+**Runtime commits:**
+- `2e54262` — Polish Page Engine form state resets
+- `825bab6` — Add Page Engine attachment shortcut
+- `6a18965` — Reset Page attachment form state
+
+**Files changed at runtime:** `static/admin.html` only
+
+**Delivered:**
+- Create/Edit Page stale result panels (`pc-result`/`pe-result`) reset on navigation
+- Edit Page fields clear only after a successful update
+- Failed Edit Page requests preserve entered values
+- Page-type Check Slug cards include a `Manage Page Attachment` shortcut
+- Shortcut prefills the Attach and Detach slug fields
+- Shortcut explicitly clears Page ID and stale attach/detach messages
+- Attach/Detach form fields reset when leaving the section
+
+**Safety boundaries:** URL/media slug cards, Telegram Bot flows, backend routes, DB/schema, authentication, and public Page Engine rendering remain unchanged.
+
+**Production/live-test result:**
+- Tests 1–5 and 7–12 passed
+- Test 6 exposed a UX/navigation issue: `pageAttachSection` opens at the bottom of the existing Check Slug results page; desktop layout/width changes unexpectedly; mobile does not show the width issue, but the section still opens at the bottom
+- This issue is **not fixed** in Phase 4K — deferred to a separate follow-up phase, **Phase 4Ka — Check Slug Page Optimisation**
+- Phase 4K is closed because all implemented functions work; the remaining navigation/layout optimisation is explicitly tracked as 4Ka
+
+**Touched:** `static/admin.html` only
+**Database:** untouched — no migration
+**Schema:** untouched
+**Backend/routes/API:** untouched
+**Telegram Bot:** untouched
+**Public Page Engine rendering:** untouched
+
+---
+
 ## Page Engine v1 Phase 4J — Public Page Visual Polish
 
 **Date:** 2026-07-11
