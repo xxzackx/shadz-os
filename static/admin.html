@@ -1309,14 +1309,28 @@
         </div>`;
 
       let pageAttachRow = '';
+      let pageAttachInlineHtml = '';
       if (r.content_type === 'page') {
         pageAttachRow = `
           <div class="edit-toggle-row">
-            <button class="ghost-btn sm" onclick="manageSlugPageAttachment('${escVal(r.slug)}')">Manage Page Attachment</button>
+            <button class="ghost-btn sm" onclick="togglePageAttachInline('${escVal(r.slug)}', ${index})">Manage Page Attachment</button>
+          </div>`;
+        pageAttachInlineHtml = `
+          <div id="pageAttachInline-${index}" class="inset-panel" style="display:none">
+            <div class="panel-label">Attach / Detach Page</div>
+            <label for="pai-pageId-${index}">Page ID</label>
+            <input type="number" id="pai-pageId-${index}" placeholder="1" autocomplete="off" />
+            <button class="action-btn" id="pai-attach-btn-${index}" style="margin-top:0.5rem"
+              onclick="attachPageInline('${escVal(r.slug)}', ${index})">Attach Page</button>
+            <div id="pai-attach-msg-${index}" class="msg"></div>
+            <div style="height:1px;background:var(--border-2);margin:0.9rem 0"></div>
+            <button class="ghost-btn danger" id="pai-detach-btn-${index}"
+              onclick="detachPageInline('${escVal(r.slug)}', ${index})">Detach Page</button>
+            <div id="pai-detach-msg-${index}" class="msg"></div>
           </div>`;
       }
 
-      return `<div class="stats-box"><div class="card-body">${selectRow}${rowsBeforeHtml}${r.content_type !== 'media' ? destinationRowHtml : ''}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${lifecycleRow}${convertRow}${botAssignRow}${pageAttachRow}${editForm}</div>`;
+      return `<div class="stats-box"><div class="card-body">${selectRow}${rowsBeforeHtml}${r.content_type !== 'media' ? destinationRowHtml : ''}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${lifecycleRow}${convertRow}${botAssignRow}${pageAttachRow}${editForm}${pageAttachInlineHtml}</div>`;
     }
 
     function toggleEdit(index) {
@@ -2187,17 +2201,83 @@
       }
     }
 
-    function manageSlugPageAttachment(slug) {
-      show('pageAttachSection');
-      document.getElementById('pa-slug').value    = slug;
-      document.getElementById('pd-slug').value    = slug;
-      document.getElementById('pa-pageId').value  = '';
-      const paMsg = document.getElementById('pa-msg');
-      paMsg.textContent   = '';
-      paMsg.style.display = 'none';
-      const pdMsg = document.getElementById('pd-msg');
-      pdMsg.textContent   = '';
-      pdMsg.style.display = 'none';
+    function togglePageAttachInline(slug, index) {
+      const panelId = `pageAttachInline-${index}`;
+      document.querySelectorAll('[id^="pageAttachInline-"]').forEach(panel => {
+        if (panel.id !== panelId) panel.style.display = 'none';
+      });
+
+      const panel = document.getElementById(panelId);
+      if (panel.style.display === 'block') {
+        panel.style.display = 'none';
+        return;
+      }
+
+      document.getElementById(`pai-pageId-${index}`).value = '';
+      const attachMsg = document.getElementById(`pai-attach-msg-${index}`);
+      attachMsg.textContent   = '';
+      attachMsg.style.display = 'none';
+      const detachMsg = document.getElementById(`pai-detach-msg-${index}`);
+      detachMsg.textContent   = '';
+      detachMsg.style.display = 'none';
+
+      panel.style.display = 'block';
+    }
+
+    async function attachPageInline(slug, index) {
+      const pageId = document.getElementById(`pai-pageId-${index}`).value.trim();
+      const msgId  = `pai-attach-msg-${index}`;
+
+      if (!pageId) { showMsg(msgId, 'error', 'Page ID is required.'); return; }
+
+      const btn = document.getElementById(`pai-attach-btn-${index}`);
+      btn.disabled = true;
+      showMsg(msgId, '', '');
+
+      try {
+        const res  = await fetch('/admin/pages/attach', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ page_id: parseInt(pageId, 10), slug }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showMsg(msgId, 'error', data.detail || 'Error attaching page.');
+        } else {
+          showMsg(msgId, 'ok', data.message || 'Attached.');
+        }
+      } catch {
+        showMsg(msgId, 'error', 'Network error.');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function detachPageInline(slug, index) {
+      const msgId = `pai-detach-msg-${index}`;
+      const btn = document.getElementById(`pai-detach-btn-${index}`);
+      btn.disabled = true;
+      showMsg(msgId, '', '');
+
+      try {
+        const res  = await fetch('/admin/pages/detach', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ slug }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showMsg(msgId, 'error', data.detail || 'Error detaching page.');
+        } else {
+          showMsg(msgId, 'ok', data.message || 'Detached.');
+        }
+      } catch {
+        showMsg(msgId, 'error', 'Network error.');
+      } finally {
+        btn.disabled = false;
+      }
     }
 
     async function attachPage() {
