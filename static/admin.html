@@ -1015,6 +1015,15 @@
       document.getElementById('bc-result').style.display = 'none';
       document.getElementById('pc-result').style.display = 'none';
       document.getElementById('pe-result').style.display = 'none';
+      // Reset Page Attach/Detach section fields so a prior shortcut prefill
+      // or manual entry never lingers on re-entry
+      document.getElementById('pa-slug').value      = '';
+      document.getElementById('pa-pageId').value    = '';
+      document.getElementById('pd-slug').value      = '';
+      document.getElementById('pa-msg').textContent = '';
+      document.getElementById('pa-msg').style.display = 'none';
+      document.getElementById('pd-msg').textContent = '';
+      document.getElementById('pd-msg').style.display = 'none';
       // Reset upload progress UI so it never shows stale state on re-entry
       document.getElementById('mu-progress-wrap').style.display = 'none';
       document.getElementById('mu-progress-bar').style.width = '0%';
