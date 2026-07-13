@@ -2,6 +2,46 @@
 
 ---
 
+## Page Engine v1 Phase 4L — Template Structure Stabilization
+
+**Date:** 2026-07-14
+**Status:** Completed and closed
+
+**Accepted test commit:**
+- `1572fec` — Add Page Engine renderer regression tests
+
+**Files changed at runtime:** none — no route, model, schema, database, admin, bot, public HTML, or deployment behaviour changed
+
+**New file:** `tests/test_page_renderer.py` — 14 automated regression tests (stdlib `unittest`, no DB/FastAPI/`main.py` involved)
+
+**Delivered:**
+- Read-only architecture audit of the Page Engine template/rendering flow (public rendering pipeline, admin editing pipeline, template inventory, compatibility guardrails)
+- Committed automated renderer behaviour lock covering: `invitation` template full and optional-field behaviour; `brand_product` (brand/product) template full and optional-field behaviour; `child_safety` template full and optional-field behaviour; malformed JSON fallback; non-dictionary JSON fallback; unknown `template_type` fallback; HTML escaping for titles and content values
+- A structural stability decision gate: inspected `page_renderer.py` and concluded that its existing internal helpers (`_raw`, `_e`, `_fact_rows`, `_contact_button`, `_contact_href`) already provide adequate, consistent normalization and escaping boundaries across all three templates
+- Final decision: **NO_RUNTIME_CHANGE** — no verified structural problem was found that justified a runtime refactor under simplicity/surgical-change rules; Phase 4L therefore closes with test coverage only, not a code change
+
+**Safety boundaries:** no route, model, schema, database, admin UI, bot, Nginx, systemd, or public HTML rendering behaviour changed. `shadz.service` was not restarted since no runtime source file changed.
+
+**Verification:**
+- Local: 14/14 tests passed (`python -m unittest discover -s tests -p "test_*.py" -v`), `py_compile` clean, `git diff --check` clean
+- Local `master` and `origin/master` synced at `1572fec` (fast-forward merge, no force)
+- VPS `/opt/shadz-os` manually fast-forwarded to `1572fec`; VPS verification: 14/14 tests passed with `python3`, compile check passed, diff check passed, `HEAD`/`origin/master`/`origin/HEAD` matched
+- Existing untracked VPS backup `shadz.db.backup-before-t1b-live-test-20260701-204318` confirmed untouched
+
+**Touched:** `tests/test_page_renderer.py` only (new file)
+**Database:** untouched — no migration
+**Schema:** untouched
+**Backend/routes/API:** untouched
+**Authentication:** untouched
+**Telegram Bot:** untouched
+**Public Page Engine rendering:** untouched — no runtime refactor performed
+
+**Final production runtime state:** unchanged; `1572fec` is a test-only addition on top of `38e476f`
+
+**Next roadmap phase:** Phase 4M — Data Model / Compatibility Audit (Page Engine v1 remains open — Phase 4M and Phase 4N are not yet started)
+
+---
+
 ## Page Engine v1 Phase 4Ka — Check Slug Page Optimisation
 
 **Date:** 2026-07-14
