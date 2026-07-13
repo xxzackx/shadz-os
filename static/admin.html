@@ -1299,7 +1299,15 @@
           <div id="card-bot-msg-${index}" class="msg"></div>
         </div>`;
 
-      return `<div class="stats-box"><div class="card-body">${selectRow}${rowsBeforeHtml}${r.content_type !== 'media' ? destinationRowHtml : ''}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${lifecycleRow}${convertRow}${botAssignRow}${editForm}</div>`;
+      let pageAttachRow = '';
+      if (r.content_type === 'page') {
+        pageAttachRow = `
+          <div class="edit-toggle-row">
+            <button class="ghost-btn sm" onclick="manageSlugPageAttachment('${escVal(r.slug)}')">Manage Page Attachment</button>
+          </div>`;
+      }
+
+      return `<div class="stats-box"><div class="card-body">${selectRow}${rowsBeforeHtml}${r.content_type !== 'media' ? destinationRowHtml : ''}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${lifecycleRow}${convertRow}${botAssignRow}${pageAttachRow}${editForm}</div>`;
     }
 
     function toggleEdit(index) {
@@ -2168,6 +2176,19 @@
       } finally {
         btn.disabled = false;
       }
+    }
+
+    function manageSlugPageAttachment(slug) {
+      show('pageAttachSection');
+      document.getElementById('pa-slug').value    = slug;
+      document.getElementById('pd-slug').value    = slug;
+      document.getElementById('pa-pageId').value  = '';
+      const paMsg = document.getElementById('pa-msg');
+      paMsg.textContent   = '';
+      paMsg.style.display = 'none';
+      const pdMsg = document.getElementById('pd-msg');
+      pdMsg.textContent   = '';
+      pdMsg.style.display = 'none';
     }
 
     async function attachPage() {
