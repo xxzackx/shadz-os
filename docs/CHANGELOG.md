@@ -2,6 +2,49 @@
 
 ---
 
+## Page Engine v1 Phase 4N — Production Polish / v1 Closure
+
+**Date:** 2026-07-15
+**Status:** Completed and closed. **Page Engine v1 is now complete and closed.**
+
+**Runtime/test commits:**
+- `2f7cf8d` — Add Page Engine admin regression tests
+- `5862b36` — Harden Telegram tests and sanitize bot errors
+
+**Files changed:** `tests/test_page_admin.py` (new), `bot_runtime.py`, `tests/test_bot_runtime.py`
+
+**Delivered:**
+- Read-only audit found `page_admin.py` (create/update/attach/detach) had zero automated test coverage. Added `tests/test_page_admin.py` — 17 tests against an isolated in-memory SQLite database (no `main.py`, no real `shadz.db`), covering template/status/title validation, partial-update field preservation, attach content-type/existence checks, re-attach history preservation, and detach no-op/success behaviour. No Page Engine runtime code changed.
+- Reviewed whether `Page.status` (`draft`/`ready`/`archived`) should gate public rendering. Decision: **left unchanged** — attach/detach remains the sole publish mechanism, consistent with production behaviour since Phase 3A; `status` remains informational only. No runtime change made.
+- VPS verification surfaced an incident during Phase 4N: `tests/test_bot_runtime.py` assumed `TELEGRAM_BOT_TOKEN` would be absent in the environment. On the VPS, where the token is configured, this caused the test suite to place real outbound requests to the Telegram Bot API using synthetic test `chat_id` values. Telegram rejected the requests, and the resulting `httpx.HTTPStatusError` was logged via its default string representation, which embeds the full request URL — exposing the bot token in application logs, since Telegram's Bot API places the token directly in the URL path rather than a header. **No token value is recorded in this document.**
+- Fix, `bot_runtime.py` only: `_send_message` and `_download_telegram_file` no longer log or raise the raw exception object on an `httpx.HTTPStatusError`. `_send_message` logs only `chat_id`, HTTP status code, and exception class. `_download_telegram_file` raises a sanitized `RuntimeError` containing only a safe operation label and status code, chained with `from None` so the original token-bearing exception can never reach a caller's `logger.exception(...)`. Non-HTTP exceptions are logged by class name only. No change to outbound request payloads, retry behaviour, or the existing fail-safe `if not token` guard.
+- Fix, `tests/test_bot_runtime.py`: the 4 existing state-machine tests now patch `bot_runtime._send_message` with `AsyncMock`, removing the environment-dependent assumption — tests are network-isolated regardless of whether `TELEGRAM_BOT_TOKEN` is absent, fake, or real. Added 4 new regression tests (`SendMessageLoggingTests`, `DownloadTelegramFileLoggingTests`) that mock `httpx.AsyncClient` to simulate Telegram HTTP failures and assert the token/API URL never appear in logs or raised exception messages, and that no exception chaining leaks the original error.
+- Incident resolution on the VPS: the exposed bot token was rotated, `TELEGRAM_BOT_TOKEN` updated in `.env`, and the Telegram webhook (`setWebhook`) re-registered against the new token. Live Telegram tests passed post-rotation: `/start`, access-code login, URL slug lookup/update, and media slug replacement.
+
+**Safety boundaries:** no database/schema change, no migration, no Page Engine runtime behaviour change, no admin UI change, no route change, no Nginx/systemd/Cloudflare change, no dependency added. Bot runtime change is scoped to error-logging sanitization only — no change to conversation flow, guards, or outbound message content.
+
+**Verification:**
+- Local: 39/39 tests passed (`python3 -m unittest discover -s tests`), `py_compile` clean on all touched files, `git diff --check` clean
+- Fake-token / socket-blocked proof run: full `tests/test_bot_runtime.py` suite passed with a real-looking fake `TELEGRAM_BOT_TOKEN` set and `socket.socket.connect` hard-blocked, confirming no code path can reach the network regardless of token state
+- Local `master` and `origin/master` fast-forwarded to `2f7cf8d` then `5862b36` (two separate fast-forward pushes, no force, no merge commits)
+- VPS `/opt/shadz-os` synced to `5862b36`; `HEAD` and `origin/master` matched; 39/39 tests passed on VPS; `shadz.service` restarted; local readiness loop against `http://127.0.0.1:8000/health` reached `200` before public checks
+- Public checks passed: `/health` 200, `/` 200, `/admin` unauthenticated 401
+- Telegram webhook restored and verified after token rotation; live tests passed for `/start`, access-code login, URL slug lookup/update, and media slug replacement
+
+**Touched:** `tests/test_page_admin.py` (new), `bot_runtime.py`, `tests/test_bot_runtime.py`
+**Database:** untouched — no migration
+**Schema:** untouched
+**Backend/routes/API:** unchanged — logging-only change in `bot_runtime.py`
+**Authentication:** untouched
+**Page Engine runtime:** untouched — `status` field left informational, attach/detach remains the publish mechanism
+**Telegram Bot:** error logging sanitized against secret leakage; token rotated on the VPS following the incident; conversation flow and guards unchanged
+
+**Final production runtime state:** `5862b36`
+
+**Page Engine v1 is now complete and closed as of this phase. No remaining Phase 4N runtime work.**
+
+---
+
 ## Page Engine v1 Phase 4M — Data Model / Compatibility Audit
 
 **Date:** 2026-07-14
