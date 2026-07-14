@@ -517,7 +517,7 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
                 .filter(models.RedirectLink.slug == session["selected_slug"])
                 .first()
             )
-            if not link or link.is_archived is True:
+            if not link or link.is_archived is True or link.content_type != "url":
                 await _send_message(chat_id, "That slug is no longer available.")
             else:
                 link.destination_url = session["pending_value"]
