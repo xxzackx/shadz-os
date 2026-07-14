@@ -2,6 +2,50 @@
 
 ---
 
+## Page Engine v1 Phase 4M — Data Model / Compatibility Audit
+
+**Date:** 2026-07-14
+**Status:** Completed and closed
+
+**Runtime commit:**
+- `e4c0551` — Guard bot URL updates against slug type changes
+
+**Files changed at runtime:** `bot_runtime.py` only
+
+**New file:** `tests/test_bot_runtime.py` — 4 automated regression tests (stdlib `unittest`, isolated in-memory SQLite, no network calls)
+
+**Delivered:**
+- Read-only data-model and compatibility audit of `url`/`media`/`page` slug types across public runtime, admin controls, Telegram Bot self-service, media attachment, Page Engine, archive/restore, and scan tracking — covering `RedirectLink`, `MediaAsset`, `SlugMedia`, `Page`, `PageSlugAttachment`, `BotClient`, `BotClientSlug`, type conversion rules, legacy/null field handling, and SQLite constraint/orphan risk
+- Confirmed one real defect: in `bot_runtime.py`'s `awaiting_confirmation` (Telegram URL replacement) state, the live `RedirectLink` row was reloaded and checked for existence/archive status before writing `destination_url`, but the live `content_type` was never re-checked. If an admin converted a slug from `url` to `media` while a customer's Telegram confirmation was still pending, the confirmed write would silently apply `destination_url` to a slug no longer typed `url`
+- Fix: one-line guard extension — `if not link or link.is_archived is True or link.content_type != "url":` — rejects the write and returns the customer to the slug menu when the live row is no longer `url`-typed, using the same existing "slug no longer available" reset behaviour already used for missing/archived slugs. No session-flow redesign; session-cached data (`slugs`, `pending_value`) is still used only for display/navigation, never for the final mutation
+- Added `tests/test_bot_runtime.py`: 4 new regression tests — (1) URL confirmation succeeds when the live slug is still `url`; (2) URL confirmation is rejected and `destination_url` is left unchanged when the slug was converted to `media` before confirmation; (3) the pre-existing media-upload guard (`content_type != "media"`) still rejects correctly, confirming unrelated media-replacement behaviour is unchanged; (4) the media-upload state still re-prompts correctly on an unsupported message type
+- Production DB read-only audit (VPS, no writes) confirmed **zero findings** for: duplicate active `SlugMedia` rows, orphan `SlugMedia` rows, orphan `BotClientSlug` rows by client, orphan `BotClientSlug` rows by slug, and bot assignments referencing unsupported slug types
+
+**Safety boundaries:** no model, schema, migration, database write, route, admin UI, Nginx, or systemd change. Only `bot_runtime.py`'s Telegram URL-confirmation guard changed; media replacement, admin conversion behaviour, and all other bot states are untouched. Slug type policy is unchanged — `url`, `media`, `page` remain the only official types.
+
+**Verification:**
+- Local: 18/18 tests passed (`python3 -m unittest discover -s tests -p "test_*.py"` — 4 new + 14 existing `test_page_renderer.py`), `py_compile` clean, `git diff --check` clean
+- Local `master` and `origin/master` synced at `e4c0551` (fast-forward push, no force)
+- VPS `/opt/shadz-os` fast-forwarded to `e4c0551`; local readiness against `http://127.0.0.1:8000/health` reached `200` before public checks; `shadz.service` confirmed active
+- Public checks passed: `/health` 200, `/` 200, `/admin` unauthenticated 401
+- Telegram Bot live test passed: URL slug replacement flow confirmed end to end; redirect behaviour after update confirmed correct
+- Production DB read-only audit (see Delivered above) returned zero findings across all five checked categories
+
+**Touched:** `bot_runtime.py`, `tests/test_bot_runtime.py` (new file)
+**Database:** untouched — no migration; no mandatory data migration required by this audit
+**Schema:** untouched — no schema change made; `idx_slug_media_one_active` (a `SlugMedia` partial unique index matching the existing `PageSlugAttachment` pattern) was identified as **optional future hardening only**, explicitly deferred, not applied
+**Backend/routes/API:** unchanged except the one-line guard described above
+**Authentication:** untouched
+**Telegram Bot:** URL-confirmation write path hardened; media replacement and all other states unchanged
+**Public Page Engine rendering:** untouched
+**Slug type policy:** unchanged — `url`, `media`, `page` remain the current official types
+
+**Final production runtime state:** `e4c0551`
+
+**Next roadmap phase:** Phase 4N — Production Polish / v1 Closure (Page Engine v1 is not yet fully closed)
+
+---
+
 ## Page Engine v1 Phase 4L — Template Structure Stabilization
 
 **Date:** 2026-07-14
