@@ -100,8 +100,19 @@ async def _send_message(chat_id: int, text: str) -> None:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(url, json={"chat_id": chat_id, "text": text})
             response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        # Never interpolate/stringify exc — httpx's auto-generated message
+        # embeds the full request URL, and Telegram's Bot API puts the token
+        # directly in the URL path (no header/query param to redact instead).
+        logger.error(
+            "Failed to send Telegram message to chat_id=%s: HTTP %s (%s)",
+            chat_id, exc.response.status_code, type(exc).__name__,
+        )
     except httpx.HTTPError as exc:
-        logger.error("Failed to send Telegram message to chat_id=%s: %s", chat_id, exc)
+        logger.error(
+            "Failed to send Telegram message to chat_id=%s: %s",
+            chat_id, type(exc).__name__,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +257,15 @@ async def _download_telegram_file(file_id: str) -> bytes:
             _TELEGRAM_API_BASE.format(token=token) + "/getFile",
             params={"file_id": file_id},
         )
-        get_file_resp.raise_for_status()
+        try:
+            get_file_resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # exc's auto-generated message embeds the token-bearing URL — never
+            # let it reach a caller's logger.exception(). from None suppresses
+            # exception chaining so the original is not printed in a traceback.
+            raise RuntimeError(
+                f"getFile request failed: HTTP {exc.response.status_code}"
+            ) from None
         try:
             payload = get_file_resp.json()
         except ValueError as exc:
@@ -261,7 +280,12 @@ async def _download_telegram_file(file_id: str) -> bytes:
 
         download_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
         file_resp = await client.get(download_url)
-        file_resp.raise_for_status()
+        try:
+            file_resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(
+                f"file download failed: HTTP {exc.response.status_code}"
+            ) from None
         return file_resp.content
 
 
