@@ -30,14 +30,16 @@ Scope:
     against DB truth (_lookup_unactivated_url_link) every time, never
     trusting session state alone, and once already confirmed a duplicate
     is a safe no-op — it never re-triggers a DB write, never resets the
-    session to awaiting_code, and never loses the confirmed value. A4U
-    deliberately does not intercept arbitrary post-confirmation text —
-    only the explicit duplicate-confirmation keyword is special-cased, so
-    unrelated text remains available to Phase A5 (not yet implemented) or
-    the normal state dispatcher instead of being swallowed. The confirmed
-    value is held only in the in-memory session (never written to
-    RedirectLink.destination_url or any other live runtime) for Phase A5 to
-    finalize. Still never touches
+    session to awaiting_code, and never loses the confirmed value. A
+    temporary post-confirmation placeholder (clearly marked in
+    _handle_message, meant to be replaced outright by Phase A5) answers
+    ANY further message — explicit duplicate confirmation text or
+    otherwise — with a brief reply while leaving the session and
+    confirmed_destination_url completely untouched, so nothing ever falls
+    into the generic "Unknown/expired state" reset and discards the
+    confirmed value. The confirmed value is held only in the in-memory
+    session (never written to RedirectLink.destination_url or any other
+    live runtime) for Phase A5 to finalize. Still never touches
     ActivationRecord.owner_client_id/activation_status/activated_at or
     BotClientSlug. media slugs are untouched by this phase.
 
@@ -266,6 +268,15 @@ _ACTIVATION_URL_RETRY_TEXT = "No problem — please send the destination URL aga
 _ACTIVATION_URL_SAVED_TEXT = (
     "Got it. Destination saved for setup:\n{url}\n\n"
     "We'll continue setting up your product next."
+)
+# Sent for any message that isn't the explicit duplicate-confirmation
+# keyword while a session sits in the TEMPORARY post-confirmation
+# placeholder (_handle_message, state == _ACTIVATION_SETUP_STATE with
+# confirmed_destination_url set) — deliberately does not interpret or save
+# the message, just acknowledges the already-confirmed state.
+_ACTIVATION_SETUP_AWAITING_TEXT = (
+    "Your destination URL is already confirmed. Setup is awaiting "
+    "completion — we'll follow up shortly."
 )
 
 # ---------------------------------------------------------------------------
@@ -1324,21 +1335,33 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         await _send_message(chat_id, _ACTIVATION_CONFIRMATION_REMINDER_TEXT)
         return
 
-    if (
-        state == _ACTIVATION_SETUP_STATE
-        and "confirmed_destination_url" in session
-        and text.lower() in ("yes", "y", "confirm")
-    ):
-        # Duplicate-safety: a stray repeat of the confirmation keyword after
-        # the session already advanced past confirmation is a safe no-op —
-        # no DB write, no message, no session change, confirmed URL kept.
-        # Deliberately narrow: this must NOT become a catch-all for every
-        # message in this state — unrelated text is intentionally left
-        # unhandled here so it remains available to Phase A5 (not yet
-        # implemented) or the normal state dispatcher below, instead of
-        # being swallowed by an A4U-specific branch that would otherwise
-        # block all future text handling indefinitely.
+    # --- TEMPORARY Phase A5 handoff placeholder -----------------------------
+    # A url slug's A4U session lands in _ACTIVATION_SETUP_STATE with
+    # confirmed_destination_url set once confirmed. There is no Phase A5
+    # yet, so without this branch ANY further message would fall into the
+    # generic "Unknown/expired state" fallback below and reset the session
+    # to awaiting_code, discarding confirmed_destination_url — that is the
+    # defect this branch exists to prevent. It does not implement any A5
+    # behaviour: it never interprets or saves new text, never touches the
+    # confirmed URL, never activates the record, never writes the live
+    # redirect, never assigns ownership, and never consumes the token.
+    # Phase A5 should replace this entire branch outright rather than
+    # extend it.
+    if state == _ACTIVATION_SETUP_STATE and "confirmed_destination_url" in session:
+        if text.lower() in ("yes", "y", "confirm"):
+            # Explicit duplicate confirmation text — idempotent no-op, no DB
+            # write, session/URL preserved. A brief repeat acknowledgement.
+            await _send_message(
+                chat_id,
+                _ACTIVATION_URL_SAVED_TEXT.format(url=session["confirmed_destination_url"]),
+            )
+            return
+        # Any other text: not processed as activation content. Session and
+        # confirmed_destination_url are left completely untouched — only a
+        # brief neutral status reply is sent.
+        await _send_message(chat_id, _ACTIVATION_SETUP_AWAITING_TEXT)
         return
+    # --- end TEMPORARY Phase A5 handoff placeholder -------------------------
 
     if state in (_ACTIVATION_URL_INPUT_STATE, _ACTIVATION_URL_CONFIRM_STATE):
         # Re-validate the activation session from scratch on every message —

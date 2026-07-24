@@ -631,8 +631,8 @@ class ActivationUrlSetupTests(unittest.TestCase):
         # A stray repeat of the exact YES keyword after already moving past
         # confirmation must not resurrect the URL-confirm flow, mutate the
         # DB, create any BotClient/BotClientSlug rows, reset the session to
-        # awaiting_code, or lose the confirmed URL — and, unlike the old
-        # broad catch-all, must not resend a message either.
+        # awaiting_code, or lose the confirmed URL. A brief repeat
+        # acknowledgement is expected (the TEMPORARY A5 handoff placeholder).
         self._run_message(42, "YES")
 
         self.assertEqual(self.db.query(models.BotClient).count(), 1)
@@ -643,15 +643,53 @@ class ActivationUrlSetupTests(unittest.TestCase):
         self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
         self.assertNotEqual(session["state"], "awaiting_code")
         self.assertEqual(session["confirmed_destination_url"], "https://merchant.example.com")
-        self.mock_send_message.assert_not_awaited()
+        self.mock_send_message.assert_awaited_once_with(
+            42, bot_runtime._ACTIVATION_URL_SAVED_TEXT.format(url="https://merchant.example.com")
+        )
 
-    def test_unrelated_text_after_confirmation_is_not_swallowed_by_a4u(self):
-        # A4U must not intercept arbitrary post-confirmation text — only
-        # the exact duplicate-confirmation keyword is special-cased.
-        # Anything else falls through to the normal state dispatcher
-        # (today: the generic "Unknown/expired state" fallback, since
-        # Phase A5 doesn't exist yet) rather than being swallowed by an
-        # A4U-specific catch-all that would block future A5 text handling.
+    def test_unrelated_text_after_confirmation_keeps_setup_state(self):
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com")
+        self._run_message(42, "YES")
+
+        self._run_message(42, "hello, what's next?")
+
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
+
+    def test_unrelated_text_after_confirmation_preserves_confirmed_url(self):
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com")
+        self._run_message(42, "YES")
+
+        self._run_message(42, "hello, what's next?")
+
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["confirmed_destination_url"], "https://merchant.example.com")
+
+    def test_unrelated_text_after_confirmation_does_not_reset_to_awaiting_code(self):
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com")
+        self._run_message(42, "YES")
+
+        self._run_message(42, "hello, what's next?")
+
+        session = bot_runtime._SESSIONS[42]
+        self.assertNotEqual(session["state"], "awaiting_code")
+        self.assertIn(42, bot_runtime._SESSIONS)
+
+    def test_unrelated_text_after_confirmation_does_not_change_pending_url(self):
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com")
+        self._run_message(42, "YES")
+
+        self._run_message(42, "https://attacker.example.com/should-not-be-saved")
+
+        session = bot_runtime._SESSIONS[42]
+        self.assertNotIn("pending_url", session)
+        self.assertEqual(session["confirmed_destination_url"], "https://merchant.example.com")
+
+    def test_unrelated_text_after_confirmation_sends_neutral_placeholder_reply(self):
         self._activate_url_slug("u1", "tok-u1")
         self._run_message(42, "https://merchant.example.com")
         self._run_message(42, "YES")
@@ -660,16 +698,41 @@ class ActivationUrlSetupTests(unittest.TestCase):
         self._run_message(42, "hello, what's next?")
 
         self.mock_send_message.assert_awaited_once_with(
-            42, "Session expired. Please enter your access code."
+            42, bot_runtime._ACTIVATION_SETUP_AWAITING_TEXT
         )
-        session = bot_runtime._SESSIONS[42]
-        self.assertEqual(session, {"state": "awaiting_code"})
 
-    def test_typed_no_after_confirmation_is_not_specially_handled(self):
+    def test_unrelated_text_after_confirmation_creates_no_db_or_a5_side_effect(self):
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com")
+        self._run_message(42, "YES")
+
+        self._run_message(42, "hello, what's next?")
+        self._run_message(42, "some more unrelated text")
+
+        link = self.db.query(models.RedirectLink).filter(models.RedirectLink.slug == "u1").first()
+        record = self.db.query(models.ActivationRecord).filter(models.ActivationRecord.slug == "u1").first()
+        self.assertEqual(link.destination_url, "https://example.com")
+        self.assertEqual(record.activation_status, "unactivated")
+        self.assertIsNone(record.activated_at)
+        self.assertIsNone(record.owner_client_id)
+        self.assertEqual(self.db.query(models.BotClientSlug).count(), 0)
+
+    def test_repeated_unrelated_text_after_confirmation_remains_state_safe(self):
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com")
+        self._run_message(42, "YES")
+
+        for text in ("hi", "status?", "NO", "cancel", "12345"):
+            self._run_message(42, text)
+            session = bot_runtime._SESSIONS[42]
+            self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
+            self.assertEqual(session["confirmed_destination_url"], "https://merchant.example.com")
+
+    def test_typed_no_after_confirmation_does_not_change_url_or_reset_session(self):
         # "NO" only makes sense as a Change-URL signal from the
-        # pre-confirmation state — once already confirmed, it is ordinary
-        # unrelated text like any other, not a recognised duplicate
-        # keyword, and must not be treated as an idempotent no-op.
+        # pre-confirmation state — once already confirmed, the TEMPORARY
+        # placeholder treats it like any other unrelated text: no reset,
+        # no change, no deletion of the confirmed URL.
         self._activate_url_slug("u1", "tok-u1")
         self._run_message(42, "https://merchant.example.com")
         self._run_message(42, "YES")
@@ -677,7 +740,26 @@ class ActivationUrlSetupTests(unittest.TestCase):
         self._run_message(42, "NO")
 
         session = bot_runtime._SESSIONS[42]
-        self.assertEqual(session["state"], "awaiting_code")
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
+        self.assertEqual(session["confirmed_destination_url"], "https://merchant.example.com")
+
+    def test_media_a3_placeholder_session_retains_existing_behaviour(self):
+        # A media-slug session in the same _ACTIVATION_SETUP_STATE
+        # placeholder never has confirmed_destination_url set — the new
+        # TEMPORARY handler must be a complete no-op for it, leaving the
+        # pre-existing (pre-A4U) generic fallback behaviour unchanged.
+        self._make_link_and_record("m1", "media", "tok-m1")
+        self._run_callback("activate_tok-m1", chat_id=42, from_user={"id": 999})
+        self.assertEqual(bot_runtime._SESSIONS[42]["state"], bot_runtime._ACTIVATION_SETUP_STATE)
+        self.assertNotIn("confirmed_destination_url", bot_runtime._SESSIONS[42])
+        self.mock_send_message.reset_mock()
+
+        self._run_message(42, "some unrelated text")
+
+        self.mock_send_message.assert_awaited_once_with(
+            42, "Session expired. Please enter your access code."
+        )
+        self.assertEqual(bot_runtime._SESSIONS[42], {"state": "awaiting_code"})
 
     def test_repeated_valid_submission_does_not_duplicate_clients(self):
         self._activate_url_slug("u1", "tok-u1", telegram_id=301)
