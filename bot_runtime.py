@@ -21,11 +21,18 @@ Scope:
     BotClientSlug, or collect URL/media content — those remain later phases.
   - activation URL setup (Phase A4U): for an eligible unactivated url slug
     only, immediately after Phase A3's access-code step, prompts the
-    customer for a destination URL, validates/normalizes it with the same
-    guards as the T1B self-service flow above, and requires explicit YES/NO
-    confirmation. The confirmed value is held only in the in-memory session
-    (never written to RedirectLink.destination_url or any other live
-    runtime) for Phase A5 to finalize. Still never touches
+    customer for a destination URL, validates it (and trims surrounding
+    whitespace only — no scheme/host/path canonicalization) with the same
+    guards as the T1B self-service flow above, then asks for confirmation
+    primarily via an inline "Confirm"/"Change URL" keyboard (typed YES/NO
+    remains as a compatibility fallback). Both the inline callbacks and the
+    typed fallback are state-based idempotent: a repeat Confirm/YES after
+    the session already advanced past confirmation is a safe no-op — it
+    never re-triggers a DB write, never resets the session to
+    awaiting_code, and never loses the confirmed value. The confirmed value
+    is held only in the in-memory session (never written to
+    RedirectLink.destination_url or any other live runtime) for Phase A5 to
+    finalize. Still never touches
     ActivationRecord.owner_client_id/activation_status/activated_at or
     BotClientSlug. media slugs are untouched by this phase.
 
@@ -238,18 +245,75 @@ _ACTIVATION_URL_BLOCKED_TEXT = (
     "This link cannot be used because it points back to SHADZ or an "
     "internal address. Please send an external public link instead."
 )
+# "{url}" here is the validated, trimmed destination — text.strip() only.
+# Never call this "normalized": no scheme/host/path rewriting is performed,
+# so the customer always sees exactly what they typed (minus surrounding
+# whitespace).
 _ACTIVATION_URL_CONFIRM_PROMPT_TEXT = (
     "Confirm destination:\n{url}\n\n"
-    "Reply YES to confirm or NO to send a different URL."
+    "Tap Confirm to save it, or Change URL to send a different one."
 )
 _ACTIVATION_URL_CONFIRM_INVALID_REPLY_TEXT = (
-    "Please reply YES to confirm or NO to send a different URL."
+    "Please tap Confirm or Change URL above, or reply YES to confirm or NO "
+    "to send a different URL."
 )
 _ACTIVATION_URL_RETRY_TEXT = "No problem — please send the destination URL again."
 _ACTIVATION_URL_SAVED_TEXT = (
     "Got it. Destination saved for setup:\n{url}\n\n"
     "We'll continue setting up your product next."
 )
+
+# ---------------------------------------------------------------------------
+# Activation Engine v1 — Phase A4U confirmation callbacks
+#
+# Narrowly-scoped callback_data prefixes for the "Confirm"/"Change URL"
+# inline keyboard sent alongside _ACTIVATION_URL_CONFIRM_PROMPT_TEXT —
+# deliberately distinct from _ACTIVATION_PAYLOAD_PREFIX ("activate_") so the
+# webhook route can dispatch on prefix without any risk of colliding with
+# Phase A2/A3's "Activate Now" callback_data.
+# ---------------------------------------------------------------------------
+
+_A4U_CONFIRM_PAYLOAD_PREFIX = "a4uconfirm_"
+_A4U_CHANGE_PAYLOAD_PREFIX = "a4uchange_"
+
+
+def _build_a4u_callback_payload(prefix: str, activation_token: str) -> str | None:
+    """Build and validate an A4U confirmation callback_data string.
+
+    Same format/length/charset check as _build_activation_payload (shared
+    _START_PAYLOAD_RE / _MAX_ACTIVATION_PAYLOAD_BYTES), just parameterized
+    on prefix so the Confirm and Change URL buttons can each get their own
+    unambiguous callback_data without touching the A2/A3 payload builder.
+    """
+    if not activation_token:
+        return None
+    payload = f"{prefix}{activation_token}"
+    if len(payload.encode("utf-8")) > _MAX_ACTIVATION_PAYLOAD_BYTES:
+        return None
+    if not _START_PAYLOAD_RE.match(payload):
+        return None
+    return payload
+
+
+def _a4u_confirmation_markup(activation_token: str) -> dict | None:
+    """Build the "Confirm" / "Change URL" inline keyboard, or None if the
+    token can't produce safe callback_data for either button — callers must
+    fail safe (fall back to text-only, never send a button with invalid or
+    oversized callback_data)."""
+    confirm_payload = _build_a4u_callback_payload(_A4U_CONFIRM_PAYLOAD_PREFIX, activation_token)
+    change_payload = _build_a4u_callback_payload(_A4U_CHANGE_PAYLOAD_PREFIX, activation_token)
+    if not confirm_payload or not change_payload:
+        logger.error(
+            "Activation token produces an invalid A4U callback_data payload — "
+            "refusing to build the Confirm/Change URL buttons"
+        )
+        return None
+    return {
+        "inline_keyboard": [[
+            {"text": "Confirm", "callback_data": confirm_payload},
+            {"text": "Change URL", "callback_data": change_payload},
+        ]]
+    }
 
 
 def _normalize_bot_username(raw: str) -> str | None:
@@ -623,6 +687,144 @@ async def _handle_activation_callback(callback_query: dict, db: Session) -> None
                 "content_type": link.content_type,
             }
             await _send_message(chat_id, _ACCESS_CODE_READY_TEXT.format(code=client.access_code))
+
+
+async def _handle_a4u_confirmation_callback(callback_query: dict, db: Session) -> None:
+    """Handle the Phase A4U "Confirm" / "Change URL" inline-button press.
+
+    Distinct callback_data prefixes (_A4U_CONFIRM_PAYLOAD_PREFIX /
+    _A4U_CHANGE_PAYLOAD_PREFIX) keep this entirely separate from Phase
+    A2/A3's "activate_" callback dispatch — the webhook route routes here by
+    prefix before ever calling _handle_activation_callback, so existing
+    A2/A3/T1B behaviour is untouched.
+
+    Always answers the callback query at most once, and only if Telegram
+    supplied a callback_query_id. Never crashes on a malformed update
+    (non-dict callback_query, missing id/data/message/chat).
+
+    Duplicate-safety (state-based, not update_id-based — this must hold
+    even if Telegram redelivers the tap under a different update_id):
+      - A repeat Confirm tap once the session already advanced past
+        confirmation (same token, state == _ACTIVATION_SETUP_STATE, a
+        confirmed_destination_url already stored) is a no-op: answers the
+        callback and returns, without touching the DB, the session state,
+        or the stored value.
+      - A repeat Change URL tap once the session already returned to URL
+        input (same token, state == _ACTIVATION_URL_INPUT_STATE) is
+        likewise a no-op.
+      - Anything else re-validates the token/record/content_type from
+        scratch and requires the session to currently be in
+        _ACTIVATION_URL_CONFIRM_STATE for this exact token — an
+        archived/already-activated/wrong-type/stale/missing session fails
+        closed (clears the session, answers with the generic invalid-link
+        callback text) exactly like Phase A2/A3's existing guards.
+
+    Confirm: stores the validated, trimmed pending_url as
+    confirmed_destination_url in the in-memory session only, moves the
+    session to the existing _ACTIVATION_SETUP_STATE placeholder for Phase
+    A5 to pick up. Never writes to RedirectLink.destination_url, never
+    touches ActivationRecord.owner_client_id/activation_status/activated_at,
+    never assigns a BotClientSlug.
+
+    Change URL: clears pending_url and any confirmed_destination_url, and
+    returns the session to _ACTIVATION_URL_INPUT_STATE.
+    """
+    if not isinstance(callback_query, dict):
+        return
+
+    callback_query_id = callback_query.get("id")
+    data = callback_query.get("data")
+    if not isinstance(data, str):
+        data = ""
+
+    if data.startswith(_A4U_CONFIRM_PAYLOAD_PREFIX):
+        prefix, action = _A4U_CONFIRM_PAYLOAD_PREFIX, "confirm"
+    elif data.startswith(_A4U_CHANGE_PAYLOAD_PREFIX):
+        prefix, action = _A4U_CHANGE_PAYLOAD_PREFIX, "change"
+    else:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id)
+        return
+
+    token = data[len(prefix):]
+
+    # Validate the payload format/length/charset BEFORE any DB/session
+    # lookup — same shared-shape check the outbound button builder enforces.
+    if _build_a4u_callback_payload(prefix, token) is None:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+        return
+
+    message = callback_query.get("message")
+    chat = message.get("chat") if isinstance(message, dict) else None
+    chat_id = chat.get("id") if isinstance(chat, dict) else None
+    session = _SESSIONS.get(chat_id) if chat_id is not None else None
+
+    # Duplicate-safety: a repeat Confirm tap after the session already
+    # advanced past confirmation (same token) is a no-op — never re-answer
+    # with an error, never touch the DB, never reset/lose the confirmed URL.
+    if (
+        action == "confirm"
+        and session is not None
+        and session.get("activation_token") == token
+        and session.get("state") == _ACTIVATION_SETUP_STATE
+        and "confirmed_destination_url" in session
+    ):
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id)
+        return
+
+    # Duplicate-safety: a repeat Change URL tap after the session already
+    # returned to URL input (same token) is likewise a no-op.
+    if (
+        action == "change"
+        and session is not None
+        and session.get("activation_token") == token
+        and session.get("state") == _ACTIVATION_URL_INPUT_STATE
+    ):
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id)
+        return
+
+    record = _lookup_unactivated_record(token, db)
+    link = (
+        db.query(models.RedirectLink).filter(models.RedirectLink.slug == record.slug).first()
+        if record else None
+    )
+    valid_session = (
+        record is not None
+        and link is not None
+        and link.content_type == "url"
+        and session is not None
+        and session.get("activation_token") == token
+        and session.get("state") == _ACTIVATION_URL_CONFIRM_STATE
+    )
+    if not valid_session:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+        if chat_id is not None:
+            _SESSIONS.pop(chat_id, None)
+        return
+
+    if callback_query_id:
+        await _answer_callback_query(callback_query_id)
+
+    if action == "confirm":
+        session["confirmed_destination_url"] = session.get("pending_url")
+        session.pop("pending_url", None)
+        session["state"] = _ACTIVATION_SETUP_STATE
+        _SESSIONS[chat_id] = session
+        await _send_message(
+            chat_id, _ACTIVATION_URL_SAVED_TEXT.format(url=session["confirmed_destination_url"])
+        )
+        return
+
+    # action == "change"
+    session.pop("pending_url", None)
+    session.pop("confirmed_destination_url", None)
+    session["state"] = _ACTIVATION_URL_INPUT_STATE
+    _SESSIONS[chat_id] = session
+    await _send_message(chat_id, _ACTIVATION_URL_RETRY_TEXT)
 
 
 # ---------------------------------------------------------------------------
@@ -1083,6 +1285,18 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         await _send_message(chat_id, _ACTIVATION_CONFIRMATION_REMINDER_TEXT)
         return
 
+    if state == _ACTIVATION_SETUP_STATE and "confirmed_destination_url" in session:
+        # Duplicate-safety: any further message (typed or otherwise) after a
+        # successful A4U URL confirmation must not fall into the generic
+        # "Unknown/expired state" reset below — that would wipe the
+        # confirmed value and drop the customer back to awaiting_code. A
+        # media-slug session in this same placeholder state never has
+        # confirmed_destination_url set, so this branch is a no-op for it.
+        await _send_message(
+            chat_id, _ACTIVATION_URL_SAVED_TEXT.format(url=session["confirmed_destination_url"])
+        )
+        return
+
     if state in (_ACTIVATION_URL_INPUT_STATE, _ACTIVATION_URL_CONFIRM_STATE):
         # Re-validate the activation session from scratch on every message —
         # never trust that the token/record are still eligible just because
@@ -1108,16 +1322,29 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
                 await _send_message(chat_id, _ACTIVATION_URL_BLOCKED_TEXT)
                 return
 
-            normalized = text.strip()
-            session["pending_url"] = normalized
+            # Validated, trimmed URL — text.strip() only. No scheme/host/
+            # path canonicalization is performed, so the customer's intent
+            # is never rewritten.
+            trimmed_url = text.strip()
+            session["pending_url"] = trimmed_url
             session["state"] = _ACTIVATION_URL_CONFIRM_STATE
             _SESSIONS[chat_id] = session
+            markup = _a4u_confirmation_markup(token)
             await _send_message(
-                chat_id, _ACTIVATION_URL_CONFIRM_PROMPT_TEXT.format(url=normalized)
+                chat_id,
+                _ACTIVATION_URL_CONFIRM_PROMPT_TEXT.format(url=trimmed_url),
+                reply_markup=markup,
             )
             return
 
-        # state == _ACTIVATION_URL_CONFIRM_STATE
+        # state == _ACTIVATION_URL_CONFIRM_STATE — typed YES/NO fallback,
+        # kept for compatibility alongside the inline Confirm/Change URL
+        # buttons sent above. Same duplicate-safety contract as the
+        # callback handler: by the time a message reaches this branch, the
+        # session is still in _ACTIVATION_URL_CONFIRM_STATE (a prior
+        # successful confirm/change already moved it elsewhere, so a stray
+        # duplicate typed reply here is guaranteed to be genuinely pending,
+        # not a re-processed duplicate).
         answer = text.lower()
         if answer in ("yes", "y", "confirm"):
             session["confirmed_destination_url"] = session.get("pending_url")
@@ -1131,6 +1358,7 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
             return
         if answer in ("no", "n", "change", "retry", "cancel"):
             session.pop("pending_url", None)
+            session.pop("confirmed_destination_url", None)
             session["state"] = _ACTIVATION_URL_INPUT_STATE
             _SESSIONS[chat_id] = session
             await _send_message(chat_id, _ACTIVATION_URL_RETRY_TEXT)
@@ -1182,7 +1410,16 @@ def register_bot_webhook_routes(app) -> None:
 
         if callback_query is not None:
             try:
-                await _handle_activation_callback(callback_query, db)
+                cq_data = callback_query.get("data") if isinstance(callback_query, dict) else None
+                if isinstance(cq_data, str) and (
+                    cq_data.startswith(_A4U_CONFIRM_PAYLOAD_PREFIX)
+                    or cq_data.startswith(_A4U_CHANGE_PAYLOAD_PREFIX)
+                ):
+                    # Distinct prefix dispatch — never touches the A2/A3
+                    # "activate_" callback path below.
+                    await _handle_a4u_confirmation_callback(callback_query, db)
+                else:
+                    await _handle_activation_callback(callback_query, db)
             except Exception:
                 logger.exception("Unhandled error processing callback update_id=%s", update_id)
             return {"ok": True}

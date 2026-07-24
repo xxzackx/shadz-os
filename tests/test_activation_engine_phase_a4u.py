@@ -4,15 +4,26 @@ Covers:
   - a url slug's Phase A3 callback continues into the URL-input state and
     sends a prompt right after the access code
   - a media slug never enters any A4U state
-  - valid URL input reaches the confirmation state and shows the normalized
-    destination
+  - valid URL input reaches the confirmation state, shows the validated,
+    trimmed destination (text.strip() only — no canonicalization), and
+    offers a "Confirm" / "Change URL" inline keyboard as the primary
+    confirmation path (typed YES/NO remains a compatibility fallback)
   - invalid-format and blocked (SHADZ/internal/loopback) URLs stay retryable
     without any database change
-  - confirm (YES) stores the confirmed URL only in the in-memory session and
-    never touches ActivationRecord/RedirectLink/BotClientSlug
-  - retry/change (NO) returns to URL input without activating anything
+  - Confirm (button or typed YES) stores the confirmed URL only in the
+    in-memory session and never touches
+    ActivationRecord/RedirectLink/BotClientSlug
+  - Change URL (button or typed NO) returns to URL input, clearing both
+    pending_url and any confirmed_destination_url, without activating
+    anything
   - archived/already-activated/wrong-type/invalid-session states fail closed
-  - repeated updates create no duplicate clients/assignments/side effects
+    for both the typed and callback confirmation paths
+  - repeated confirmation delivery — same update_id, a different update_id,
+    or a stray typed duplicate — creates no duplicate clients/assignments/
+    side effects, never resets the session to awaiting_code, and never
+    loses the confirmed URL
+  - existing Phase A2/A3 "activate_" callback dispatch is unaffected by the
+    new A4U callback routing
 
 Uses an isolated in-memory SQLite database — never touches the real
 shadz.db. No network calls: bot_runtime._send_message and
@@ -27,11 +38,15 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 import bot_runtime
 import models
-from database import Base
+from database import Base, get_db
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 def _make_in_memory_session():
@@ -88,6 +103,10 @@ class ActivationUrlSetupTests(unittest.TestCase):
             bot_runtime._handle_message(chat_id, text, {"id": 999}, self.db, {"text": text})
         )
 
+    def _run_a4u_callback(self, data, chat_id=42, callback_query_id="cbq-a4u"):
+        cq = {"id": callback_query_id, "data": data, "message": {"chat": {"id": chat_id}}}
+        asyncio.run(bot_runtime._handle_a4u_confirmation_callback(cq, self.db))
+
     def _activate_url_slug(self, slug="u1", token="tok-u1", chat_id=42, telegram_id=201):
         """Drive a url slug through A3 into the A4U URL-input state."""
         self._make_link_and_record(slug, "url", token)
@@ -125,7 +144,9 @@ class ActivationUrlSetupTests(unittest.TestCase):
         self.assertEqual(session["state"], bot_runtime._ACTIVATION_URL_CONFIRM_STATE)
         self.assertEqual(session["pending_url"], "https://merchant.example.com/product")
 
-    def test_normalization_shown_in_confirmation_message(self):
+    def test_trimmed_url_shown_in_confirmation_message(self):
+        # The stored/shown value is only text.strip() — no scheme/host/path
+        # canonicalization. This asserts the trim behaviour, not "normalization".
         self._activate_url_slug()
 
         self._run_message(42, "  https://merchant.example.com/product  ")
@@ -135,7 +156,22 @@ class ActivationUrlSetupTests(unittest.TestCase):
             bot_runtime._ACTIVATION_URL_CONFIRM_PROMPT_TEXT.format(
                 url="https://merchant.example.com/product"
             ),
+            reply_markup=bot_runtime._a4u_confirmation_markup("tok-u1"),
         )
+
+    def test_confirmation_prompt_includes_confirm_and_change_inline_actions(self):
+        self._activate_url_slug("u1", "tok-u1")
+
+        self._run_message(42, "https://merchant.example.com/product")
+
+        call = self.mock_send_message.await_args
+        markup = call.kwargs["reply_markup"]
+        buttons = markup["inline_keyboard"][0]
+        self.assertEqual(len(buttons), 2)
+        self.assertEqual(buttons[0]["text"], "Confirm")
+        self.assertEqual(buttons[0]["callback_data"], f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1")
+        self.assertEqual(buttons[1]["text"], "Change URL")
+        self.assertEqual(buttons[1]["callback_data"], f"{bot_runtime._A4U_CHANGE_PAYLOAD_PREFIX}tok-u1")
 
     # -- invalid URL stays retryable ---------------------------------------
 
@@ -210,6 +246,144 @@ class ActivationUrlSetupTests(unittest.TestCase):
         self.assertIsNone(record.activated_at)
         self.assertIsNone(record.owner_client_id)
         self.assertEqual(self.db.query(models.BotClientSlug).count(), 0)
+
+    # -- confirmation: Confirm inline callback (primary flow) ----------------
+
+    def test_confirm_callback_preserves_url_and_enters_post_confirmation_placeholder(self):
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com/product")
+        self.mock_send_message.reset_mock()
+        self.mock_answer.reset_mock()
+
+        self._run_a4u_callback(
+            f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1", callback_query_id="cbq-1"
+        )
+
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
+        self.assertEqual(session["confirmed_destination_url"], "https://merchant.example.com/product")
+        self.assertNotIn("pending_url", session)
+        self.mock_answer.assert_awaited_once_with("cbq-1")
+        self.mock_send_message.assert_awaited_once_with(
+            42,
+            bot_runtime._ACTIVATION_URL_SAVED_TEXT.format(url="https://merchant.example.com/product"),
+        )
+
+    def test_confirm_callback_does_not_write_any_a5_field(self):
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com/product")
+
+        self._run_a4u_callback(f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1")
+
+        link = self.db.query(models.RedirectLink).filter(models.RedirectLink.slug == "u1").first()
+        record = self.db.query(models.ActivationRecord).filter(models.ActivationRecord.slug == "u1").first()
+        self.assertEqual(link.destination_url, "https://example.com")
+        self.assertEqual(record.activation_status, "unactivated")
+        self.assertIsNone(record.activated_at)
+        self.assertIsNone(record.owner_client_id)
+        self.assertEqual(self.db.query(models.BotClientSlug).count(), 0)
+
+    def test_confirm_callback_fails_closed_on_archived_slug(self):
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com/product")
+        link = self.db.query(models.RedirectLink).filter(models.RedirectLink.slug == "u1").first()
+        link.is_archived = True
+        self.db.commit()
+        self.mock_send_message.reset_mock()
+        self.mock_answer.reset_mock()
+
+        self._run_a4u_callback(f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1")
+
+        self.assertNotIn(42, bot_runtime._SESSIONS)
+        self.mock_send_message.assert_not_awaited()
+        self.mock_answer.assert_awaited_once_with(
+            "cbq-a4u", text=bot_runtime._ACTIVATION_CALLBACK_INVALID_TEXT
+        )
+
+    # -- Change URL inline callback -------------------------------------------
+
+    def test_change_url_callback_returns_to_input_and_clears_pending_and_confirmed(self):
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com/product")
+        self.mock_send_message.reset_mock()
+        self.mock_answer.reset_mock()
+
+        self._run_a4u_callback(
+            f"{bot_runtime._A4U_CHANGE_PAYLOAD_PREFIX}tok-u1", callback_query_id="cbq-2"
+        )
+
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_URL_INPUT_STATE)
+        self.assertNotIn("pending_url", session)
+        self.assertNotIn("confirmed_destination_url", session)
+        self.mock_answer.assert_awaited_once_with("cbq-2")
+        self.mock_send_message.assert_awaited_once_with(42, bot_runtime._ACTIVATION_URL_RETRY_TEXT)
+
+    def test_change_url_callback_does_not_activate_anything(self):
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com/product")
+
+        self._run_a4u_callback(f"{bot_runtime._A4U_CHANGE_PAYLOAD_PREFIX}tok-u1")
+
+        record = self.db.query(models.ActivationRecord).filter(models.ActivationRecord.slug == "u1").first()
+        self.assertEqual(record.activation_status, "unactivated")
+        self.assertEqual(self.db.query(models.BotClientSlug).count(), 0)
+
+    # -- duplicate delivery: Confirm callback ---------------------------------
+
+    def test_duplicate_confirm_callback_does_not_reset_session(self):
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com/product")
+        self._run_a4u_callback(
+            f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1", callback_query_id="cbq-1"
+        )
+        self.mock_send_message.reset_mock()
+        self.mock_answer.reset_mock()
+
+        self._run_a4u_callback(
+            f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1", callback_query_id="cbq-2"
+        )
+
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
+        self.assertNotEqual(session["state"], "awaiting_code")
+        self.mock_answer.assert_awaited_once_with("cbq-2")
+        self.mock_send_message.assert_not_awaited()
+
+    def test_duplicate_confirm_callback_preserves_confirmed_destination_url(self):
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com/product")
+        self._run_a4u_callback(
+            f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1", callback_query_id="cbq-1"
+        )
+
+        self._run_a4u_callback(
+            f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1", callback_query_id="cbq-2"
+        )
+        self._run_a4u_callback(
+            f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1", callback_query_id="cbq-3"
+        )
+
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["confirmed_destination_url"], "https://merchant.example.com/product")
+
+    def test_duplicate_confirm_callback_creates_no_db_side_effect(self):
+        self._activate_url_slug("u1", "tok-u1", telegram_id=401)
+        self._run_message(42, "https://merchant.example.com/product")
+        self._run_a4u_callback(
+            f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1", callback_query_id="cbq-1"
+        )
+
+        self._run_a4u_callback(
+            f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1", callback_query_id="cbq-2"
+        )
+
+        self.assertEqual(self.db.query(models.BotClient).count(), 1)
+        self.assertEqual(self.db.query(models.BotClientSlug).count(), 0)
+        record = self.db.query(models.ActivationRecord).filter(models.ActivationRecord.slug == "u1").first()
+        self.assertEqual(record.activation_status, "unactivated")
+        self.assertIsNone(record.activated_at)
+        self.assertIsNone(record.owner_client_id)
 
     # -- confirmation: NO / retry --------------------------------------------
 
@@ -310,16 +484,40 @@ class ActivationUrlSetupTests(unittest.TestCase):
         self._activate_url_slug("u1", "tok-u1")
         self._run_message(42, "https://merchant.example.com")
         self._run_message(42, "YES")
+        self.mock_send_message.reset_mock()
 
         # A stray repeat of the YES message after already moving past
         # confirmation must not resurrect the URL-confirm flow, mutate the
-        # DB, or create any BotClient/BotClientSlug rows.
+        # DB, create any BotClient/BotClientSlug rows, reset the session to
+        # awaiting_code, or lose the confirmed URL.
         self._run_message(42, "YES")
 
         self.assertEqual(self.db.query(models.BotClient).count(), 1)
         self.assertEqual(self.db.query(models.BotClientSlug).count(), 0)
         record = self.db.query(models.ActivationRecord).filter(models.ActivationRecord.slug == "u1").first()
         self.assertEqual(record.activation_status, "unactivated")
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
+        self.assertNotEqual(session["state"], "awaiting_code")
+        self.assertEqual(session["confirmed_destination_url"], "https://merchant.example.com")
+        self.mock_send_message.assert_awaited_once_with(
+            42, bot_runtime._ACTIVATION_URL_SAVED_TEXT.format(url="https://merchant.example.com")
+        )
+
+    def test_duplicate_typed_no_after_confirmation_does_not_reset_or_lose_url(self):
+        # A stray "NO"/"cancel"-shaped message after the session has already
+        # moved to the post-confirmation placeholder is still a duplicate
+        # confirmation update, not a fresh retry — it must not resurrect
+        # URL input or discard the confirmed value.
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com")
+        self._run_message(42, "YES")
+
+        self._run_message(42, "NO")
+
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
+        self.assertEqual(session["confirmed_destination_url"], "https://merchant.example.com")
 
     def test_repeated_valid_submission_does_not_duplicate_clients(self):
         self._activate_url_slug("u1", "tok-u1", telegram_id=301)
@@ -327,6 +525,187 @@ class ActivationUrlSetupTests(unittest.TestCase):
         self._run_message(42, "https://merchant.example.com")
 
         self.assertEqual(self.db.query(models.BotClient).count(), 1)
+
+
+class A4UWebhookCallbackDispatchTests(unittest.TestCase):
+    """Integration tests through the actual webhook route: prove the new
+    a4uconfirm_/a4uchange_ callback_data prefixes are dispatched to
+    bot_runtime._handle_a4u_confirmation_callback without disturbing the
+    existing "activate_" (Phase A2/A3) callback dispatch, and that
+    duplicate Confirm delivery is state-safe both under Telegram's
+    update_id dedup and under a genuinely different update_id (i.e. the
+    state transition itself is idempotent, not just the dedup cache)."""
+
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(bind=self.engine)
+        SessionLocal = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
+        self.db = SessionLocal()
+
+        app = FastAPI()
+        bot_runtime.register_bot_webhook_routes(app)
+
+        def _override_get_db():
+            db = SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = _override_get_db
+        self.client = TestClient(app)
+
+        bot_runtime._SEEN_UPDATE_IDS.clear()
+        bot_runtime._SESSIONS.clear()
+        self._env_patcher = patch.dict(os.environ, {"TELEGRAM_WEBHOOK_SECRET": "test-secret"})
+        self._env_patcher.start()
+
+        self._send_message_patcher = patch.object(bot_runtime, "_send_message", new_callable=AsyncMock)
+        self.mock_send_message = self._send_message_patcher.start()
+        self._answer_patcher = patch.object(bot_runtime, "_answer_callback_query", new_callable=AsyncMock)
+        self.mock_answer = self._answer_patcher.start()
+
+    def tearDown(self):
+        self._send_message_patcher.stop()
+        self._answer_patcher.stop()
+        self._env_patcher.stop()
+        self.db.close()
+        bot_runtime._SEEN_UPDATE_IDS.clear()
+        bot_runtime._SESSIONS.clear()
+
+    def _post(self, body):
+        return self.client.post(
+            "/bot/telegram/webhook", json=body,
+            headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"},
+        )
+
+    def _activation_callback_body(self, update_id, callback_query_id, chat_id=42, telegram_id=900):
+        return {
+            "update_id": update_id,
+            "callback_query": {
+                "id": callback_query_id,
+                "data": "activate_tok-u1",
+                "message": {"chat": {"id": chat_id}},
+                "from": {"id": telegram_id, "username": "shopper"},
+            },
+        }
+
+    def _a4u_callback_body(self, update_id, callback_query_id, data, chat_id=42):
+        return {
+            "update_id": update_id,
+            "callback_query": {
+                "id": callback_query_id,
+                "data": data,
+                "message": {"chat": {"id": chat_id}},
+            },
+        }
+
+    def _url_message_body(self, update_id, text, chat_id=42):
+        return {
+            "update_id": update_id,
+            "message": {
+                "chat": {"id": chat_id},
+                "text": text,
+                "from": {"id": 900, "username": "shopper"},
+            },
+        }
+
+    def _seed_url_slug(self):
+        link = models.RedirectLink(slug="u1", destination_url="https://example.com", content_type="url")
+        self.db.add(link)
+        self.db.commit()
+        self.db.add(models.ActivationRecord(slug="u1", activation_token="tok-u1"))
+        self.db.commit()
+
+    def _drive_to_confirmation_state(self):
+        """Seed the slug, run the Phase A3 "Activate Now" callback, then
+        submit the destination URL — leaving the chat's session sitting in
+        _ACTIVATION_URL_CONFIRM_STATE, ready for a Confirm/Change callback."""
+        self._seed_url_slug()
+        self._post(self._activation_callback_body(1001, "cbq-activate"))
+        self._post(self._url_message_body(1002, "https://merchant.example.com/product"))
+
+    def test_a4u_confirm_callback_is_dispatched_and_preserves_session(self):
+        self._drive_to_confirmation_state()
+
+        response = self._post(
+            self._a4u_callback_body(1003, "cbq-confirm", f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
+        self.assertEqual(session["confirmed_destination_url"], "https://merchant.example.com/product")
+
+    def test_duplicate_confirm_callback_same_update_id_is_deduped(self):
+        self._drive_to_confirmation_state()
+        self.mock_answer.reset_mock()
+        body = self._a4u_callback_body(
+            2001, "cbq-confirm-dup", f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1"
+        )
+
+        self._post(body)
+        self._post(body)
+
+        self.assertEqual(self.mock_answer.await_count, 1)
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
+        self.assertEqual(session["confirmed_destination_url"], "https://merchant.example.com/product")
+
+    def test_duplicate_confirm_callback_different_update_id_is_state_safe(self):
+        # A genuinely repeated tap arrives as a distinct update_id (Telegram
+        # never redelivers a second physical button press under the same
+        # id) — update_id dedup alone would NOT catch this; the state
+        # transition itself must be the thing that makes it safe.
+        self._drive_to_confirmation_state()
+        self.mock_answer.reset_mock()
+
+        self._post(self._a4u_callback_body(
+            3001, "cbq-confirm-a", f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1"
+        ))
+        self._post(self._a4u_callback_body(
+            3002, "cbq-confirm-b", f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1"
+        ))
+
+        self.assertEqual(self.mock_answer.await_count, 2)
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
+        self.assertNotEqual(session["state"], "awaiting_code")
+        self.assertEqual(session["confirmed_destination_url"], "https://merchant.example.com/product")
+        self.assertEqual(self.db.query(models.BotClient).count(), 1)
+        self.assertEqual(self.db.query(models.BotClientSlug).count(), 0)
+        record = self.db.query(models.ActivationRecord).filter(models.ActivationRecord.slug == "u1").first()
+        self.assertEqual(record.activation_status, "unactivated")
+
+    def test_existing_activate_now_callback_dispatch_is_unaffected(self):
+        # Phase A2/A3's "activate_" callback_data must still resolve/create
+        # the BotClient exactly as before — the new prefix-based routing
+        # added for A4U must not intercept or alter it.
+        self._seed_url_slug()
+
+        response = self._post(self._activation_callback_body(4001, "cbq-activate"))
+
+        self.assertEqual(response.status_code, 200)
+        client = self.db.query(models.BotClient).filter(models.BotClient.telegram_user_id == "900").first()
+        self.assertIsNotNone(client)
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_URL_INPUT_STATE)
+
+    def test_change_url_callback_dispatched_through_webhook(self):
+        self._drive_to_confirmation_state()
+
+        response = self._post(self._a4u_callback_body(
+            5001, "cbq-change", f"{bot_runtime._A4U_CHANGE_PAYLOAD_PREFIX}tok-u1"
+        ))
+
+        self.assertEqual(response.status_code, 200)
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_URL_INPUT_STATE)
+        self.assertNotIn("confirmed_destination_url", session)
 
 
 if __name__ == "__main__":
