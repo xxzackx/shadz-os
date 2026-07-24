@@ -14,7 +14,7 @@ from link_admin import register_link_admin_routes
 from media_admin import register_media_admin_routes
 from page_admin import register_page_admin_routes
 from page_public import serve_public_page
-from link_public import expired_page_response, serve_public_media
+from link_public import expired_page_response, resolve_activation_redirect, serve_public_media
 from nfc_legacy import register_nfc_routes, register_nfc_admin_routes
 from bot_admin import register_bot_admin_routes
 from bot_runtime import register_bot_webhook_routes
@@ -283,6 +283,10 @@ app.include_router(admin_router)
 def redirect_slug(slug: str, request: Request, db: Session = Depends(get_db)):
     """Public endpoint — NFC tags point here (e.g. shadz.io/a).
 
+    For url/media slugs, this is also the Activation Engine v1 Activation
+    Gateway: an unactivated slug's first scan is redirected into the
+    Telegram activation entry flow instead of its normal behaviour below.
+
     Behaviour depends on the slug's content_type:
       url   → 302 redirect to destination_url  (legacy behaviour unchanged)
       media → render lightweight media page (or 'Media not ready yet' page)
@@ -304,6 +308,12 @@ def redirect_slug(slug: str, request: Request, db: Session = Depends(get_db)):
     db.commit()
 
     ct = link.content_type
+
+    # ── Activation Engine v1 Phase A2 — first-scan Activation Gateway ───────
+    if ct in ("url", "media"):
+        activation_redirect = resolve_activation_redirect(slug, db)
+        if activation_redirect is not None:
+            return activation_redirect
 
     # ── media ──────────────────────────────────────────────────────────────
     if ct == "media":

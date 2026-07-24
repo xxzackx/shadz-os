@@ -1,6 +1,13 @@
+import logging
+
 import models
-from fastapi.responses import HTMLResponse
+from fastapi import HTTPException
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
+
+from bot_runtime import build_activation_deep_link
+
+logger = logging.getLogger("link_public")
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +104,49 @@ def _media_not_ready_html(slug: str) -> str:
 </head>
 <body><p>Media not ready yet</p></body>
 </html>"""
+
+
+# ---------------------------------------------------------------------------
+# Activation Engine v1 — Phase A2 (First-Scan Telegram Entry)
+# ---------------------------------------------------------------------------
+
+def resolve_activation_redirect(slug: str, db: Session) -> RedirectResponse | None:
+    """Activation Gateway check for an activation-eligible (url/media) slug.
+
+    Returns a 302 to the Telegram activation deep link if the slug has an
+    unactivated ActivationRecord. Returns None if the caller should fall
+    through to existing legacy behaviour — no activation record, or the
+    record is already activated.
+
+    If the slug IS gated (unactivated ActivationRecord exists) but the
+    Telegram deep link cannot be built — TELEGRAM_BOT_USERNAME missing, or
+    the token doesn't fit Telegram's deep-link format — this raises a 503
+    instead of falling through. Falling through would expose the slug's
+    legacy destination_url/media while activation is supposed to be gating
+    it, so a misconfigured bot must fail closed, not leak content.
+    """
+    record = (
+        db.query(models.ActivationRecord)
+        .filter(models.ActivationRecord.slug == slug)
+        .first()
+    )
+    if not record or record.activation_status != "unactivated":
+        return None
+
+    deep_link = build_activation_deep_link(record.activation_token)
+    if not deep_link:
+        logger.error(
+            "Activation Gateway misconfigured for slug=%s — cannot build Telegram "
+            "activation deep link; refusing to fall through to legacy url/media "
+            "behaviour while the slug is unactivated",
+            slug,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Activation is temporarily unavailable. Please try again shortly.",
+        )
+
+    return RedirectResponse(url=deep_link, status_code=302)
 
 
 # ---------------------------------------------------------------------------

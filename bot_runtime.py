@@ -1,4 +1,4 @@
-"""Telegram Bot Runtime — Phase T1B + T1C.
+"""Telegram Bot Runtime — Phase T1B + T1C + Activation Engine v1 Phase A2.
 
 Webhook-based customer self-service chat flow. Customers authenticate with the
 plain-text access_code issued via the admin Bot Engine (bot_admin.py), then
@@ -11,6 +11,11 @@ Scope:
     video/GIF); it's downloaded from Telegram via getFile, validated against
     the same ALLOWED_MEDIA_TYPES mime allowlist used by the browser upload
     flow, uploaded to R2, and swapped in as the new active SlugMedia record.
+  - activation entry (Phase A2): builds the Telegram deep link used by the
+    public slug resolver's Activation Gateway, and recognises the resulting
+    /start payload to show the activation entry message. Does not create a
+    BotClient, assign ownership, mark a record activated, or issue an access
+    code — that is out of scope for Phase A2.
 
 Conversation state is held in an in-memory dict, acceptable for a single
 uvicorn process (no --workers flag in this deployment) and acceptable to lose
@@ -22,6 +27,7 @@ step (setWebhook call) after deploy.
 """
 import logging
 import os
+import re
 from collections import deque
 from urllib.parse import urlparse
 
@@ -87,7 +93,7 @@ def _reset_to_slug_menu(session: dict) -> dict:
 # Telegram send helper — fails safe if TELEGRAM_BOT_TOKEN is not configured
 # ---------------------------------------------------------------------------
 
-async def _send_message(chat_id: int, text: str) -> None:
+async def _send_message(chat_id: int, text: str, reply_markup: dict | None = None) -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     if not token:
         logger.error(
@@ -96,9 +102,12 @@ async def _send_message(chat_id: int, text: str) -> None:
         )
         return
     url = _TELEGRAM_API_BASE.format(token=token) + "/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(url, json={"chat_id": chat_id, "text": text})
+            response = await client.post(url, json=payload)
             response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         # Never interpolate/stringify exc — httpx's auto-generated message
@@ -113,6 +122,263 @@ async def _send_message(chat_id: int, text: str) -> None:
             "Failed to send Telegram message to chat_id=%s: %s",
             chat_id, type(exc).__name__,
         )
+
+
+# ---------------------------------------------------------------------------
+# Activation Engine v1 — Phase A2 (First-Scan Telegram Entry)
+#
+# Builds the deep link the public slug resolver (link_public.py) redirects
+# into for an unactivated url/media slug, and recognises the resulting
+# /start payload. Does not create a BotClient, assign ownership, mark a
+# record activated, or issue an access code — later Activation Engine
+# phases own that.
+# ---------------------------------------------------------------------------
+
+_ACTIVATION_PAYLOAD_PREFIX = "activate_"
+# Telegram's /start deep-link payload AND callback_data share this format —
+# max 64 chars / bytes — https://core.telegram.org/bots/features#deep-linking
+_START_PAYLOAD_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_MAX_ACTIVATION_PAYLOAD_BYTES = 64
+
+# Conservative Telegram bot-username constraints: ASCII letters/digits/
+# underscore only, 5-32 chars (after stripping an optional leading '@'),
+# must end in "bot" (case-insensitive).
+_BOT_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{5,32}$")
+
+_ACTIVATION_ENTRY_TEXT = (
+    "✨ Your SHADZ product is ready to activate.\n\n"
+    "Activate it now to connect this product to your account and unlock "
+    "self-service management."
+)
+# The Phase A2 boundary response shown after "Activate Now" is pressed and
+# the token/record are re-validated. Deliberately generic — no promise of a
+# specific next step, since that belongs to a later Activation Engine phase.
+_ACTIVATION_CALLBACK_BOUNDARY_TEXT = (
+    "Activation confirmation isn't available yet. Please check back soon."
+)
+_ACTIVATION_CALLBACK_INVALID_TEXT = "This activation link is no longer valid."
+# Single generic response for every invalid /start activation payload
+# (empty/malformed/oversized token, unknown token, already-activated token,
+# or a valid record whose payload can't produce safe callback_data) —
+# deliberately does not distinguish which case occurred.
+_ACTIVATION_INVALID_LINK_TEXT = (
+    "This activation link is invalid or no longer available. Please scan "
+    "your SHADZ product again or contact SHADZ support."
+)
+# Shown for any ordinary text sent while a chat holds an
+# awaiting_activation_confirmation session — reminds the customer to use the
+# button instead of falling into (or being mistaken for) Bot Client login.
+_ACTIVATION_CONFIRMATION_REMINDER_TEXT = (
+    'Please tap "Activate Now" to continue activating your SHADZ product.'
+)
+
+
+def _normalize_bot_username(raw: str) -> str | None:
+    """Normalize and validate TELEGRAM_BOT_USERNAME.
+
+    Accepts an optional single leading '@'. Returns the normalized username
+    (no '@') if valid, or None if missing/invalid — callers must fail closed
+    rather than build a link/button referencing a malformed or non-existent
+    bot username. No production username is hardcoded here.
+    """
+    if not raw:
+        return None
+    username = raw[1:] if raw.startswith("@") else raw
+    if not _BOT_USERNAME_RE.match(username):
+        return None
+    if not username.lower().endswith("bot"):
+        return None
+    return username
+
+
+def _build_activation_payload(activation_token: str) -> str | None:
+    """Build and validate the "activate_<token>" Telegram payload string.
+
+    Shared by build_activation_deep_link (the /start deep link) and
+    _activation_entry_markup (the "Activate Now" button's callback_data) so
+    both enforce the identical format/length/charset check — neither path
+    may emit a payload Telegram would reject, and tokens are never
+    truncated to fit. Returns None for an empty token, a payload exceeding
+    Telegram's 64-byte start-parameter/callback_data limit, or disallowed
+    characters.
+    """
+    if not activation_token:
+        return None
+    payload = f"{_ACTIVATION_PAYLOAD_PREFIX}{activation_token}"
+    if len(payload.encode("utf-8")) > _MAX_ACTIVATION_PAYLOAD_BYTES:
+        return None
+    if not _START_PAYLOAD_RE.match(payload):
+        return None
+    return payload
+
+
+def _activation_entry_markup(activation_token: str) -> dict | None:
+    """Build the "Activate Now" inline keyboard, or None if the token can't
+    produce a safe callback_data payload — callers must fail safe (never
+    send a button with invalid/oversized callback_data)."""
+    payload = _build_activation_payload(activation_token)
+    if not payload:
+        logger.error(
+            "Activation token produces an invalid Telegram callback_data payload — "
+            "refusing to build the Activate Now button"
+        )
+        return None
+    return {
+        "inline_keyboard": [[{"text": "Activate Now", "callback_data": payload}]]
+    }
+
+
+def build_activation_deep_link(activation_token: str) -> str | None:
+    """Build a t.me deep link that opens the bot with an activation payload.
+
+    Fails safe (returns None) if TELEGRAM_BOT_USERNAME is missing or invalid,
+    or if the resulting payload doesn't fit Telegram's allowed
+    start-parameter format — callers must fall back to existing legacy
+    behaviour rather than send a customer to a broken link.
+    """
+    username = _normalize_bot_username(os.environ.get("TELEGRAM_BOT_USERNAME", ""))
+    if not username:
+        logger.error(
+            "TELEGRAM_BOT_USERNAME is not configured or invalid — cannot build "
+            "activation deep link"
+        )
+        return None
+
+    payload = _build_activation_payload(activation_token)
+    if not payload:
+        logger.error("Activation token produces an invalid Telegram deep-link payload")
+        return None
+
+    return f"https://t.me/{username}?start={payload}"
+
+
+async def _answer_callback_query(callback_query_id: str, text: str | None = None) -> None:
+    """Stop a Telegram inline-button's loading spinner.
+
+    Fails safe (logs and returns) if TELEGRAM_BOT_TOKEN is not configured,
+    matching _send_message's existing fail-safe pattern.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if not token:
+        logger.error(
+            "TELEGRAM_BOT_TOKEN is not configured — cannot answer callback_query_id=%s",
+            callback_query_id,
+        )
+        return
+    url = _TELEGRAM_API_BASE.format(token=token) + "/answerCallbackQuery"
+    payload = {"callback_query_id": callback_query_id}
+    if text:
+        payload["text"] = text
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "Failed to answer callback_query_id=%s: HTTP %s (%s)",
+            callback_query_id, exc.response.status_code, type(exc).__name__,
+        )
+    except httpx.HTTPError as exc:
+        logger.error(
+            "Failed to answer callback_query_id=%s: %s",
+            callback_query_id, type(exc).__name__,
+        )
+
+
+def _lookup_unactivated_record(token: str, db: Session) -> "models.ActivationRecord | None":
+    if not token:
+        return None
+    record = (
+        db.query(models.ActivationRecord)
+        .filter(models.ActivationRecord.activation_token == token)
+        .first()
+    )
+    if not record or record.activation_status != "unactivated":
+        return None
+    return record
+
+
+async def _handle_activation_entry(chat_id: int, payload: str, db: Session) -> None:
+    """Handle a /start deep-link payload carrying an activation token.
+
+    Only recognises the payload and shows the Phase A2 entry message — does
+    not create a BotClient, claim ownership, mark the record activated, or
+    issue an access code. A valid unactivated token gets its own
+    activation-specific session state — it is never placed into the
+    ordinary Bot Client access-code login flow. An unknown, already-
+    activated, malformed, or otherwise unusable token clears any stale
+    session and shows one generic activation-invalid message, without
+    revealing which case occurred or falling back to the login prompt.
+    """
+    token = payload[len(_ACTIVATION_PAYLOAD_PREFIX):]
+    record = _lookup_unactivated_record(token, db)
+    markup = _activation_entry_markup(token) if record else None
+
+    if not record or markup is None:
+        _SESSIONS.pop(chat_id, None)
+        await _send_message(chat_id, _ACTIVATION_INVALID_LINK_TEXT)
+        return
+
+    _SESSIONS[chat_id] = {"state": "awaiting_activation_confirmation", "activation_token": token}
+    await _send_message(chat_id, _ACTIVATION_ENTRY_TEXT, reply_markup=markup)
+
+
+async def _handle_activation_callback(callback_query: dict, db: Session) -> None:
+    """Handle the "Activate Now" inline-button press.
+
+    Always answers the callback query at most once, and only if Telegram
+    supplied a callback_query_id — an update missing one is never
+    acknowledged (there is nothing to acknowledge), and this never crashes
+    on a malformed update (non-dict callback_query, or a missing/malformed
+    id/data/message/chat). Validates the inbound callback_data through the
+    same shared _build_activation_payload validator used to generate
+    outbound deep links/buttons BEFORE any database lookup, so malformed,
+    empty, invalid-character, or oversized activation payloads never reach
+    the DB. Re-validates the token/record from scratch (never trusts state
+    from when the entry message was sent) and only shows the Phase A2
+    boundary response — no BotClient creation, no ownership claim, no
+    activation_status change, no token consumption, no access-code
+    generation, no URL/media collection. Any callback_data that isn't a
+    recognised activation payload is answered and otherwise ignored.
+    """
+    if not isinstance(callback_query, dict):
+        return
+
+    callback_query_id = callback_query.get("id")
+    data = callback_query.get("data")
+    if not isinstance(data, str):
+        data = ""
+
+    if not data.startswith(_ACTIVATION_PAYLOAD_PREFIX):
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id)
+        return
+
+    token = data[len(_ACTIVATION_PAYLOAD_PREFIX):]
+
+    # Validate the payload format/length/charset BEFORE the DB lookup —
+    # the same shared validator outbound generation uses, so inbound data
+    # can never bypass a check the outbound path enforces.
+    if _build_activation_payload(token) is None:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+        return
+
+    record = _lookup_unactivated_record(token, db)
+
+    if not record:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+        return
+
+    if callback_query_id:
+        await _answer_callback_query(callback_query_id)
+
+    message = callback_query.get("message")
+    chat = message.get("chat") if isinstance(message, dict) else None
+    chat_id = chat.get("id") if isinstance(chat, dict) else None
+    if chat_id is not None:
+        await _send_message(chat_id, _ACTIVATION_CALLBACK_BOUNDARY_TEXT)
 
 
 # ---------------------------------------------------------------------------
@@ -305,9 +571,19 @@ def _upload_bytes_to_r2(storage_key: str, data: bytes, mime_type: str) -> None:
 async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session, message: dict) -> None:
     text = (text or "").strip()
 
-    if text.lower() in ("/start", "start"):
+    lowered = text.lower()
+    if lowered in ("/start", "start"):
         _SESSIONS[chat_id] = {"state": "awaiting_code"}
         await _send_message(chat_id, "Welcome to SHADZ. Please enter your access code.")
+        return
+
+    if lowered.startswith("/start "):
+        payload = text[len("/start "):].strip()
+        if payload.startswith(_ACTIVATION_PAYLOAD_PREFIX):
+            await _handle_activation_entry(chat_id, payload, db)
+        else:
+            _SESSIONS[chat_id] = {"state": "awaiting_code"}
+            await _send_message(chat_id, "Welcome to SHADZ. Please enter your access code.")
         return
 
     session = _SESSIONS.get(chat_id) or {"state": "awaiting_code"}
@@ -556,6 +832,13 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         await _send_message(chat_id, "Please reply YES to confirm or NO to cancel.")
         return
 
+    if state == "awaiting_activation_confirmation":
+        # Ordinary text here must never fall into Bot Client login — the
+        # session (and its activation_token) is preserved untouched, and the
+        # text is never treated as an access code.
+        await _send_message(chat_id, _ACTIVATION_CONFIRMATION_REMINDER_TEXT)
+        return
+
     # Unknown/expired state — restart cleanly.
     _SESSIONS[chat_id] = {"state": "awaiting_code"}
     await _send_message(chat_id, "Session expired. Please enter your access code.")
@@ -588,12 +871,8 @@ def register_bot_webhook_routes(app) -> None:
 
         body = await request.json()
         message = body.get("message") or body.get("edited_message")
-        if not message:
-            return {"ok": True}
-
-        chat = message.get("chat") or {}
-        chat_id = chat.get("id")
-        if chat_id is None:
+        callback_query = body.get("callback_query")
+        if not message and not callback_query:
             return {"ok": True}
 
         update_id = body.get("update_id")
@@ -601,6 +880,18 @@ def register_bot_webhook_routes(app) -> None:
             if update_id in _SEEN_UPDATE_IDS:
                 return {"ok": True}
             _SEEN_UPDATE_IDS.append(update_id)
+
+        if callback_query is not None:
+            try:
+                await _handle_activation_callback(callback_query, db)
+            except Exception:
+                logger.exception("Unhandled error processing callback update_id=%s", update_id)
+            return {"ok": True}
+
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+        if chat_id is None:
+            return {"ok": True}
 
         text = message.get("text") or ""
         from_user = message.get("from") or {}
