@@ -19,6 +19,15 @@ Scope:
     and sends them their access code. Does not set
     ActivationRecord.owner_client_id/activation_status/activated_at, assign a
     BotClientSlug, or collect URL/media content — those remain later phases.
+  - activation URL setup (Phase A4U): for an eligible unactivated url slug
+    only, immediately after Phase A3's access-code step, prompts the
+    customer for a destination URL, validates/normalizes it with the same
+    guards as the T1B self-service flow above, and requires explicit YES/NO
+    confirmation. The confirmed value is held only in the in-memory session
+    (never written to RedirectLink.destination_url or any other live
+    runtime) for Phase A5 to finalize. Still never touches
+    ActivationRecord.owner_client_id/activation_status/activated_at or
+    BotClientSlug. media slugs are untouched by this phase.
 
 Conversation state is held in an in-memory dict, acceptable for a single
 uvicorn process (no --workers flag in this deployment) and acceptable to lose
@@ -196,6 +205,50 @@ _ACTIVATION_MISSING_IDENTITY_TEXT = (
 # case occurred, and never a database-failure detail.
 _ACTIVATION_CLIENT_BLOCKED_TEXT = (
     "We couldn't complete this step right now. Please contact SHADZ support."
+)
+
+# ---------------------------------------------------------------------------
+# Activation Engine v1 — Phase A4U (URL Content Setup)
+#
+# For an eligible unactivated url slug only, extends the Phase A3 session
+# with two more states instead of leaving it parked at
+# _ACTIVATION_SETUP_STATE. Never writes to RedirectLink.destination_url or
+# any ActivationRecord lifecycle field — the confirmed URL is held only in
+# the in-memory session for Phase A5 to pick up.
+# ---------------------------------------------------------------------------
+
+_ACTIVATION_URL_INPUT_STATE = "awaiting_activation_url"
+_ACTIVATION_URL_CONFIRM_STATE = "awaiting_activation_url_confirmation"
+
+_ACTIVATION_URL_PROMPT_TEXT = (
+    "Now let's set up your destination.\n\n"
+    "Reply with the destination URL for this product (must start with "
+    "http:// or https://)."
+)
+_ACTIVATION_URL_INVALID_FORMAT_TEXT = (
+    "That doesn't look like a valid URL — it must start with http:// or "
+    "https://. Please try again."
+)
+# Reuses the same wording/guard as the T1B self-service flow's blocked-
+# destination check (_is_blocked_destination_url) — deliberately duplicated
+# as its own constant rather than shared, since the two flows are triggered
+# from different states and this keeps each phase's messages independently
+# editable.
+_ACTIVATION_URL_BLOCKED_TEXT = (
+    "This link cannot be used because it points back to SHADZ or an "
+    "internal address. Please send an external public link instead."
+)
+_ACTIVATION_URL_CONFIRM_PROMPT_TEXT = (
+    "Confirm destination:\n{url}\n\n"
+    "Reply YES to confirm or NO to send a different URL."
+)
+_ACTIVATION_URL_CONFIRM_INVALID_REPLY_TEXT = (
+    "Please reply YES to confirm or NO to send a different URL."
+)
+_ACTIVATION_URL_RETRY_TEXT = "No problem — please send the destination URL again."
+_ACTIVATION_URL_SAVED_TEXT = (
+    "Got it. Destination saved for setup:\n{url}\n\n"
+    "We'll continue setting up your product next."
 )
 
 
@@ -453,6 +506,12 @@ async def _handle_activation_callback(callback_query: dict, db: Session) -> None
     that comes back inactive/ambiguous/failed, creates and modifies nothing
     and replies with one generic message. Any callback_data that isn't a
     recognised activation payload is answered and otherwise ignored.
+
+    Phase A4U: for a url slug only, immediately follows the access-code
+    message with the URL-input prompt and moves the session into
+    _ACTIVATION_URL_INPUT_STATE instead of the generic _ACTIVATION_SETUP_STATE
+    placeholder. media slugs are unaffected — they still land in
+    _ACTIVATION_SETUP_STATE with no follow-up message.
     """
     if not isinstance(callback_query, dict):
         return
@@ -547,13 +606,23 @@ async def _handle_activation_callback(callback_query: dict, db: Session) -> None
             return
 
     if chat_id is not None:
-        _SESSIONS[chat_id] = {
-            "state": _ACTIVATION_SETUP_STATE,
-            "activation_token": token,
-            "bot_client_id": client.id,
-            "content_type": link.content_type,
-        }
-        await _send_message(chat_id, _ACCESS_CODE_READY_TEXT.format(code=client.access_code))
+        if link.content_type == "url":
+            _SESSIONS[chat_id] = {
+                "state": _ACTIVATION_URL_INPUT_STATE,
+                "activation_token": token,
+                "bot_client_id": client.id,
+                "content_type": link.content_type,
+            }
+            await _send_message(chat_id, _ACCESS_CODE_READY_TEXT.format(code=client.access_code))
+            await _send_message(chat_id, _ACTIVATION_URL_PROMPT_TEXT)
+        else:
+            _SESSIONS[chat_id] = {
+                "state": _ACTIVATION_SETUP_STATE,
+                "activation_token": token,
+                "bot_client_id": client.id,
+                "content_type": link.content_type,
+            }
+            await _send_message(chat_id, _ACCESS_CODE_READY_TEXT.format(code=client.access_code))
 
 
 # ---------------------------------------------------------------------------
@@ -1012,6 +1081,61 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         # session (and its activation_token) is preserved untouched, and the
         # text is never treated as an access code.
         await _send_message(chat_id, _ACTIVATION_CONFIRMATION_REMINDER_TEXT)
+        return
+
+    if state in (_ACTIVATION_URL_INPUT_STATE, _ACTIVATION_URL_CONFIRM_STATE):
+        # Re-validate the activation session from scratch on every message —
+        # never trust that the token/record are still eligible just because
+        # the session reached this state earlier (archived/activated since,
+        # or a forged/stale session). Mirrors _lookup_unactivated_record's
+        # use elsewhere in the activation flow.
+        token = session.get("activation_token")
+        record = _lookup_unactivated_record(token, db)
+        link = (
+            db.query(models.RedirectLink).filter(models.RedirectLink.slug == record.slug).first()
+            if record else None
+        )
+        if not record or not link or link.content_type != "url":
+            _SESSIONS.pop(chat_id, None)
+            await _send_message(chat_id, _ACTIVATION_INVALID_LINK_TEXT)
+            return
+
+        if state == _ACTIVATION_URL_INPUT_STATE:
+            if not (text.startswith("http://") or text.startswith("https://")):
+                await _send_message(chat_id, _ACTIVATION_URL_INVALID_FORMAT_TEXT)
+                return
+            if _is_blocked_destination_url(text):
+                await _send_message(chat_id, _ACTIVATION_URL_BLOCKED_TEXT)
+                return
+
+            normalized = text.strip()
+            session["pending_url"] = normalized
+            session["state"] = _ACTIVATION_URL_CONFIRM_STATE
+            _SESSIONS[chat_id] = session
+            await _send_message(
+                chat_id, _ACTIVATION_URL_CONFIRM_PROMPT_TEXT.format(url=normalized)
+            )
+            return
+
+        # state == _ACTIVATION_URL_CONFIRM_STATE
+        answer = text.lower()
+        if answer in ("yes", "y", "confirm"):
+            session["confirmed_destination_url"] = session.get("pending_url")
+            session.pop("pending_url", None)
+            session["state"] = _ACTIVATION_SETUP_STATE
+            _SESSIONS[chat_id] = session
+            await _send_message(
+                chat_id,
+                _ACTIVATION_URL_SAVED_TEXT.format(url=session["confirmed_destination_url"]),
+            )
+            return
+        if answer in ("no", "n", "change", "retry", "cancel"):
+            session.pop("pending_url", None)
+            session["state"] = _ACTIVATION_URL_INPUT_STATE
+            _SESSIONS[chat_id] = session
+            await _send_message(chat_id, _ACTIVATION_URL_RETRY_TEXT)
+            return
+        await _send_message(chat_id, _ACTIVATION_URL_CONFIRM_INVALID_REPLY_TEXT)
         return
 
     # Unknown/expired state — restart cleanly.

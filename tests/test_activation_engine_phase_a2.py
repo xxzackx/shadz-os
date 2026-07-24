@@ -1008,7 +1008,10 @@ class WebhookCallbackDispatchTests(unittest.TestCase):
             .first()
         )
         self.assertIsNotNone(client)
-        self.mock_send_message.assert_awaited_once_with(
+        # Phase A4U: a url slug also gets the URL-input prompt right after
+        # the access code — see tests/test_activation_engine_phase_a4u.py.
+        self.assertEqual(self.mock_send_message.await_count, 2)
+        self.mock_send_message.assert_any_await(
             42, bot_runtime._ACCESS_CODE_READY_TEXT.format(code=client.access_code)
         )
 

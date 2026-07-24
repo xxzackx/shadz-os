@@ -238,7 +238,11 @@ class HandleActivationCallbackA3Tests(unittest.TestCase):
         self._run("activate_tok-u1", chat_id=42, from_user={"id": 113})
 
         client = self.db.query(models.BotClient).filter(models.BotClient.telegram_user_id == "113").first()
-        self.mock_send_message.assert_awaited_once_with(
+        # Phase A4U: a url slug also gets the URL-input prompt right after
+        # the access code — see tests/test_activation_engine_phase_a4u.py
+        # for full coverage of that behaviour.
+        self.assertEqual(self.mock_send_message.await_count, 2)
+        self.mock_send_message.assert_any_await(
             42, bot_runtime._ACCESS_CODE_READY_TEXT.format(code=client.access_code)
         )
 
@@ -274,7 +278,10 @@ class HandleActivationCallbackA3Tests(unittest.TestCase):
         self._run("activate_tok-u1", from_user={"id": 116})
 
         self.assertEqual(self.db.query(models.BotClient).count(), 1)
-        self.mock_send_message.assert_awaited_once_with(
+        # Phase A4U: a url slug also gets the URL-input prompt right after
+        # the access code (see above).
+        self.assertEqual(self.mock_send_message.await_count, 2)
+        self.mock_send_message.assert_any_await(
             42, bot_runtime._ACCESS_CODE_READY_TEXT.format(code="EXIST1")
         )
 
@@ -414,7 +421,10 @@ class HandleActivationCallbackA3Tests(unittest.TestCase):
 
         client = self.db.query(models.BotClient).filter(models.BotClient.telegram_user_id == "126").first()
         session = bot_runtime._SESSIONS[77]
-        self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
+        # Phase A4U: a url slug now continues straight into the URL-input
+        # state instead of parking at the generic _ACTIVATION_SETUP_STATE
+        # placeholder — see tests/test_activation_engine_phase_a4u.py.
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_URL_INPUT_STATE)
         self.assertEqual(session["activation_token"], "tok-u1")
         self.assertEqual(session["bot_client_id"], client.id)
         self.assertEqual(session["content_type"], "url")
