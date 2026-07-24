@@ -468,7 +468,7 @@ This section exists to give Claude Code a compressed snapshot of current project
   - Ownership activation (linking `owner_client_id` to a real `BotClient`) — not started
   - `BotClient` creation/assignment tied to activation — not started
   - Admin UI for activation state/records — not started
-  - Wiring `create_activation_record_for_slug` / `delete_activation_lifecycle_for_slug` into any production route — not started; no creation endpoint and no `redirect_links` hard-delete path exist yet
+  - `create_activation_record_for_slug` is now wired into new-slug provisioning (`link_admin.py`'s `POST /admin/link` and `POST /admin/link/{slug}` new-slug branch — not yet committed/deployed, pending review): every newly-created `url`/`media` slug gets an `ActivationRecord`. Existing legacy `RedirectLink` rows created before this change are **not backfilled** — they still have no `ActivationRecord` and remain on legacy behaviour. Converting an existing slug's `content_type` to `url`/`media` (the `upsert_link` update branch) does **not** yet provision an `ActivationRecord` either — that is a separately tracked gap, not addressed here. `delete_activation_lifecycle_for_slug` — still not wired into any production route; no `redirect_links` hard-delete path exists yet
   - `page` slugs remain excluded from Activation Engine v1 by design
 - Proper UI login/logout system — deferred; Basic Auth popup is accepted for now
 - Role-based admin security — deferred until multi-admin use case arises

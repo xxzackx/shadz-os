@@ -8,6 +8,7 @@ import csv
 import io
 import re
 import random
+import secrets
 import string
 from datetime import datetime, timezone
 
@@ -77,6 +78,39 @@ def generate_slug(content_type: str, db: Session) -> str:
         status_code=500,
         detail=f"Could not generate a unique slug for '{content_type}' "
                f"after 10 attempts — please try again",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Activation Engine v1 Phase A2 — activation token generation
+#
+# Wires models.create_activation_record_for_slug (Phase A1) into the
+# production slug-creation routes below: every newly-created url/media slug
+# now gets an ActivationRecord so the public Activation Gateway
+# (link_public.resolve_activation_redirect) can trigger. page slugs are
+# never eligible — unchanged. Does not touch activation_status, ownership,
+# or any other Activation Engine v1 phase's behaviour.
+# ---------------------------------------------------------------------------
+
+def _generate_activation_token(db: Session) -> str:
+    """Auto-generate a unique, URL/Telegram-payload-safe activation token.
+
+    secrets.token_urlsafe uses only the [A-Za-z0-9_-] charset that
+    bot_runtime's Telegram deep-link/callback_data validator already
+    requires, so a freshly-generated token never fails that check.
+    Retries up to 10 times to avoid the (astronomically unlikely) event of
+    a collision with an existing activation_token.
+    """
+    for _ in range(10):
+        token = secrets.token_urlsafe(24)
+        exists = db.query(models.ActivationRecord).filter(
+            models.ActivationRecord.activation_token == token
+        ).first()
+        if not exists:
+            return token
+    raise HTTPException(
+        status_code=500,
+        detail="Could not generate a unique activation token after 10 attempts — please try again",
     )
 
 
@@ -215,8 +249,26 @@ def register_link_admin_routes(admin_router):
             notes=payload.notes,
         )
         db.add(link)
-        db.commit()
-        db.refresh(link)
+        try:
+            db.flush()
+
+            # Activation Engine v1 Phase A2: url/media slugs need an
+            # ActivationRecord for the public Activation Gateway to trigger.
+            if payload.content_type in ("url", "media"):
+                token = _generate_activation_token(db)
+                models.create_activation_record_for_slug(db, slug, token)
+
+            db.commit()
+            db.refresh(link)
+        except Exception:
+            # No exception is expected here in normal operation (the slug was
+            # just uniquely generated, and content_type is already verified
+            # activation-eligible) — but if one occurs, the RedirectLink and
+            # any partially-staged ActivationRecord must never be left
+            # half-committed. Roll back and re-raise unchanged; never swallow
+            # or return a false success response.
+            db.rollback()
+            raise
         return link
 
 
@@ -317,11 +369,25 @@ def register_link_admin_routes(admin_router):
         )
         db.add(link)
         try:
+            db.flush()
+
+            # Activation Engine v1 Phase A2: url/media slugs need an
+            # ActivationRecord for the public Activation Gateway to trigger.
+            if resolved_content_type in ("url", "media"):
+                token = _generate_activation_token(db)
+                models.create_activation_record_for_slug(db, slug, token)
+
             db.commit()
             db.refresh(link)
         except IntegrityError:
             db.rollback()
             raise HTTPException(status_code=409, detail=f"Slug '{slug}' already exists")
+        except Exception:
+            # Any other failure between the flush above and the commit —
+            # e.g. ActivationRecord creation — must not leave the RedirectLink
+            # half-committed. Roll back and re-raise unchanged.
+            db.rollback()
+            raise
         return link
 
 
