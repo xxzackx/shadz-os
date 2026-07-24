@@ -300,6 +300,148 @@ class ActivationUrlSetupTests(unittest.TestCase):
             "cbq-a4u", text=bot_runtime._ACTIVATION_CALLBACK_INVALID_TEXT
         )
 
+    def test_confirm_callback_fails_closed_on_activated_record(self):
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com/product")
+        record = self.db.query(models.ActivationRecord).filter(models.ActivationRecord.slug == "u1").first()
+        record.activation_status = "activated"
+        self.db.commit()
+        self.mock_send_message.reset_mock()
+        self.mock_answer.reset_mock()
+
+        self._run_a4u_callback(f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1")
+
+        self.assertNotIn(42, bot_runtime._SESSIONS)
+        self.mock_send_message.assert_not_awaited()
+        self.mock_answer.assert_awaited_once_with(
+            "cbq-a4u", text=bot_runtime._ACTIVATION_CALLBACK_INVALID_TEXT
+        )
+        self.assertEqual(self.db.query(models.BotClientSlug).count(), 0)
+        self.db.refresh(record)
+        self.assertIsNone(record.owner_client_id)
+        self.assertIsNone(record.activated_at)
+
+    def test_confirm_callback_fails_closed_when_content_type_becomes_media(self):
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com/product")
+        link = self.db.query(models.RedirectLink).filter(models.RedirectLink.slug == "u1").first()
+        link.content_type = "media"
+        self.db.commit()
+        self.mock_send_message.reset_mock()
+        self.mock_answer.reset_mock()
+
+        self._run_a4u_callback(f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1")
+
+        self.assertNotIn(42, bot_runtime._SESSIONS)
+        self.mock_send_message.assert_not_awaited()
+        self.mock_answer.assert_awaited_once_with(
+            "cbq-a4u", text=bot_runtime._ACTIVATION_CALLBACK_INVALID_TEXT
+        )
+        self.assertEqual(self.db.query(models.BotClientSlug).count(), 0)
+        record = self.db.query(models.ActivationRecord).filter(models.ActivationRecord.slug == "u1").first()
+        self.assertEqual(record.activation_status, "unactivated")
+        self.assertIsNone(record.owner_client_id)
+        self.assertIsNone(record.activated_at)
+
+    def test_confirm_callback_fails_closed_on_token_mismatch_with_session(self):
+        # A second, genuinely valid url slug/token exists — but chat 42's
+        # session holds "tok-u1", not this one. A callback must not
+        # succeed just because SOME valid record matches its token.
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com/product")
+        self._make_link_and_record("u2", "url", "tok-u2")
+        self.mock_send_message.reset_mock()
+        self.mock_answer.reset_mock()
+
+        self._run_a4u_callback(f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u2")
+
+        self.assertNotIn(42, bot_runtime._SESSIONS)
+        self.mock_send_message.assert_not_awaited()
+        self.mock_answer.assert_awaited_once_with(
+            "cbq-a4u", text=bot_runtime._ACTIVATION_CALLBACK_INVALID_TEXT
+        )
+        self.assertEqual(self.db.query(models.BotClientSlug).count(), 0)
+        record_u2 = self.db.query(models.ActivationRecord).filter(models.ActivationRecord.slug == "u2").first()
+        self.assertEqual(record_u2.activation_status, "unactivated")
+        self.assertIsNone(record_u2.owner_client_id)
+
+    def test_confirm_callback_fails_closed_for_token_belonging_to_another_chat(self):
+        # Chat 43 holds its own genuine, still-pending A4U confirmation
+        # session for a different token. A callback carrying chat 43's
+        # token but delivered against chat 42 (a different chat, whose own
+        # session holds a different token) must fail closed for chat 42
+        # and must not disturb chat 43's real session.
+        self._activate_url_slug("u1", "tok-u1", chat_id=42, telegram_id=201)
+        self._run_message(42, "https://merchant.example.com/product")
+
+        self._activate_url_slug("u2", "tok-u2", chat_id=43, telegram_id=202)
+        self._run_message(43, "https://other.example.com/product")
+        self.mock_send_message.reset_mock()
+        self.mock_answer.reset_mock()
+
+        self._run_a4u_callback(f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u2", chat_id=42)
+
+        self.assertNotIn(42, bot_runtime._SESSIONS)
+        self.mock_answer.assert_awaited_once_with(
+            "cbq-a4u", text=bot_runtime._ACTIVATION_CALLBACK_INVALID_TEXT
+        )
+        self.mock_send_message.assert_not_awaited()
+        session_43 = bot_runtime._SESSIONS[43]
+        self.assertEqual(session_43["state"], bot_runtime._ACTIVATION_URL_CONFIRM_STATE)
+        self.assertEqual(session_43["pending_url"], "https://other.example.com/product")
+        self.assertEqual(self.db.query(models.BotClientSlug).count(), 0)
+
+    def test_duplicate_confirm_callback_revalidates_db_state(self):
+        # A duplicate Confirm tap must not bypass DB revalidation just
+        # because the session already shows it as confirmed — if the slug
+        # was archived in between, the duplicate must now fail closed too.
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com/product")
+        self._run_a4u_callback(
+            f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1", callback_query_id="cbq-1"
+        )
+        link = self.db.query(models.RedirectLink).filter(models.RedirectLink.slug == "u1").first()
+        link.is_archived = True
+        self.db.commit()
+        self.mock_send_message.reset_mock()
+        self.mock_answer.reset_mock()
+
+        self._run_a4u_callback(
+            f"{bot_runtime._A4U_CONFIRM_PAYLOAD_PREFIX}tok-u1", callback_query_id="cbq-2"
+        )
+
+        self.assertNotIn(42, bot_runtime._SESSIONS)
+        self.mock_answer.assert_awaited_once_with(
+            "cbq-2", text=bot_runtime._ACTIVATION_CALLBACK_INVALID_TEXT
+        )
+        self.mock_send_message.assert_not_awaited()
+        self.assertEqual(self.db.query(models.BotClientSlug).count(), 0)
+
+    def test_duplicate_change_callback_revalidates_db_state(self):
+        # A duplicate Change URL tap must likewise not bypass DB
+        # revalidation just because the session already shows URL input.
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com/product")
+        self._run_a4u_callback(
+            f"{bot_runtime._A4U_CHANGE_PAYLOAD_PREFIX}tok-u1", callback_query_id="cbq-1"
+        )
+        record = self.db.query(models.ActivationRecord).filter(models.ActivationRecord.slug == "u1").first()
+        record.activation_status = "activated"
+        self.db.commit()
+        self.mock_send_message.reset_mock()
+        self.mock_answer.reset_mock()
+
+        self._run_a4u_callback(
+            f"{bot_runtime._A4U_CHANGE_PAYLOAD_PREFIX}tok-u1", callback_query_id="cbq-2"
+        )
+
+        self.assertNotIn(42, bot_runtime._SESSIONS)
+        self.mock_answer.assert_awaited_once_with(
+            "cbq-2", text=bot_runtime._ACTIVATION_CALLBACK_INVALID_TEXT
+        )
+        self.mock_send_message.assert_not_awaited()
+        self.assertEqual(self.db.query(models.BotClientSlug).count(), 0)
+
     # -- Change URL inline callback -------------------------------------------
 
     def test_change_url_callback_returns_to_input_and_clears_pending_and_confirmed(self):
@@ -486,10 +628,11 @@ class ActivationUrlSetupTests(unittest.TestCase):
         self._run_message(42, "YES")
         self.mock_send_message.reset_mock()
 
-        # A stray repeat of the YES message after already moving past
+        # A stray repeat of the exact YES keyword after already moving past
         # confirmation must not resurrect the URL-confirm flow, mutate the
         # DB, create any BotClient/BotClientSlug rows, reset the session to
-        # awaiting_code, or lose the confirmed URL.
+        # awaiting_code, or lose the confirmed URL — and, unlike the old
+        # broad catch-all, must not resend a message either.
         self._run_message(42, "YES")
 
         self.assertEqual(self.db.query(models.BotClient).count(), 1)
@@ -500,15 +643,33 @@ class ActivationUrlSetupTests(unittest.TestCase):
         self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
         self.assertNotEqual(session["state"], "awaiting_code")
         self.assertEqual(session["confirmed_destination_url"], "https://merchant.example.com")
-        self.mock_send_message.assert_awaited_once_with(
-            42, bot_runtime._ACTIVATION_URL_SAVED_TEXT.format(url="https://merchant.example.com")
-        )
+        self.mock_send_message.assert_not_awaited()
 
-    def test_duplicate_typed_no_after_confirmation_does_not_reset_or_lose_url(self):
-        # A stray "NO"/"cancel"-shaped message after the session has already
-        # moved to the post-confirmation placeholder is still a duplicate
-        # confirmation update, not a fresh retry — it must not resurrect
-        # URL input or discard the confirmed value.
+    def test_unrelated_text_after_confirmation_is_not_swallowed_by_a4u(self):
+        # A4U must not intercept arbitrary post-confirmation text — only
+        # the exact duplicate-confirmation keyword is special-cased.
+        # Anything else falls through to the normal state dispatcher
+        # (today: the generic "Unknown/expired state" fallback, since
+        # Phase A5 doesn't exist yet) rather than being swallowed by an
+        # A4U-specific catch-all that would block future A5 text handling.
+        self._activate_url_slug("u1", "tok-u1")
+        self._run_message(42, "https://merchant.example.com")
+        self._run_message(42, "YES")
+        self.mock_send_message.reset_mock()
+
+        self._run_message(42, "hello, what's next?")
+
+        self.mock_send_message.assert_awaited_once_with(
+            42, "Session expired. Please enter your access code."
+        )
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session, {"state": "awaiting_code"})
+
+    def test_typed_no_after_confirmation_is_not_specially_handled(self):
+        # "NO" only makes sense as a Change-URL signal from the
+        # pre-confirmation state — once already confirmed, it is ordinary
+        # unrelated text like any other, not a recognised duplicate
+        # keyword, and must not be treated as an idempotent no-op.
         self._activate_url_slug("u1", "tok-u1")
         self._run_message(42, "https://merchant.example.com")
         self._run_message(42, "YES")
@@ -516,8 +677,7 @@ class ActivationUrlSetupTests(unittest.TestCase):
         self._run_message(42, "NO")
 
         session = bot_runtime._SESSIONS[42]
-        self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
-        self.assertEqual(session["confirmed_destination_url"], "https://merchant.example.com")
+        self.assertEqual(session["state"], "awaiting_code")
 
     def test_repeated_valid_submission_does_not_duplicate_clients(self):
         self._activate_url_slug("u1", "tok-u1", telegram_id=301)

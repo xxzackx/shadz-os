@@ -25,12 +25,17 @@ Scope:
     whitespace only — no scheme/host/path canonicalization) with the same
     guards as the T1B self-service flow above, then asks for confirmation
     primarily via an inline "Confirm"/"Change URL" keyboard (typed YES/NO
-    remains as a compatibility fallback). Both the inline callbacks and the
-    typed fallback are state-based idempotent: a repeat Confirm/YES after
-    the session already advanced past confirmation is a safe no-op — it
-    never re-triggers a DB write, never resets the session to
-    awaiting_code, and never loses the confirmed value. The confirmed value
-    is held only in the in-memory session (never written to
+    remains as a compatibility fallback). Both the inline callbacks and a
+    repeat typed Confirm/YES are state-based idempotent: revalidated
+    against DB truth (_lookup_unactivated_url_link) every time, never
+    trusting session state alone, and once already confirmed a duplicate
+    is a safe no-op — it never re-triggers a DB write, never resets the
+    session to awaiting_code, and never loses the confirmed value. A4U
+    deliberately does not intercept arbitrary post-confirmation text —
+    only the explicit duplicate-confirmation keyword is special-cased, so
+    unrelated text remains available to Phase A5 (not yet implemented) or
+    the normal state dispatcher instead of being swallowed. The confirmed
+    value is held only in the in-memory session (never written to
     RedirectLink.destination_url or any other live runtime) for Phase A5 to
     finalize. Still never touches
     ActivationRecord.owner_client_id/activation_status/activated_at or
@@ -454,6 +459,29 @@ def _lookup_unactivated_record(token: str, db: Session) -> "models.ActivationRec
     return record
 
 
+def _lookup_unactivated_url_link(token: str, db: Session) -> "models.RedirectLink | None":
+    """Shared Phase A4U guard: re-validates from scratch that a token still
+    resolves to an unactivated, non-archived, url-content-type slug.
+
+    Builds on _lookup_unactivated_record (unknown/activated/archived
+    checks) and adds the content_type == "url" requirement A4U needs.
+    Every A4U entry point — the typed URL-input/confirmation branches in
+    _handle_message and every path through _handle_a4u_confirmation_callback
+    (including both duplicate-callback shortcuts) — calls this instead of
+    inlining the same record+link+content_type check, so a slug that
+    becomes archived, gets activated, or has its content_type changed
+    between the confirmation prompt and any later message/callback is
+    caught uniformly, never trusting session state alone.
+    """
+    record = _lookup_unactivated_record(token, db)
+    if not record:
+        return None
+    link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == record.slug).first()
+    if not link or link.content_type != "url":
+        return None
+    return link
+
+
 async def _handle_activation_entry(chat_id: int, payload: str, db: Session) -> None:
     """Handle a /start deep-link payload carrying an activation token.
 
@@ -702,22 +730,34 @@ async def _handle_a4u_confirmation_callback(callback_query: dict, db: Session) -
     supplied a callback_query_id. Never crashes on a malformed update
     (non-dict callback_query, missing id/data/message/chat).
 
+    Every path — the two duplicate-safety shortcuts AND the ordinary
+    confirm/change path — first revalidates the token against DB truth via
+    the shared _lookup_unactivated_url_link(token, db): the linked
+    ActivationRecord must still be unactivated, the RedirectLink must still
+    exist and not be archived, and its content_type must still be "url".
+    This is re-checked from scratch on every callback, so a slug that gets
+    archived, activated, or switched to media between the confirmation
+    prompt and any later callback (including a duplicate tap) is caught —
+    duplicate delivery never bypasses this by trusting session state alone.
+
     Duplicate-safety (state-based, not update_id-based — this must hold
-    even if Telegram redelivers the tap under a different update_id):
+    even if Telegram redelivers the tap under a different update_id), only
+    reached once the DB-truth check above has already passed:
       - A repeat Confirm tap once the session already advanced past
         confirmation (same token, state == _ACTIVATION_SETUP_STATE, a
         confirmed_destination_url already stored) is a no-op: answers the
         callback and returns, without touching the DB, the session state,
-        or the stored value.
+        or the stored value, and without sending a message.
       - A repeat Change URL tap once the session already returned to URL
         input (same token, state == _ACTIVATION_URL_INPUT_STATE) is
         likewise a no-op.
-      - Anything else re-validates the token/record/content_type from
-        scratch and requires the session to currently be in
-        _ACTIVATION_URL_CONFIRM_STATE for this exact token — an
-        archived/already-activated/wrong-type/stale/missing session fails
-        closed (clears the session, answers with the generic invalid-link
-        callback text) exactly like Phase A2/A3's existing guards.
+      - Anything else requires the session to currently be in
+        _ACTIVATION_URL_CONFIRM_STATE for this exact token — a
+        token-mismatched/cross-chat/stale/missing session fails closed
+        (clears the session, answers with the generic invalid-link
+        callback text) exactly like Phase A2/A3's existing guards. The
+        DB-truth check above already covers archived/already-
+        activated/wrong-type rejection for this branch too.
 
     Confirm: stores the validated, trimmed pending_url as
     confirmed_destination_url in the in-memory session only, moves the
@@ -759,14 +799,26 @@ async def _handle_a4u_confirmation_callback(callback_query: dict, db: Session) -
     chat = message.get("chat") if isinstance(message, dict) else None
     chat_id = chat.get("id") if isinstance(chat, dict) else None
     session = _SESSIONS.get(chat_id) if chat_id is not None else None
+    session_matches_token = session is not None and session.get("activation_token") == token
+
+    # DB-truth check FIRST — applies uniformly to both duplicate shortcuts
+    # below and the ordinary confirm/change path. Never trust session state
+    # alone: a stale/duplicate tap must fail closed just like a fresh one
+    # if the slug has since been archived, activated, or changed type.
+    link = _lookup_unactivated_url_link(token, db)
+    if link is None:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+        if chat_id is not None:
+            _SESSIONS.pop(chat_id, None)
+        return
 
     # Duplicate-safety: a repeat Confirm tap after the session already
     # advanced past confirmation (same token) is a no-op — never re-answer
     # with an error, never touch the DB, never reset/lose the confirmed URL.
     if (
         action == "confirm"
-        and session is not None
-        and session.get("activation_token") == token
+        and session_matches_token
         and session.get("state") == _ACTIVATION_SETUP_STATE
         and "confirmed_destination_url" in session
     ):
@@ -778,27 +830,14 @@ async def _handle_a4u_confirmation_callback(callback_query: dict, db: Session) -
     # returned to URL input (same token) is likewise a no-op.
     if (
         action == "change"
-        and session is not None
-        and session.get("activation_token") == token
+        and session_matches_token
         and session.get("state") == _ACTIVATION_URL_INPUT_STATE
     ):
         if callback_query_id:
             await _answer_callback_query(callback_query_id)
         return
 
-    record = _lookup_unactivated_record(token, db)
-    link = (
-        db.query(models.RedirectLink).filter(models.RedirectLink.slug == record.slug).first()
-        if record else None
-    )
-    valid_session = (
-        record is not None
-        and link is not None
-        and link.content_type == "url"
-        and session is not None
-        and session.get("activation_token") == token
-        and session.get("state") == _ACTIVATION_URL_CONFIRM_STATE
-    )
+    valid_session = session_matches_token and session.get("state") == _ACTIVATION_URL_CONFIRM_STATE
     if not valid_session:
         if callback_query_id:
             await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
@@ -1285,31 +1324,31 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         await _send_message(chat_id, _ACTIVATION_CONFIRMATION_REMINDER_TEXT)
         return
 
-    if state == _ACTIVATION_SETUP_STATE and "confirmed_destination_url" in session:
-        # Duplicate-safety: any further message (typed or otherwise) after a
-        # successful A4U URL confirmation must not fall into the generic
-        # "Unknown/expired state" reset below — that would wipe the
-        # confirmed value and drop the customer back to awaiting_code. A
-        # media-slug session in this same placeholder state never has
-        # confirmed_destination_url set, so this branch is a no-op for it.
-        await _send_message(
-            chat_id, _ACTIVATION_URL_SAVED_TEXT.format(url=session["confirmed_destination_url"])
-        )
+    if (
+        state == _ACTIVATION_SETUP_STATE
+        and "confirmed_destination_url" in session
+        and text.lower() in ("yes", "y", "confirm")
+    ):
+        # Duplicate-safety: a stray repeat of the confirmation keyword after
+        # the session already advanced past confirmation is a safe no-op —
+        # no DB write, no message, no session change, confirmed URL kept.
+        # Deliberately narrow: this must NOT become a catch-all for every
+        # message in this state — unrelated text is intentionally left
+        # unhandled here so it remains available to Phase A5 (not yet
+        # implemented) or the normal state dispatcher below, instead of
+        # being swallowed by an A4U-specific branch that would otherwise
+        # block all future text handling indefinitely.
         return
 
     if state in (_ACTIVATION_URL_INPUT_STATE, _ACTIVATION_URL_CONFIRM_STATE):
         # Re-validate the activation session from scratch on every message —
         # never trust that the token/record are still eligible just because
         # the session reached this state earlier (archived/activated since,
-        # or a forged/stale session). Mirrors _lookup_unactivated_record's
-        # use elsewhere in the activation flow.
+        # or a forged/stale session). Shared with the A4U callback handler
+        # via _lookup_unactivated_url_link.
         token = session.get("activation_token")
-        record = _lookup_unactivated_record(token, db)
-        link = (
-            db.query(models.RedirectLink).filter(models.RedirectLink.slug == record.slug).first()
-            if record else None
-        )
-        if not record or not link or link.content_type != "url":
+        link = _lookup_unactivated_url_link(token, db)
+        if link is None:
             _SESSIONS.pop(chat_id, None)
             await _send_message(chat_id, _ACTIVATION_INVALID_LINK_TEXT)
             return
