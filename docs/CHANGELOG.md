@@ -2,6 +2,56 @@
 
 ---
 
+## Activation Engine v1 Phase A1 — Activation Data Foundation
+
+**Date:** 2026-07-24
+**Status:** Completed and closed. Data foundation only — no activation routing, Telegram bot activation flow, admin UI, or customer-facing behavior yet.
+
+**Runtime/test commit:**
+- `54e0801` — Add Activation Engine data foundation
+
+**Merged production commit:**
+- `745d304` — Merge pull request #1 from `claude/activation-engine-v1-phase-a1-69e931`
+
+**Files changed:** `models.py`, `tests/test_activation_engine.py` (new)
+
+**Delivered:**
+- New `ActivationRecord` model / `activation_records` table: `id`, `slug` (unique, FK → `redirect_links.slug`), `activation_status` (default `unactivated`, not null), `activation_token` (unique, not null), `owner_client_id` (nullable, FK → `bot_clients.id`), `activated_at` (nullable). `content_type` is never duplicated onto this table — it always comes from the corresponding `redirect_links` row.
+- Database-level `CheckConstraint` (`ck_activation_records_activation_status`) restricting `activation_status` to `'unactivated'` / `'activated'` — enforced by SQLite itself, not just application code, and proven by a test that asserts `IntegrityError` on an invalid value.
+- `create_activation_record_for_slug(db, slug, activation_token)` — looks up the existing `RedirectLink` by slug, rejects a missing slug or a `content_type` other than `url`/`media` (in particular rejects `page`) with `ValueError`, then stages (`add`/`flush`, no commit) a new `unactivated` `ActivationRecord` with no owner and no `activated_at`. Does not generate tokens, does not create a `BotClient`, does not assign a `BotClientSlug`.
+- `delete_activation_lifecycle_for_slug(db, slug)` — stages deletion of the slug's `ActivationRecord` (if any) and its `BotClientSlug` assignment (if any) within the caller's existing transaction; never deletes the `BotClient` row; never touches `redirect_links`. No internal commit/rollback — both deletes are only durable (or discarded) together, by whatever commit/rollback the caller performs.
+- New `tests/test_activation_engine.py` — 17 stdlib-`unittest` tests, isolated in-memory SQLite (no `main.py`, no real `shadz.db`), covering: table/model creation, default `unactivated` status, nullable `owner_client_id`/`activated_at` before activation, DB-level rejection of an invalid `activation_status`, unique `slug` and unique `activation_token` constraints, the creation helper for `url` and `media` slugs, `page`-slug and nonexistent-slug rejection, no-auto-commit behavior (proven via same-session rollback rather than a brittle cross-session check, since SQLite `:memory:` shares its underlying connection across sessions on one thread), activation-record and `BotClientSlug` cleanup on the lifecycle helper, `BotClient` survival after cleanup, and confirmation that existing `url`/`media`/`page` `redirect_links` rows are unaffected by the new table.
+
+**Important limitations (by design for Phase A1):**
+- SQLite foreign-key enforcement (`PRAGMA foreign_keys=ON`) is not globally enabled — consistent with the rest of this schema (`slug_media`, `page_slug_attachments`, `bot_client_slugs`). The `slug → redirect_links.slug` and `owner_client_id → bot_clients.id` foreign-key definitions are present in the SQLite table schema; SQLite is not currently enforcing them because `PRAGMA foreign_keys=ON` is not enabled globally.
+- `delete_activation_lifecycle_for_slug` is not wired into any production route or call site, because SHADZ OS currently has no hard-delete path for `redirect_links` — slugs are only archived/restored (`link_admin.py`), never hard-deleted. The helper exists and is tested so it is ready for whichever future path performs that deletion.
+- Activation routing, token consumption, ownership activation, `BotClient` creation/assignment tied to activation, admin UI, and the Telegram activation flow are explicitly out of scope for Phase A1.
+- `page` slugs remain excluded from Activation Engine v1 — only `url` and `media` are activation-eligible.
+
+**Safety boundaries:** no redirect, Telegram bot, admin UI, Page Engine, Nginx, Cloudflare, R2, or deployment-architecture changes. No existing route, model, or dispatch behavior modified — `activation_records` is a fully additive new table.
+
+**Verification:**
+- Local: 17/17 focused tests passed (`python3 -m unittest tests.test_activation_engine`); full suite 56/56 passed (`python3 -m unittest discover -s tests`); `git diff --check` clean
+- Pushed branch `claude/activation-engine-v1-phase-a1-69e931` to `origin`; merged into `master` via PR #1 (`745d304`)
+- VPS `HEAD` and `origin/master` both confirmed at `745d304`; `shadz.service` restarted; local `/health` readiness wait passed before public checks
+- Public checks passed: `/health` 200, `/` 200, `/admin` unauthenticated 401
+- Production SQLite confirmed: `activation_records` table exists with columns `id`, `slug`, `activation_status`, `activation_token`, `owner_client_id`, `activated_at`; `CHECK (activation_status IN ('unactivated', 'activated'))` present; unique indexes present on `slug` and `activation_token`; foreign-key definitions present for `slug → redirect_links.slug` and `owner_client_id → bot_clients.id`; initial production `activation_records` row count is 0
+
+**Touched:** `models.py`, `tests/test_activation_engine.py` (new)
+**Database:** additive migration — new `activation_records` table only; no existing table altered
+**Schema:** `ActivationRecord` added to `models.py`; no other model changed
+**Backend/routes/API:** unchanged — no new endpoints
+**Authentication:** untouched
+**Redirect/Media/Page Engine dispatch:** untouched
+**Telegram Bot:** untouched
+**Admin UI:** untouched
+
+**Final production runtime state:** `745d304`
+
+**Next roadmap phase:** activation routing, token consumption, ownership activation, and the Telegram/admin activation flow are not yet started.
+
+---
+
 ## Page Engine v1 Phase 4N — Production Polish / v1 Closure
 
 **Date:** 2026-07-15
