@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Integer, BigInteger, Text, Boolean, ForeignKey
+from sqlalchemy import String, DateTime, Integer, BigInteger, Text, Boolean, ForeignKey, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from database import Base
 
@@ -219,6 +219,89 @@ class BotClientSlug(Base):
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+
+
+# ── Activation Engine v1 — Phase A1 (Activation Data Foundation) ───────────
+
+ACTIVATION_STATUSES = {"unactivated", "activated"}
+
+
+class ActivationRecord(Base):
+    """One row per activation-enabled slug (url or media content_type only).
+
+    content_type is never duplicated here — it always comes from the
+    corresponding redirect_links row. This table only tracks activation
+    lifecycle state (see ACTIVATION_STATUSES) and the eventual owning
+    BotClient. Activation routing, token consumption, and admin/bot UI are
+    out of scope for Phase A1 — this is a data foundation only.
+    """
+    __tablename__ = "activation_records"
+    __table_args__ = (
+        CheckConstraint(
+            "activation_status IN ('unactivated', 'activated')",
+            name="ck_activation_records_activation_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    slug: Mapped[str] = mapped_column(
+        String, ForeignKey("redirect_links.slug"), unique=True, index=True, nullable=False
+    )
+    activation_status: Mapped[str] = mapped_column(String, default="unactivated", nullable=False)
+    activation_token: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    owner_client_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("bot_clients.id"), nullable=True
+    )
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+_ACTIVATION_ELIGIBLE_CONTENT_TYPES = {"url", "media"}
+
+
+def create_activation_record_for_slug(db, slug: str, activation_token: str) -> "ActivationRecord":
+    """Build and stage (add/flush, not commit) an ActivationRecord for a slug.
+
+    Looks up the existing RedirectLink by exact slug and raises ValueError if
+    it does not exist, or if its content_type is not "url" or "media" (in
+    particular, "page" slugs are rejected). The created record always starts
+    unactivated with no owner and no activation timestamp — activation itself
+    is out of scope for Phase A1. Does not commit; the caller controls the
+    transaction. Does not generate tokens, create a BotClient, or assign a
+    BotClientSlug.
+    """
+    link = db.query(RedirectLink).filter(RedirectLink.slug == slug).first()
+    if not link:
+        raise ValueError(f"Slug '{slug}' does not exist")
+    if link.content_type not in _ACTIVATION_ELIGIBLE_CONTENT_TYPES:
+        raise ValueError(
+            f"Slug '{slug}' has content_type '{link.content_type}', "
+            f"which is not activation-eligible (only url/media are)"
+        )
+
+    record = ActivationRecord(slug=slug, activation_token=activation_token)
+    db.add(record)
+    db.flush()
+    return record
+
+
+def delete_activation_lifecycle_for_slug(db, slug: str) -> None:
+    """Stage deletion of activation-related rows for a slug being hard-deleted.
+
+    Queues deletion of the slug's ActivationRecord (if any) and its
+    BotClientSlug assignment (if any) within the caller's existing
+    transaction. Never deletes the BotClient itself, and never touches the
+    redirect_links row — callers are responsible for the actual slug
+    deletion. This function does not commit or rollback; both deletes are
+    only synchronous ORM-session operations against the same uncommitted
+    transaction, and are only made durable (or discarded together) by
+    whatever commit/rollback the caller performs afterward — there is no
+    point at which the caller can safely commit between the two calls
+    without risking a partially-applied cleanup. No hard-delete path for
+    redirect_links exists yet in this codebase (slugs are only archived);
+    this helper is ready for whichever future path performs that deletion.
+    """
+    db.query(ActivationRecord).filter(ActivationRecord.slug == slug).delete()
+    db.query(BotClientSlug).filter(BotClientSlug.slug == slug).delete()
 
 
 class SlugMedia(Base):
