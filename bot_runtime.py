@@ -1,4 +1,4 @@
-"""Telegram Bot Runtime — Phase T1B + T1C + Activation Engine v1 Phase A2.
+"""Telegram Bot Runtime — Phase T1B + T1C + Activation Engine v1 Phase A2 + A3.
 
 Webhook-based customer self-service chat flow. Customers authenticate with the
 plain-text access_code issued via the admin Bot Engine (bot_admin.py), then
@@ -13,9 +13,12 @@ Scope:
     flow, uploaded to R2, and swapped in as the new active SlugMedia record.
   - activation entry (Phase A2): builds the Telegram deep link used by the
     public slug resolver's Activation Gateway, and recognises the resulting
-    /start payload to show the activation entry message. Does not create a
-    BotClient, assign ownership, mark a record activated, or issue an access
-    code — that is out of scope for Phase A2.
+    /start payload to show the activation entry message.
+  - activation client resolution (Phase A3): on the "Activate Now" callback,
+    resolves or creates the BotClient owning the customer's Telegram identity
+    and sends them their access code. Does not set
+    ActivationRecord.owner_client_id/activation_status/activated_at, assign a
+    BotClientSlug, or collect URL/media content — those remain later phases.
 
 Conversation state is held in an in-memory dict, acceptable for a single
 uvicorn process (no --workers flag in this deployment) and acceptable to lose
@@ -37,6 +40,9 @@ from sqlalchemy.orm import Session
 
 import models
 from database import get_db
+# Reuses the one existing access-code generator instead of adding a second —
+# bot_admin does not import this module, so this is not circular.
+from bot_admin import _generate_access_code
 # T1C intentionally reuses these existing media_admin storage helpers instead
 # of extracting a shared module — avoids a broad refactor for a single
 # consumer. Future cleanup: move into a shared media storage module if a
@@ -150,12 +156,6 @@ _ACTIVATION_ENTRY_TEXT = (
     "Activate it now to connect this product to your account and unlock "
     "self-service management."
 )
-# The Phase A2 boundary response shown after "Activate Now" is pressed and
-# the token/record are re-validated. Deliberately generic — no promise of a
-# specific next step, since that belongs to a later Activation Engine phase.
-_ACTIVATION_CALLBACK_BOUNDARY_TEXT = (
-    "Activation confirmation isn't available yet. Please check back soon."
-)
 _ACTIVATION_CALLBACK_INVALID_TEXT = "This activation link is no longer valid."
 # Single generic response for every invalid /start activation payload
 # (empty/malformed/oversized token, unknown token, already-activated token,
@@ -170,6 +170,32 @@ _ACTIVATION_INVALID_LINK_TEXT = (
 # button instead of falling into (or being mistaken for) Bot Client login.
 _ACTIVATION_CONFIRMATION_REMINDER_TEXT = (
     'Please tap "Activate Now" to continue activating your SHADZ product.'
+)
+
+# Phase A3 continuation state — placeholder for the URL/media setup phases
+# to pick up. A3 itself never collects URL/media content.
+_ACTIVATION_SETUP_STATE = "awaiting_activation_setup"
+
+# Sent once the customer's BotClient is resolved/created and an access code
+# is available. Deliberately does not claim the NFC product/slug itself is
+# activated yet — activation_status only transitions in a later phase.
+_ACCESS_CODE_READY_TEXT = (
+    "Your SHADZ client access is ready.\n\n"
+    "Access code: {code}\n\n"
+    "We'll continue setting up your product next."
+)
+# Telegram always supplies callback_query.from with a numeric id — this only
+# fires on a malformed/absent update, and deliberately doesn't distinguish
+# that from other rejection cases below.
+_ACTIVATION_MISSING_IDENTITY_TEXT = (
+    "We couldn't verify your Telegram account. Please try again from your "
+    "SHADZ product link, or contact SHADZ support."
+)
+# Single generic response for both "matched an inactive BotClient" and
+# "matched more than one BotClient" — deliberately does not reveal which
+# case occurred, and never a database-failure detail.
+_ACTIVATION_CLIENT_BLOCKED_TEXT = (
+    "We couldn't complete this step right now. Please contact SHADZ support."
 )
 
 
@@ -286,6 +312,16 @@ async def _answer_callback_query(callback_query_id: str, text: str | None = None
 
 
 def _lookup_unactivated_record(token: str, db: Session) -> "models.ActivationRecord | None":
+    """Look up an eligible unactivated ActivationRecord for a token.
+
+    Rejects a missing/empty token, an unknown token, and an already-activated
+    record. Phase A3 addition: also rejects a record whose slug has since
+    been archived — archiving a RedirectLink never touches its
+    ActivationRecord, so an old Telegram deep link could otherwise bypass
+    the archived check the public /{slug} route already enforces. Shared by
+    both _handle_activation_entry and _handle_activation_callback, so the
+    guard applies at first-scan entry and at the "Activate Now" callback.
+    """
     if not token:
         return None
     record = (
@@ -294,6 +330,9 @@ def _lookup_unactivated_record(token: str, db: Session) -> "models.ActivationRec
         .first()
     )
     if not record or record.activation_status != "unactivated":
+        return None
+    link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == record.slug).first()
+    if not link or link.is_archived is True:
         return None
     return record
 
@@ -323,6 +362,74 @@ async def _handle_activation_entry(chat_id: int, payload: str, db: Session) -> N
     await _send_message(chat_id, _ACTIVATION_ENTRY_TEXT, reply_markup=markup)
 
 
+def _default_bot_client_name(
+    first_name: str | None, last_name: str | None, username: str | None, telegram_user_id: str
+) -> str:
+    """Build a client_name for a newly self-service-created BotClient.
+
+    Order: "first_name last_name" > "@username" > "Telegram user <id>".
+    Never used to rename an existing client — only at creation time.
+    """
+    name_parts = [p.strip() for p in (first_name, last_name) if p and p.strip()]
+    if name_parts:
+        return " ".join(name_parts)
+    if username and username.strip():
+        return f"@{username.strip()}"
+    return f"Telegram user {telegram_user_id}"
+
+
+def _resolve_or_create_bot_client_for_telegram(
+    db: Session,
+    telegram_user_id: str,
+    telegram_username: str | None,
+    first_name: str | None,
+    last_name: str | None,
+) -> tuple[str, "models.BotClient | None"]:
+    """Resolve the BotClient owning this Telegram identity, or create one.
+
+    Identity is keyed strictly on the numeric Telegram user_id — username,
+    first_name, and last_name are profile fields only and are never used for
+    matching (usernames can change; they are not identity).
+
+    Returns (status, client):
+      - ("reused", client): exactly one existing active match — returned
+        untouched, access code never regenerated, profile fields never
+        rewritten even if the Telegram profile changed since last time.
+      - ("created", client): no existing match — a new active BotClient is
+        staged (add/flush, not committed) with an access code from the one
+        existing bot_admin generator.
+      - ("inactive", None): exactly one existing match and it is inactive —
+        never reactivated, and no replacement client is created.
+      - ("ambiguous", None): more than one existing match regardless of
+        active state — fails closed, creates nothing.
+
+    Uses add()/flush() only; the caller owns commit()/rollback().
+    """
+    matches = (
+        db.query(models.BotClient)
+        .filter(models.BotClient.telegram_user_id == telegram_user_id)
+        .all()
+    )
+    if len(matches) > 1:
+        return "ambiguous", None
+    if len(matches) == 1:
+        existing = matches[0]
+        if not existing.is_active:
+            return "inactive", None
+        return "reused", existing
+
+    client = models.BotClient(
+        client_name=_default_bot_client_name(first_name, last_name, telegram_username, telegram_user_id),
+        access_code=_generate_access_code(db),
+        telegram_user_id=telegram_user_id,
+        telegram_username=telegram_username,
+        is_active=True,
+    )
+    db.add(client)
+    db.flush()
+    return "created", client
+
+
 async def _handle_activation_callback(callback_query: dict, db: Session) -> None:
     """Handle the "Activate Now" inline-button press.
 
@@ -335,10 +442,16 @@ async def _handle_activation_callback(callback_query: dict, db: Session) -> None
     outbound deep links/buttons BEFORE any database lookup, so malformed,
     empty, invalid-character, or oversized activation payloads never reach
     the DB. Re-validates the token/record from scratch (never trusts state
-    from when the entry message was sent) and only shows the Phase A2
-    boundary response — no BotClient creation, no ownership claim, no
-    activation_status change, no token consumption, no access-code
-    generation, no URL/media collection. Any callback_data that isn't a
+    from when the entry message was sent).
+
+    Phase A3: once the token/record are re-validated, resolves or creates
+    the BotClient for the customer's Telegram identity
+    (_resolve_or_create_bot_client_for_telegram) and sends the access code.
+    Still does not touch activation_status, activated_at,
+    ActivationRecord.owner_client_id, or BotClientSlug — those remain later
+    phases. A missing/malformed numeric Telegram user id, or a resolution
+    that comes back inactive/ambiguous/failed, creates and modifies nothing
+    and replies with one generic message. Any callback_data that isn't a
     recognised activation payload is answered and otherwise ignored.
     """
     if not isinstance(callback_query, dict):
@@ -377,8 +490,70 @@ async def _handle_activation_callback(callback_query: dict, db: Session) -> None
     message = callback_query.get("message")
     chat = message.get("chat") if isinstance(message, dict) else None
     chat_id = chat.get("id") if isinstance(chat, dict) else None
+
+    from_user = callback_query.get("from")
+    telegram_user_id = from_user.get("id") if isinstance(from_user, dict) else None
+    if (
+        not isinstance(telegram_user_id, int)
+        or isinstance(telegram_user_id, bool)
+        or telegram_user_id <= 0
+    ):
+        if chat_id is not None:
+            await _send_message(chat_id, _ACTIVATION_MISSING_IDENTITY_TEXT)
+        return
+
+    # Re-fetch the slug's content_type fresh — _lookup_unactivated_record
+    # already proved the RedirectLink exists and isn't archived above.
+    link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == record.slug).first()
+    if not link:
+        if chat_id is not None:
+            await _send_message(chat_id, _ACTIVATION_MISSING_IDENTITY_TEXT)
+        return
+
+    try:
+        status, client = _resolve_or_create_bot_client_for_telegram(
+            db,
+            telegram_user_id=str(telegram_user_id),
+            telegram_username=from_user.get("username"),
+            first_name=from_user.get("first_name"),
+            last_name=from_user.get("last_name"),
+        )
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to resolve/create BotClient for activation token")
+        if chat_id is not None:
+            _SESSIONS.pop(chat_id, None)
+            await _send_message(chat_id, _ACTIVATION_CLIENT_BLOCKED_TEXT)
+        return
+
+    if status in ("inactive", "ambiguous"):
+        db.rollback()
+        if chat_id is not None:
+            _SESSIONS.pop(chat_id, None)
+            await _send_message(chat_id, _ACTIVATION_CLIENT_BLOCKED_TEXT)
+        return
+
+    # A reused client is already committed — only a newly created client has
+    # anything pending to persist.
+    if status == "created":
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to commit BotClient resolution for activation token")
+            if chat_id is not None:
+                _SESSIONS.pop(chat_id, None)
+                await _send_message(chat_id, _ACTIVATION_CLIENT_BLOCKED_TEXT)
+            return
+
     if chat_id is not None:
-        await _send_message(chat_id, _ACTIVATION_CALLBACK_BOUNDARY_TEXT)
+        _SESSIONS[chat_id] = {
+            "state": _ACTIVATION_SETUP_STATE,
+            "activation_token": token,
+            "bot_client_id": client.id,
+            "content_type": link.content_type,
+        }
+        await _send_message(chat_id, _ACCESS_CODE_READY_TEXT.format(code=client.access_code))
 
 
 # ---------------------------------------------------------------------------

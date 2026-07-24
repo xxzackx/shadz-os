@@ -732,7 +732,9 @@ class HandleActivationCallbackTests(unittest.TestCase):
             "message": {"chat": {"id": chat_id}},
         }
 
-    def test_valid_callback_answers_query_and_sends_boundary_response(self):
+    def test_valid_callback_without_telegram_identity_answers_query_and_rejects(self):
+        # This fixture's callback_query carries no "from" block — Phase A3
+        # must fail safe (no BotClient) rather than crash or guess an identity.
         self._make_link_and_record("u1", "url", "tok-u1")
 
         asyncio.run(
@@ -743,7 +745,7 @@ class HandleActivationCallbackTests(unittest.TestCase):
 
         self.mock_answer.assert_awaited_once_with("cbq1")
         self.mock_send_message.assert_awaited_once_with(
-            42, bot_runtime._ACTIVATION_CALLBACK_BOUNDARY_TEXT
+            42, bot_runtime._ACTIVATION_MISSING_IDENTITY_TEXT
         )
 
     def test_valid_callback_performs_no_a3_actions(self):
@@ -990,13 +992,24 @@ class WebhookCallbackDispatchTests(unittest.TestCase):
                 "id": "cbq1",
                 "data": "activate_tok-u1",
                 "message": {"chat": {"id": 42}},
+                "from": {"id": 555, "username": "shopper1", "first_name": "Sam"},
             },
         })
 
         self.assertEqual(response.status_code, 200)
         self.mock_answer.assert_awaited_once_with("cbq1")
+
+        # Phase A3: a well-formed callback with a real Telegram identity now
+        # resolves/creates a BotClient and sends its access code, instead of
+        # the superseded Phase A2 boundary message.
+        client = (
+            self.db.query(models.BotClient)
+            .filter(models.BotClient.telegram_user_id == "555")
+            .first()
+        )
+        self.assertIsNotNone(client)
         self.mock_send_message.assert_awaited_once_with(
-            42, bot_runtime._ACTIVATION_CALLBACK_BOUNDARY_TEXT
+            42, bot_runtime._ACCESS_CODE_READY_TEXT.format(code=client.access_code)
         )
 
     def test_webhook_rejects_callback_without_valid_secret(self):
