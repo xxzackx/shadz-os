@@ -2,6 +2,42 @@
 
 ---
 
+## Activation Engine v1 Phase A4M — Media Content Setup
+
+**Status:** Completed, deployed, and production-verified. **Phase A4M is now complete and closed.**
+
+**Runtime commit:**
+- `08c0ac0` — Add Activation Engine Phase A4M media setup
+
+**Files changed:** `bot_runtime.py`, `tests/test_activation_engine_phase_a3.py`, `tests/test_activation_engine_phase_a4u.py`, `tests/test_activation_engine_phase_a4m.py` (new)
+
+**Delivered:**
+- For an eligible unactivated `media` slug only, Phase A3 now automatically routes into two new in-memory session states (`awaiting_activation_media`, `awaiting_activation_media_confirmation`) instead of the generic post-A3 placeholder — the customer is never asked to choose between URL and media.
+- Accepts the same supported Telegram media categories already recognised elsewhere in SHADZ (photo, supported document media, video, animation/GIF-compatible input) via the existing extraction/allowlist helpers — no new MIME logic introduced.
+- Validates Telegram file ID, resolved media type, MIME type (mapped back to the same media type), filename, and reported file size (when present, must be a non-boolean positive integer at or under the existing max-size boundary) before ever storing anything.
+- Pending media is held only as a serializable in-memory dict, `session["pending_activation_media"]` — never downloaded, never uploaded, never a database row.
+- Confirm and Change Media are inline-button-only callbacks that revalidate current database truth (unactivated, non-archived, still `media`) before acting, and are safe against duplicate delivery.
+- Confirm moves the validated dict to `session["confirmed_activation_media"]` and enters the existing temporary Phase A5 handoff state; Change Media clears both pending and confirmed metadata and returns to media input.
+- **Zero-persistence boundary:** no Telegram file download, no R2 upload, no `MediaAsset` row, no `SlugMedia` row, no `BotClientSlug` assignment, no `activation_status`/`owner_client_id`/`activated_at` change. Phase A5 will perform the actual download, R2 storage, media attachment, ownership assignment, and activation completion.
+
+**Verification:**
+- 50/50 focused tests passed (`tests/test_activation_engine_phase_a4m.py`)
+- 212/212 Activation Engine regression tests passed (A2 + A3 + A4U + A4M)
+- 293/293 full suite passed
+- Deployed to production (`shadz.service` restarted, local `/health` then public `/health` 200, public `/admin` unauthenticated 401) and live-tested end to end on slug `media-3mlapv`: automatic A4M entry, media prompt, unsupported-input retry, Confirm/Change Media buttons, duplicate-Confirm safety, and `/start` abandonment safety all confirmed with no activation-completed message shown
+- Production DB boundary check on `media-3mlapv` confirmed `activation_status = unactivated`, `owner_client_id = NULL`, `activated_at = NULL`, and zero `bot_client_slugs`/`slug_media` rows for the slug — the record remained unactivated and unowned throughout live testing. Repository-wide `media_assets`/`slug_media` totals observed during this same one-time check are a snapshot, not a before/after baseline; the zero-persistence guarantee rests on the implementation and test coverage (no download/upload/DB-write call anywhere in the A4M code path), not on the totals alone
+
+**Touched:** `bot_runtime.py`, `tests/test_activation_engine_phase_a3.py`, `tests/test_activation_engine_phase_a4u.py`, `tests/test_activation_engine_phase_a4m.py` (new)
+**Database:** untouched — no migration, no schema change
+**Backend/routes/API:** unchanged outside `bot_runtime.py`'s conversation state machine
+**Telegram Bot:** new A4M states/callbacks added; A2/A3/A4U dispatch unaffected
+
+**Final production runtime commit:** `08c0ac0`
+
+**Next roadmap phase:** Activation Engine v1 Phase A5 — Activation Finalization (activation completion, ownership assignment, and permanent media/URL persistence).
+
+---
+
 ## Activation Engine v1 Phase A1 — Activation Data Foundation
 
 **Date:** 2026-07-24
