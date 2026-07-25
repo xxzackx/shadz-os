@@ -128,10 +128,11 @@ class ActivationUrlSetupTests(unittest.TestCase):
         self._run_callback("activate_tok-m1", from_user={"id": 202})
 
         session = bot_runtime._SESSIONS[42]
-        self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
         self.assertNotEqual(session["state"], bot_runtime._ACTIVATION_URL_INPUT_STATE)
-        # Only the access-code message — no URL prompt at all.
-        self.assertEqual(self.mock_send_message.await_count, 1)
+        # Phase A4M: a media slug now continues into its own media-input
+        # state (never A4U's URL-input state) — see
+        # tests/test_activation_engine_phase_a4m.py for full coverage.
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_MEDIA_INPUT_STATE)
 
     # -- valid URL input --------------------------------------------------
 
@@ -743,15 +744,22 @@ class ActivationUrlSetupTests(unittest.TestCase):
         self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
         self.assertEqual(session["confirmed_destination_url"], "https://merchant.example.com")
 
-    def test_media_a3_placeholder_session_retains_existing_behaviour(self):
-        # A media-slug session in the same _ACTIVATION_SETUP_STATE
-        # placeholder never has confirmed_destination_url set — the new
-        # TEMPORARY handler must be a complete no-op for it, leaving the
-        # pre-existing (pre-A4U) generic fallback behaviour unchanged.
-        self._make_link_and_record("m1", "media", "tok-m1")
-        self._run_callback("activate_tok-m1", chat_id=42, from_user={"id": 999})
-        self.assertEqual(bot_runtime._SESSIONS[42]["state"], bot_runtime._ACTIVATION_SETUP_STATE)
-        self.assertNotIn("confirmed_destination_url", bot_runtime._SESSIONS[42])
+    def test_generic_setup_placeholder_session_retains_existing_behaviour(self):
+        # A session sitting in the generic _ACTIVATION_SETUP_STATE
+        # placeholder with neither confirmed_destination_url (A4U) nor
+        # confirmed_activation_media (A4M) set — e.g. any content_type other
+        # than url/media — must fall through to the pre-existing
+        # "Unknown/expired state" reset, unaffected by either phase's
+        # TEMPORARY handoff placeholder. Phase A4M now owns the media path
+        # (see tests/test_activation_engine_phase_a4m.py), so this session
+        # shape is forged directly rather than driven through the "media"
+        # activate_ callback.
+        bot_runtime._SESSIONS[42] = {
+            "state": bot_runtime._ACTIVATION_SETUP_STATE,
+            "activation_token": "tok-x",
+            "bot_client_id": None,
+            "content_type": "other",
+        }
         self.mock_send_message.reset_mock()
 
         self._run_message(42, "some unrelated text")

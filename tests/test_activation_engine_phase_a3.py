@@ -433,12 +433,19 @@ class HandleActivationCallbackA3Tests(unittest.TestCase):
         self._make_link_and_record("m1", "media", "tok-m1")
         self._run("activate_tok-m1", chat_id=78, from_user={"id": 127})
 
+        client = self.db.query(models.BotClient).filter(models.BotClient.telegram_user_id == "127").first()
         session = bot_runtime._SESSIONS[78]
         self.assertEqual(session["content_type"], "media")
-        # The bot never asks the customer to choose/confirm content type.
-        sent_text = self.mock_send_message.await_args.args[1]
-        self.assertNotIn("url", sent_text.lower())
-        self.assertNotIn("media", sent_text.lower())
+        # Phase A4M: a media slug now continues straight into the
+        # media-input state instead of parking at the generic
+        # _ACTIVATION_SETUP_STATE placeholder — see
+        # tests/test_activation_engine_phase_a4m.py for full coverage.
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_MEDIA_INPUT_STATE)
+        self.assertEqual(self.mock_send_message.await_count, 2)
+        self.mock_send_message.assert_any_await(
+            78, bot_runtime._ACCESS_CODE_READY_TEXT.format(code=client.access_code)
+        )
+        self.mock_send_message.assert_any_await(78, bot_runtime._ACTIVATION_MEDIA_PROMPT_TEXT)
 
     def test_inactive_rejection_clears_pending_session(self):
         bot_runtime._SESSIONS[42] = {"state": "awaiting_activation_confirmation", "activation_token": "tok-u1"}

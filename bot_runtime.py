@@ -41,7 +41,29 @@ Scope:
     session (never written to RedirectLink.destination_url or any other
     live runtime) for Phase A5 to finalize. Still never touches
     ActivationRecord.owner_client_id/activation_status/activated_at or
-    BotClientSlug. media slugs are untouched by this phase.
+    BotClientSlug.
+  - activation media setup (Phase A4M): mirrors A4U for an eligible
+    unactivated media slug instead of a url slug. Immediately after Phase
+    A3's access-code step, prompts for a photo/document/video/GIF using the
+    same extraction/mime-allowlist/size guards as the existing T1C
+    replacement-media flow — but performs ZERO persistent media storage.
+    It never calls _download_telegram_file, never calls _upload_bytes_to_r2,
+    and never creates a MediaAsset row. Only Telegram's own message metadata
+    (file_id, resolved media_type, mime_type, filename, reported file_size)
+    is validated and held as a plain dict, session["pending_activation_media"],
+    entirely in the in-memory session — never a DB write. Confirmation is
+    inline-button-only ("Confirm"/"Change Media" — no typed fallback, unlike
+    A4U's YES/NO). Every A4M entry point (message and callback) revalidates
+    the token/record/link from scratch via _lookup_unactivated_media_link,
+    exactly like A4U's _lookup_unactivated_url_link. Confirm moves the
+    pending dict to session["confirmed_activation_media"] (still in-memory
+    only) and lands in the same _ACTIVATION_SETUP_STATE placeholder A4U
+    uses. Change Media discards the pending dict and returns to media
+    input — there is nothing to clean up in R2 or the DB because nothing
+    was ever written there. Phase A5 owns the actual
+    download/upload/MediaAsset-creation/slug-attachment sequence. Still
+    never touches ActivationRecord.owner_client_id/activation_status/
+    activated_at or BotClientSlug.
 
 Conversation state is held in an in-memory dict, acceptable for a single
 uvicorn process (no --workers flag in this deployment) and acceptable to lose
@@ -332,6 +354,76 @@ def _a4u_confirmation_markup(activation_token: str) -> dict | None:
     }
 
 
+# ---------------------------------------------------------------------------
+# Activation Engine v1 — Phase A4M (Media Content Setup)
+#
+# Mirrors the A4U constants/helpers above for an eligible unactivated media
+# slug instead of a url slug. Distinct callback_data prefixes from both
+# _ACTIVATION_PAYLOAD_PREFIX and the A4U prefixes so the webhook route can
+# dispatch on prefix without any collision risk.
+# ---------------------------------------------------------------------------
+
+_ACTIVATION_MEDIA_INPUT_STATE = "awaiting_activation_media"
+_ACTIVATION_MEDIA_CONFIRM_STATE = "awaiting_activation_media_confirmation"
+
+_A4M_CONFIRM_PAYLOAD_PREFIX = "a4mconfirm_"
+_A4M_CHANGE_PAYLOAD_PREFIX = "a4mchange_"
+
+_ACTIVATION_MEDIA_PROMPT_TEXT = (
+    "Now let's set up your media.\n\n"
+    "Send a photo, document, video, or GIF for this product."
+)
+_ACTIVATION_MEDIA_UNSUPPORTED_TEXT = (
+    "Please send a photo, document, video, or GIF to set up the media — "
+    "plain text isn't accepted."
+)
+_ACTIVATION_MEDIA_UNSUPPORTED_TYPE_TEXT = (
+    "That file type ({mime}) isn't supported. "
+    "Supported: JPEG/PNG/WEBP images, MP4/QuickTime/WEBM video, GIF."
+)
+_ACTIVATION_MEDIA_TOO_LARGE_TEXT = (
+    "That file is too large ({size} MB). Max supported size is {max} MB."
+)
+# "{name}" is the filename metadata only — never a display/marketing label.
+# No download happens before this prompt, so this is Telegram-reported
+# metadata (or the same _default_filename fallback T1C uses), not a
+# confirmed/verified value.
+_ACTIVATION_MEDIA_CONFIRM_PROMPT_TEXT = (
+    "Confirm media:\n{name}\n\n"
+    "Tap Confirm to save it, or Change Media to send a different file."
+)
+_ACTIVATION_MEDIA_CONFIRM_REMINDER_TEXT = (
+    'Please tap "Confirm" or "Change Media" above to continue.'
+)
+_ACTIVATION_MEDIA_RETRY_TEXT = "No problem — please send the media again."
+_ACTIVATION_MEDIA_SAVED_TEXT = (
+    "Got it. Media saved for setup.\n\n"
+    "We'll continue setting up your product next."
+)
+
+
+def _a4m_confirmation_markup(activation_token: str) -> dict | None:
+    """Build the "Confirm" / "Change Media" inline keyboard, or None if the
+    token can't produce safe callback_data for either button — mirrors
+    _a4u_confirmation_markup, reusing the same generic (prefix-agnostic
+    despite its name) _build_a4u_callback_payload validator with the
+    A4M-specific prefixes."""
+    confirm_payload = _build_a4u_callback_payload(_A4M_CONFIRM_PAYLOAD_PREFIX, activation_token)
+    change_payload = _build_a4u_callback_payload(_A4M_CHANGE_PAYLOAD_PREFIX, activation_token)
+    if not confirm_payload or not change_payload:
+        logger.error(
+            "Activation token produces an invalid A4M callback_data payload — "
+            "refusing to build the Confirm/Change Media buttons"
+        )
+        return None
+    return {
+        "inline_keyboard": [[
+            {"text": "Confirm", "callback_data": confirm_payload},
+            {"text": "Change Media", "callback_data": change_payload},
+        ]]
+    }
+
+
 def _normalize_bot_username(raw: str) -> str | None:
     """Normalize and validate TELEGRAM_BOT_USERNAME.
 
@@ -493,6 +585,24 @@ def _lookup_unactivated_url_link(token: str, db: Session) -> "models.RedirectLin
     return link
 
 
+def _lookup_unactivated_media_link(token: str, db: Session) -> "models.RedirectLink | None":
+    """Shared Phase A4M guard: re-validates from scratch that a token still
+    resolves to an unactivated, non-archived, media-content-type slug.
+
+    Mirrors _lookup_unactivated_url_link for the media flow — every A4M
+    entry point (the media-input/confirmation branches in _handle_message
+    and every path through _handle_a4m_confirmation_callback) calls this
+    instead of inlining the same record+link+content_type check.
+    """
+    record = _lookup_unactivated_record(token, db)
+    if not record:
+        return None
+    link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == record.slug).first()
+    if not link or link.content_type != "media":
+        return None
+    return link
+
+
 async def _handle_activation_entry(chat_id: int, payload: str, db: Session) -> None:
     """Handle a /start deep-link payload carrying an activation token.
 
@@ -613,8 +723,13 @@ async def _handle_activation_callback(callback_query: dict, db: Session) -> None
     Phase A4U: for a url slug only, immediately follows the access-code
     message with the URL-input prompt and moves the session into
     _ACTIVATION_URL_INPUT_STATE instead of the generic _ACTIVATION_SETUP_STATE
-    placeholder. media slugs are unaffected — they still land in
-    _ACTIVATION_SETUP_STATE with no follow-up message.
+    placeholder.
+
+    Phase A4M: for a media slug only, likewise follows the access-code
+    message with the media-input prompt and moves the session into
+    _ACTIVATION_MEDIA_INPUT_STATE. Any other content_type (legacy/unset)
+    still lands in the generic _ACTIVATION_SETUP_STATE with no follow-up
+    message.
     """
     if not isinstance(callback_query, dict):
         return
@@ -718,6 +833,15 @@ async def _handle_activation_callback(callback_query: dict, db: Session) -> None
             }
             await _send_message(chat_id, _ACCESS_CODE_READY_TEXT.format(code=client.access_code))
             await _send_message(chat_id, _ACTIVATION_URL_PROMPT_TEXT)
+        elif link.content_type == "media":
+            _SESSIONS[chat_id] = {
+                "state": _ACTIVATION_MEDIA_INPUT_STATE,
+                "activation_token": token,
+                "bot_client_id": client.id,
+                "content_type": link.content_type,
+            }
+            await _send_message(chat_id, _ACCESS_CODE_READY_TEXT.format(code=client.access_code))
+            await _send_message(chat_id, _ACTIVATION_MEDIA_PROMPT_TEXT)
         else:
             _SESSIONS[chat_id] = {
                 "state": _ACTIVATION_SETUP_STATE,
@@ -875,6 +999,181 @@ async def _handle_a4u_confirmation_callback(callback_query: dict, db: Session) -
     session["state"] = _ACTIVATION_URL_INPUT_STATE
     _SESSIONS[chat_id] = session
     await _send_message(chat_id, _ACTIVATION_URL_RETRY_TEXT)
+
+
+def _is_valid_pending_activation_media(pending) -> bool:
+    """True if pending is a complete, well-formed pending_activation_media
+    dict — validates every field of the schema (telegram_file_id,
+    media_type, mime_type, original_filename, file_size), not just the two
+    fields Phase A5 cannot proceed without, so a forged or corrupted
+    session can never reach confirmed_activation_media with incomplete or
+    inconsistent metadata. Extra keys are tolerated — only the required
+    fields are checked.
+    """
+    if not isinstance(pending, dict):
+        return False
+
+    file_id = pending.get("telegram_file_id")
+    if not isinstance(file_id, str) or not file_id.strip():
+        return False
+
+    media_type = pending.get("media_type")
+    if not isinstance(media_type, str) or not media_type.strip():
+        return False
+    if media_type not in ALLOWED_MEDIA_TYPES:
+        return False
+
+    mime_type = pending.get("mime_type")
+    if not isinstance(mime_type, str) or not mime_type.strip():
+        return False
+    # Reuses the same reverse-lookup the media-input branch used to
+    # resolve media_type in the first place — catches a forged/corrupted
+    # session pairing a mime_type with the wrong media_type, without
+    # duplicating the ALLOWED_MEDIA_TYPES allowlist logic.
+    if _media_type_for_mime(mime_type) != media_type:
+        return False
+
+    original_filename = pending.get("original_filename")
+    if not isinstance(original_filename, str) or not original_filename.strip():
+        return False
+
+    file_size = pending.get("file_size")
+    if file_size is not None:
+        if isinstance(file_size, bool) or not isinstance(file_size, int):
+            return False
+        if file_size <= 0 or file_size > _MAX_TELEGRAM_MEDIA_BYTES:
+            return False
+
+    return True
+
+
+async def _handle_a4m_confirmation_callback(callback_query: dict, db: Session) -> None:
+    """Handle the Phase A4M "Confirm" / "Change Media" inline-button press.
+
+    Mirrors _handle_a4u_confirmation_callback's structure and safety
+    contract exactly, substituting the media-specific prefixes, DB-truth
+    guard (_lookup_unactivated_media_link), and session keys
+    (pending_activation_media / confirmed_activation_media in place of
+    pending_url / confirmed_destination_url). See that function's docstring
+    for the full duplicate-safety and fail-closed rationale — not repeated
+    here.
+
+    A4M performs zero persistent media storage: pending_activation_media
+    holds only Telegram message metadata (file_id/media_type/mime_type/
+    filename/file_size), never downloaded bytes or an R2/MediaAsset
+    reference. Confirm therefore performs no DB or R2 writes — it only
+    moves that dict, in-memory, to confirmed_activation_media for Phase A5
+    to act on later.
+
+    Confirm additionally fails closed (clears the session, generic invalid-
+    link reply) if pending_activation_media is missing or incomplete
+    (_is_valid_pending_activation_media) in an otherwise valid session — a
+    confirm must never fabricate media data.
+
+    Change Media has nothing to clean up in R2 or the DB — nothing was
+    ever written there — so it only discards the in-memory pending/
+    confirmed dicts before returning to _ACTIVATION_MEDIA_INPUT_STATE.
+    """
+    if not isinstance(callback_query, dict):
+        return
+
+    callback_query_id = callback_query.get("id")
+    data = callback_query.get("data")
+    if not isinstance(data, str):
+        data = ""
+
+    if data.startswith(_A4M_CONFIRM_PAYLOAD_PREFIX):
+        prefix, action = _A4M_CONFIRM_PAYLOAD_PREFIX, "confirm"
+    elif data.startswith(_A4M_CHANGE_PAYLOAD_PREFIX):
+        prefix, action = _A4M_CHANGE_PAYLOAD_PREFIX, "change"
+    else:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id)
+        return
+
+    token = data[len(prefix):]
+
+    if _build_a4u_callback_payload(prefix, token) is None:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+        return
+
+    message = callback_query.get("message")
+    chat = message.get("chat") if isinstance(message, dict) else None
+    chat_id = chat.get("id") if isinstance(chat, dict) else None
+    session = _SESSIONS.get(chat_id) if chat_id is not None else None
+    session_matches_token = session is not None and session.get("activation_token") == token
+
+    # DB-truth check FIRST — applies uniformly to both duplicate shortcuts
+    # below and the ordinary confirm/change path.
+    link = _lookup_unactivated_media_link(token, db)
+    if link is None:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+        if chat_id is not None:
+            _SESSIONS.pop(chat_id, None)
+        return
+
+    # Duplicate-safety: a repeat Confirm tap after the session already
+    # advanced past confirmation (same token) is a no-op.
+    if (
+        action == "confirm"
+        and session_matches_token
+        and session.get("state") == _ACTIVATION_SETUP_STATE
+        and "confirmed_activation_media" in session
+    ):
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id)
+        return
+
+    # Duplicate-safety: a repeat Change Media tap after the session already
+    # returned to media input (same token) is likewise a no-op.
+    if (
+        action == "change"
+        and session_matches_token
+        and session.get("state") == _ACTIVATION_MEDIA_INPUT_STATE
+    ):
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id)
+        return
+
+    valid_session = session_matches_token and session.get("state") == _ACTIVATION_MEDIA_CONFIRM_STATE
+    if not valid_session:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+        if chat_id is not None:
+            _SESSIONS.pop(chat_id, None)
+        return
+
+    if action == "confirm" and not _is_valid_pending_activation_media(session.get("pending_activation_media")):
+        # A valid, in-confirmation session with no (or incomplete) pending
+        # media metadata can't legitimately happen through the normal flow
+        # — fail closed rather than confirm nothing.
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+        _SESSIONS.pop(chat_id, None)
+        return
+
+    if callback_query_id:
+        await _answer_callback_query(callback_query_id)
+
+    if action == "confirm":
+        # In-memory move only — no DB or R2 write. Phase A5 performs the
+        # actual download/upload/MediaAsset creation from this dict.
+        session["confirmed_activation_media"] = session.get("pending_activation_media")
+        session.pop("pending_activation_media", None)
+        session["state"] = _ACTIVATION_SETUP_STATE
+        _SESSIONS[chat_id] = session
+        await _send_message(chat_id, _ACTIVATION_MEDIA_SAVED_TEXT)
+        return
+
+    # action == "change" — nothing was ever persisted, so there is nothing
+    # to clean up in R2 or the DB; just discard the in-memory dicts.
+    session.pop("pending_activation_media", None)
+    session.pop("confirmed_activation_media", None)
+    session["state"] = _ACTIVATION_MEDIA_INPUT_STATE
+    _SESSIONS[chat_id] = session
+    await _send_message(chat_id, _ACTIVATION_MEDIA_RETRY_TEXT)
 
 
 # ---------------------------------------------------------------------------
@@ -1337,28 +1636,36 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
 
     # --- TEMPORARY Phase A5 handoff placeholder -----------------------------
     # A url slug's A4U session lands in _ACTIVATION_SETUP_STATE with
-    # confirmed_destination_url set once confirmed. There is no Phase A5
-    # yet, so without this branch ANY further message would fall into the
-    # generic "Unknown/expired state" fallback below and reset the session
-    # to awaiting_code, discarding confirmed_destination_url — that is the
-    # defect this branch exists to prevent. It does not implement any A5
-    # behaviour: it never interprets or saves new text, never touches the
-    # confirmed URL, never activates the record, never writes the live
-    # redirect, never assigns ownership, and never consumes the token.
-    # Phase A5 should replace this entire branch outright rather than
-    # extend it.
-    if state == _ACTIVATION_SETUP_STATE and "confirmed_destination_url" in session:
+    # confirmed_destination_url set once confirmed; a media slug's A4M
+    # session likewise lands here with confirmed_activation_media set
+    # (Telegram metadata only — no MediaAsset/R2 object exists yet). There
+    # is no Phase A5 yet, so without this branch ANY further message would
+    # fall into the generic "Unknown/expired state" fallback below and
+    # reset the session to awaiting_code, discarding the confirmed value —
+    # that is the defect this branch exists to prevent. It does not
+    # implement any A5 behaviour: it never interprets or saves new text,
+    # never touches the confirmed URL/media, never activates the record,
+    # never writes the live redirect or slug media, never assigns
+    # ownership, and never consumes the token. Phase A5 should replace this
+    # entire branch outright rather than extend it.
+    if state == _ACTIVATION_SETUP_STATE and (
+        "confirmed_destination_url" in session or "confirmed_activation_media" in session
+    ):
         if text.lower() in ("yes", "y", "confirm"):
             # Explicit duplicate confirmation text — idempotent no-op, no DB
-            # write, session/URL preserved. A brief repeat acknowledgement.
-            await _send_message(
-                chat_id,
-                _ACTIVATION_URL_SAVED_TEXT.format(url=session["confirmed_destination_url"]),
-            )
+            # write, session/confirmed value preserved. A brief repeat
+            # acknowledgement.
+            if "confirmed_destination_url" in session:
+                await _send_message(
+                    chat_id,
+                    _ACTIVATION_URL_SAVED_TEXT.format(url=session["confirmed_destination_url"]),
+                )
+            else:
+                await _send_message(chat_id, _ACTIVATION_MEDIA_SAVED_TEXT)
             return
         # Any other text: not processed as activation content. Session and
-        # confirmed_destination_url are left completely untouched — only a
-        # brief neutral status reply is sent.
+        # the confirmed value are left completely untouched — only a brief
+        # neutral status reply is sent.
         await _send_message(chat_id, _ACTIVATION_SETUP_AWAITING_TEXT)
         return
     # --- end TEMPORARY Phase A5 handoff placeholder -------------------------
@@ -1428,6 +1735,94 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         await _send_message(chat_id, _ACTIVATION_URL_CONFIRM_INVALID_REPLY_TEXT)
         return
 
+    if state in (_ACTIVATION_MEDIA_INPUT_STATE, _ACTIVATION_MEDIA_CONFIRM_STATE):
+        # Re-validate the activation session from scratch on every message —
+        # same rationale as the url branch above, shared via
+        # _lookup_unactivated_media_link.
+        token = session.get("activation_token")
+        link = _lookup_unactivated_media_link(token, db)
+        if link is None:
+            _SESSIONS.pop(chat_id, None)
+            await _send_message(chat_id, _ACTIVATION_INVALID_LINK_TEXT)
+            return
+
+        if state == _ACTIVATION_MEDIA_CONFIRM_STATE:
+            # A4M confirmation is inline-button-only (no typed YES/NO
+            # fallback, unlike A4U) — any message here, text or media, is
+            # unrelated input and must not corrupt the session.
+            await _send_message(chat_id, _ACTIVATION_MEDIA_CONFIRM_REMINDER_TEXT)
+            return
+
+        # state == _ACTIVATION_MEDIA_INPUT_STATE
+        #
+        # A4M validates ONLY Telegram's own message metadata — it never
+        # downloads the file (_download_telegram_file is not called here)
+        # and never uploads or persists anything. The same
+        # extraction/mime-allowlist/size checks T1C uses are reused so
+        # supported formats/limits stay identical, but the outcome is a
+        # plain in-memory dict, not a stored asset. Phase A5 owns the
+        # actual download/upload/MediaAsset sequence.
+        candidate = _extract_media_candidate(message)
+        if candidate is None:
+            await _send_message(chat_id, _ACTIVATION_MEDIA_UNSUPPORTED_TEXT)
+            return
+
+        file_id, mime_type, reported_size, file_name = candidate
+        if not file_id:
+            await _send_message(chat_id, _ACTIVATION_MEDIA_UNSUPPORTED_TEXT)
+            return
+
+        media_type = _media_type_for_mime(mime_type)
+        if media_type is None:
+            await _send_message(
+                chat_id,
+                _ACTIVATION_MEDIA_UNSUPPORTED_TYPE_TEXT.format(mime=mime_type or "unknown"),
+            )
+            return
+
+        if reported_size is not None:
+            # Reject a non-integer, boolean, or non-positive reported size
+            # before ever consulting _MAX_TELEGRAM_MEDIA_BYTES — a
+            # malformed Telegram payload must never produce pending
+            # metadata with a nonsensical size. Uses the same generic
+            # unsupported-media reply as the other input-side rejections
+            # above, since this is likewise "not a usable file", not a
+            # too-large file.
+            if isinstance(reported_size, bool) or not isinstance(reported_size, int) or reported_size <= 0:
+                await _send_message(chat_id, _ACTIVATION_MEDIA_UNSUPPORTED_TEXT)
+                return
+            if reported_size > _MAX_TELEGRAM_MEDIA_BYTES:
+                await _send_message(
+                    chat_id,
+                    _ACTIVATION_MEDIA_TOO_LARGE_TEXT.format(
+                        size=reported_size // (1024 * 1024),
+                        max=_MAX_TELEGRAM_MEDIA_BYTES // (1024 * 1024),
+                    ),
+                )
+                return
+
+        # Same fallback-filename convention T1C uses for a photo (which
+        # never carries a Telegram file_name) — metadata only, no bytes
+        # touched.
+        safe_name = file_name or _default_filename(media_type, mime_type)
+
+        session["pending_activation_media"] = {
+            "telegram_file_id": file_id,
+            "media_type": media_type,
+            "mime_type": mime_type,
+            "original_filename": safe_name,
+            "file_size": reported_size,
+        }
+        session["state"] = _ACTIVATION_MEDIA_CONFIRM_STATE
+        _SESSIONS[chat_id] = session
+        markup = _a4m_confirmation_markup(token)
+        await _send_message(
+            chat_id,
+            _ACTIVATION_MEDIA_CONFIRM_PROMPT_TEXT.format(name=safe_name),
+            reply_markup=markup,
+        )
+        return
+
     # Unknown/expired state — restart cleanly.
     _SESSIONS[chat_id] = {"state": "awaiting_code"}
     await _send_message(chat_id, "Session expired. Please enter your access code.")
@@ -1480,6 +1875,11 @@ def register_bot_webhook_routes(app) -> None:
                     # Distinct prefix dispatch — never touches the A2/A3
                     # "activate_" callback path below.
                     await _handle_a4u_confirmation_callback(callback_query, db)
+                elif isinstance(cq_data, str) and (
+                    cq_data.startswith(_A4M_CONFIRM_PAYLOAD_PREFIX)
+                    or cq_data.startswith(_A4M_CHANGE_PAYLOAD_PREFIX)
+                ):
+                    await _handle_a4m_confirmation_callback(callback_query, db)
                 else:
                     await _handle_activation_callback(callback_query, db)
             except Exception:
