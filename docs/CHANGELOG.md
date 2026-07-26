@@ -2,6 +2,54 @@
 
 ---
 
+## Activation Engine v1 Phase A6 — Regression, Live Testing and Production Closure (in progress)
+
+**Status:** Regression audit completed. Full automated suite passed. Production live-test plan prepared. **URL and media production verification is still pending. Phase A6 and Activation Engine v1 close only after Mr.Zack confirms both live tests (URL and media) passed in production.**
+
+**Scope:** Final Activation Engine v1 phase. No redesign, no new product features, no unrelated refactoring — audit, test-gap-fill (none required), and closure documentation only.
+
+**Runtime commits:** none — audit found no concrete regression gap. No `bot_runtime.py`, `link_public.py`, `models.py`, or `main.py` changes were made or required.
+
+**Regression audit performed:**
+- Traced the full public routing path in `main.py:redirect_slug` — confirmed the archived-slug check (`link.is_archived is True` → 410) runs *before* the Activation Gateway call (`resolve_activation_redirect`), so an archived `url`/`media` slug can never enter activation, and the gateway is only reached for `content_type in ("url", "media")` — `page` slugs structurally cannot enter (and Phase A1's `create_activation_record_for_slug` refuses to create an `ActivationRecord` for a `page` slug in the first place).
+- Confirmed `bot_runtime._lookup_unactivated_record` (shared by the Phase A2 entry point, Phase A3 callback, and Phase A5 finalization) rejects a missing/empty token, an unknown token, an already-`activated` record, and a record whose slug has since been archived — this closes the "old Telegram deep link outlives an archive" bypass at every call site, including finalization itself.
+- Read `bot_runtime._finalize_activation_confirmation` end-to-end: the `BotClientSlug` assignment, `url`/`media` content write, and the `ActivationRecord` status transition are staged in one transaction; the status transition is an atomic conditional `UPDATE ... WHERE activation_status = 'unactivated'` whose row count is checked — a `claimed != 1` result triggers `db.rollback()` before any success path, and the single `except Exception` wrapping the whole staged block also rolls back before reporting failure to the customer. No path commits partial state.
+- Confirmed ownership/assignment conflict (slug already assigned to a different `BotClient`) is checked before any content write and exits with zero mutation.
+- Confirmed `resolve_activation_redirect` in `link_public.py` returns `None` (falls through to normal runtime) once `activation_status` is no longer `"unactivated"` — an activated slug can never re-enter activation, and re-tapping "Activate Now"/Confirm on an already-activated token is a silent no-op via the same raw-DB-truth check.
+- Verified URL and media flows stay isolated: distinct in-memory session states (`awaiting_activation_url*` vs `awaiting_activation_media*`), distinct confirmation callback prefixes (`a4uconfirm_`/`a4uchange_` vs `a4mconfirm_`/`a4mchange_`), and `_finalize_activation_confirmation` branches on `content_type` read fresh from `RedirectLink`, never from client-supplied state.
+- Cross-checked the existing test suite against every A6-required scenario. Full lifecycle behaviour is not proven by any single browser-to-runtime end-to-end test; it is covered through the combination of: URL/media finalization tests (e.g. `test_a4u_confirm_callback_finalizes_activation_immediately`, `test_a4m_confirm_callback_finalizes_activation_immediately`), Activation Gateway no-op tests confirming an activated slug never re-enters activation (`test_activated_url_slug_gate_is_noop`, `test_activated_media_slug_gate_is_noop`), existing normal URL/media runtime regression tests (pre-Activation-Engine `tests/test_activation_engine.py` coverage of unaffected `RedirectLink`/`SlugMedia` behaviour), and atomic rollback/CAS tests (`test_rollback_on_url_persistence_failure_includes_assignment`, `test_rollback_on_media_persistence_failure_includes_assignment`, `test_concurrent_url_finalization_only_one_wins`, `test_concurrent_media_finalization_only_winner_is_referenced`). Together these span `tests/test_activation_engine.py`, `tests/test_activation_engine_phase_a2.py` through `_a5.py`, `tests/test_link_admin_activation.py`, and `tests/test_bot_runtime_management_flow.py`.
+
+**Conclusion:** no concrete regression gap found in automated coverage. Existing A1–A5 tests already satisfy the Phase A6 automated-test checklist; no new or adjusted tests were needed and none were added, per this phase's own instruction not to add tests without a real gap. This conclusion covers automated regression only — it does not substitute for the production live test, which is still required before Phase A6 or Activation Engine v1 can be considered closed.
+
+**Automated test results:**
+- Full suite: `350 passed, 28 subtests passed` (unchanged from Phase A5's own closure figure — no test file touched)
+- `git diff --check`: clean (no runtime or test files modified)
+
+**Production live test:** not performed by Claude — VPS access and production data are out of scope for this phase's execution. Exact deployment commands and a manual live-test checklist (URL + media, using newly created disposable test slugs generated through the existing Admin UI) were prepared for Mr.Zack — see `docs/PROJECT_STATE.md` Phase A6 entry for the full command block and checklist. **Production verification is pending and required before closure.**
+
+**Production verification results:** _pending — not yet run. To be filled in by Mr.Zack after running the live-test checklist. Phase A6 remains open until both the URL and media live tests are confirmed passed._
+
+**Deferred (explicitly out of scope for A6, not scheduled to any phase):**
+- Admin UI activation-status visibility (activation status, owner, `activated_at`, token state, assignment) for activation-enabled slugs
+- Analytics / dashboard upgrades
+- Activation support for additional slug types beyond `url`/`media`
+- Any lifecycle redesign
+- Legacy `RedirectLink` backfill with `ActivationRecord` (pre-Phase-A2 rows)
+- `ActivationRecord` provisioning on `content_type` conversion to `url`/`media` via `upsert_link`
+- R2 orphan-object cleanup workflow (`MediaAsset` ids `2` and `13` remain confirmed cleanup candidates from Phase A5 live testing)
+- `delete_activation_lifecycle_for_slug` wiring (still no caller — no `redirect_links` hard-delete path exists)
+
+**Touched:** `docs/CHANGELOG.md`, `docs/PROJECT_STATE.md` (documentation only)
+**Database:** no schema/migration change
+**Backend/routes/API:** unchanged
+**Telegram Bot:** unchanged
+
+**Activation Engine v1 phase list:** A1 (data foundation) → A2 (first-scan Telegram entry + provisioning correction) → A3 (Bot Client creation/access code) → A4U (URL content setup) → A4M (media content setup) → A5 (atomic finalization) → A6 (regression audit and live-test preparation, this entry). **A1–A5 are complete and production-verified. A6's regression audit and automated suite are complete, but A6 itself and Activation Engine v1 as a whole remain open until Mr.Zack runs the production live-test checklist below and confirms both the URL and media tests passed.**
+
+**Next roadmap phase:** none planned for Activation Engine v1 beyond closing out A6's pending live test. Future work (Admin UI activation visibility, analytics, new slug types) is unscoped backlog, not a committed phase.
+
+---
+
 ## Activation Engine v1 Phase A5 — Activation Finalization
 
 **Status:** Completed, deployed, and production-verified. **Phase A5 is now complete and closed. Activation Engine v1 is fully closed pending Phase A6 (regression/live-testing/production-closure documentation).**

@@ -260,6 +260,22 @@ Data foundation only — no activation routing, Telegram bot activation flow, ad
 
 Tables created by `Base.metadata.create_all(bind=engine)` on first startup after deploy — no `_run_migrations()` change needed (net-new table, no columns added to an existing table).
 
+### Activation Engine v1 — architecture summary (as of Phase A6 regression audit; production live-test still pending)
+
+**Lifecycle:** unactivated `url`/`media` slug → public `/{slug}` scan (`main.py:redirect_slug`) → `link_public.resolve_activation_redirect` → 302 to Telegram deep link → `/start activate_<token>` → "Activate Now" callback (`bot_runtime._handle_activation_callback`) → `BotClient` resolved/created by numeric Telegram `user_id` → content setup (URL destination or media upload, inline Confirm/Change) → `bot_runtime._finalize_activation_confirmation` → one atomic transaction (content write + `BotClientSlug` assignment + `ActivationRecord` status/owner/`activated_at`) → token consumed → slug serves normal `url`/`media` runtime on every subsequent visit.
+
+**Invariants (enforced in code, not just convention):**
+- An `ActivationRecord` only ever exists for `url`/`media` slugs — `page` slugs are rejected at creation (`models.create_activation_record_for_slug`) and never reach the gateway.
+- `activation_status` only moves `unactivated` → `activated`, via a single conditional `UPDATE ... WHERE activation_status = 'unactivated'` whose affected-row-count is checked — this is the sole mechanism that makes concurrent/duplicate finalization safe.
+- Archiving a `RedirectLink` is checked at three independent points: the public route (`main.py`, before the gateway), `bot_runtime._lookup_unactivated_record` (entry/callback/finalization), and normal runtime already returns 410 regardless of activation state.
+- Finalization stages ownership assignment, content persistence, and the status transition in one SQLAlchemy transaction; any failure (assignment conflict, DB error, lost CAS race) rolls back the entire set — no partial writes.
+- URL and media activation are isolated by construction: separate session states, separate callback-data prefixes, and `content_type` is always read fresh from `RedirectLink`, never trusted from client input or stale session data.
+
+**Failure boundaries (by design, not gaps):**
+- Media R2 upload happens outside the SQLite transaction (R2 has no transactional coupling to SQLite) — a losing concurrent finalization can leave an orphaned R2 object with no DB reference. Accepted, same class as the pre-existing T1C replacement-media flow. Cleanup deferred past Activation Engine v1 closure.
+- In-memory `_SESSIONS` state (all pre-finalization activation progress, including a confirmed-but-not-yet-finalized URL/media choice) is lost on a `shadz.service` restart — the customer must restart from the Telegram deep link. Same accepted tradeoff as the rest of the bot runtime since Phase T1B.
+- Legacy `RedirectLink` rows predating the Phase A2 provisioning fix have no `ActivationRecord` and are not backfilled — they remain on pre-activation legacy behavior indefinitely unless a future phase backfills them.
+
 ### `nfc_records` / `scan_logs`
 
 Legacy NFC system. Unchanged since v0.1.
@@ -489,8 +505,92 @@ This section exists to give Claude Code a compressed snapshot of current project
 - Phase 4M — Data Model / Compatibility Audit — no longer not-started; shipped and closed (`e4c0551`, deployed 2026-07-14) as a read-only audit plus a one-line Telegram Bot URL-confirmation guard fix and 4 new regression tests — no schema/migration change; `idx_slug_media_one_active` deferred as optional future hardening — see Completed milestones
 - Phase 4N — Production Polish / v1 Closure — no longer not-started; shipped and closed (`2f7cf8d`, `5862b36`, deployed 2026-07-15) as Page Engine admin regression test coverage plus a Telegram bot secret-safe logging fix — see Completed milestones. **Page Engine v1 is now complete and closed.**
 - Future Page Engine UX improvements generally (beyond 3E polish, 4K polish, 4Ka polish, 4L stabilization, and the read-endpoint gap) — not scoped or started
-- **Activation Engine v1 — locked roadmap. Phase A1 (`54e0801`/`745d304`, closed 2026-07-24, `activation_records` data foundation), Phase A2 (`9ec0458`+`e713480`, closed, deployed and production-tested — First-Scan Telegram Entry plus the admin provisioning correction), Phase A3 (`acb8690`, closed, deployed and production-tested — Bot Client Creation and Access Code), Phase A4U (`67557d3`/`7f2ed23`/`fd70dd2`/`f0c8ffe`, closed, deployed and production-tested — URL Content Setup), Phase A4M (`08c0ac0`, closed, deployed and production-tested — Media Content Setup, zero-persistence), and Phase A5 (`0d7f2d8`/`2488096`, closed, deployed and production-tested — Activation Finalization) are all complete and closed — see Completed milestones. Remaining phase, in locked order:**
-  - **Phase A6 — Regression, Live Testing and Production Closure (next planned phase):** automated regression testing; production live testing; confirm no second activation; production closure and documentation closure for the complete Activation Engine v1 — not started
+- **Activation Engine v1 — locked roadmap. Phase A1 (`54e0801`/`745d304`, closed 2026-07-24, `activation_records` data foundation), Phase A2 (`9ec0458`+`e713480`, closed, deployed and production-tested — First-Scan Telegram Entry plus the admin provisioning correction), Phase A3 (`acb8690`, closed, deployed and production-tested — Bot Client Creation and Access Code), Phase A4U (`67557d3`/`7f2ed23`/`fd70dd2`/`f0c8ffe`, closed, deployed and production-tested — URL Content Setup), Phase A4M (`08c0ac0`, closed, deployed and production-tested — Media Content Setup, zero-persistence), and Phase A5 (`0d7f2d8`/`2488096`, closed, deployed and production-tested — Activation Finalization) are complete and closed — see Completed milestones. Phase A6 (regression audit, live-test preparation, and closure documentation — this entry) has its regression audit and automated suite complete, but is **not yet closed**: production live testing is still pending. Activation Engine v1 as a whole closes only once Mr.Zack confirms both the URL and media production live tests below have passed.**
+  - **Phase A6 — Regression, Live Testing and Production Closure — in progress (docs-only so far, no runtime/test commit).** Regression audit read `main.py:redirect_slug`, `link_public.resolve_activation_redirect`, `bot_runtime._lookup_unactivated_record`, and `bot_runtime._finalize_activation_confirmation` end-to-end and confirmed: archived check precedes the Activation Gateway; `page` slugs cannot enter (structurally, and never get an `ActivationRecord`); the archived guard is shared across entry/callback/finalization; finalization's `BotClientSlug`/content/status changes are staged in one transaction with a checked-rowcount atomic CAS on `activation_status` and roll back together on any failure or lost race; an activated slug's token can never re-trigger activation; URL/media flows stay isolated by distinct session states and callback prefixes. Cross-checked every A6-required scenario against the existing 350-test suite (`tests/test_activation_engine*.py`, `tests/test_link_admin_activation.py`, `tests/test_bot_runtime_management_flow.py`). Full lifecycle behaviour is not proven by any single browser-to-runtime end-to-end test — it is covered through the combination of URL/media finalization tests, Activation Gateway no-op tests confirming an activated slug never re-enters activation, existing normal URL/media runtime regression tests, and atomic rollback/CAS tests; no automated gap was found, so no test was added or changed. Full suite: 350/350 passed, 28 subtests passed (unchanged from A5), `git diff --check` clean. **Production live testing has NOT been performed by Claude and has NOT yet been performed by Mr.Zack** — VPS commands and a manual live-test checklist (URL + media, disposable test slugs created through the existing Admin UI) are provided below for Mr.Zack to run; production verification results are pending, not a placeholder awaiting formality — Phase A6 and Activation Engine v1 remain open until both live tests are confirmed passed. See `docs/CHANGELOG.md` Phase A6 entry for full detail.
+  - **Phase A6 — VPS deployment / live-test command block (for Mr.Zack to run manually):**
+    ```bash
+    # 1. Pre-deployment checks (on VPS, /opt/shadz-os) — read-only
+    cd /opt/shadz-os
+    git status --short
+    git log -3 --oneline --decorate
+    sudo systemctl status shadz.service --no-pager
+
+    # 2. Pull latest master
+    git fetch origin
+    git pull --ff-only origin master
+    git log -3 --oneline --decorate   # confirm HEAD now includes the A6 docs commit
+
+    # 3. Database backup — SQLite online backup, not a raw file copy, into a dedicated
+    #    backup directory. A6 is documentation-only and makes no schema change, but a
+    #    backup is still taken before any verification activity touches the live DB.
+    BACKUP_DIR="/opt/shadz-os/backups"
+    BACKUP_FILE="$BACKUP_DIR/shadz-a6-$(date +%Y%m%d%H%M%S).db"
+
+    mkdir -p "$BACKUP_DIR"
+    sqlite3 /opt/shadz-os/shadz.db ".backup '$BACKUP_FILE'"
+    sqlite3 "$BACKUP_FILE" "PRAGMA integrity_check;"   # expect: ok
+    ls -lh "$BACKUP_FILE"
+
+    # 4. No migration/schema change in A6 — skip schema verification step (no _run_migrations() change)
+
+    # 5. No service restart. A6 is documentation-only; the A5 runtime (commit 2488096)
+    #    is already deployed and running. Do not restart shadz.service for this phase —
+    #    only a later, separately reviewed runtime commit would justify a restart.
+
+    # 6. Readiness check — bounded retry, not an infinite loop. Fails loudly instead of
+    #    hanging if the (already-running) service never reports healthy.
+    ATTEMPTS=0
+    MAX_ATTEMPTS=30
+    until curl -fsS http://127.0.0.1:8000/health; do
+      ATTEMPTS=$((ATTEMPTS + 1))
+      if [ "$ATTEMPTS" -ge "$MAX_ATTEMPTS" ]; then
+        echo "ERROR: local /health did not succeed after $MAX_ATTEMPTS attempts" >&2
+        exit 1
+      fi
+      sleep 2
+    done
+    echo "local health OK"
+
+    # 7. Public checks (GET, not HEAD)
+    curl -fsS -o /dev/null -w "%{http_code}\n" https://shadz.io/health
+    curl -fsS -o /dev/null -w "%{http_code}\n" https://shadz.io/
+    curl -s -o /dev/null -w "%{http_code}\n" https://shadz.io/admin   # expect 401 (no credentials passed)
+
+    # 8. Service logs sanity check (read-only)
+    sudo journalctl -u shadz.service -n 50 --no-pager
+    ```
+  - **Phase A6 — manual URL activation live-test checklist:**
+    1. In `/admin`, create a new disposable `url` slug via the existing "create link" control (slugs are auto-generated by `link_admin.generate_slug` as `url-<random>` — the Admin UI does not accept a caller-chosen exact slug name). **Record the exact slug the UI actually returns** and use that value in every command/query below — do not assume a fixed name like `url-a6test01`. Note the initial `destination_url`.
+    2. Query the DB directly (see verification queries below, substituting the recorded slug) to confirm exactly one `unactivated` `ActivationRecord` was created for it, `owner_client_id`/`activated_at` both `NULL`.
+    3. Open `https://shadz.io/<recorded-url-slug>` in a browser with no prior session — expect a redirect into the Telegram bot deep link, not the destination URL.
+    4. In Telegram, confirm the activation entry message and "Activate Now" button appear; tap it.
+    5. Confirm a `BotClient` is resolved/created for your Telegram identity and the bot asks for the destination URL.
+    6. Send a valid `https://` test URL. Confirm the bot shows it back with Confirm / Change URL buttons.
+    7. Tap **Confirm**. Expect an immediate completion message with an access code, followed by "Welcome to SHADZ. Please enter your access code."
+    8. Re-open `https://shadz.io/<recorded-url-slug>` — expect a normal 302 redirect straight to the confirmed destination URL, no Telegram redirect (proves normal runtime resumed).
+    9. **Replay/second-scan verification:** re-visit the original Telegram deep link (or re-tap "Activate Now" from chat history if still visible) — expect the generic activation-invalid response, no second `BotClient`, no change to `activation_status`/`owner_client_id`/`activated_at`, no duplicate completion message.
+  - **Phase A6 — manual media activation live-test checklist:**
+    1. In `/admin`, create a new disposable `media` slug via the existing "create link" control (again auto-generated as `media-<random>` — **record the exact slug the UI returns** and substitute it everywhere below).
+    2. Query the DB to confirm exactly one `unactivated` `ActivationRecord`, `owner_client_id`/`activated_at` both `NULL`, and no active `SlugMedia` row yet (new slug should show "Media not ready yet" if visited directly — but it will redirect to activation instead, see step 3).
+    3. Open `https://shadz.io/<recorded-media-slug>` with no prior session — expect the Telegram deep-link redirect.
+    4. Tap "Activate Now"; confirm the bot asks for a media upload (not a URL — proves URL/media isolation).
+    5. Send a test photo/video/gif within Telegram's size limit. Confirm the bot shows a Confirm / Change Media prompt (no typed fallback, buttons only).
+    6. Tap **Confirm**. Expect the completion message with an access code.
+    7. Re-open `https://shadz.io/<recorded-media-slug>` — expect the media page to render the just-uploaded asset (proves normal media runtime resumed, `SlugMedia.is_active = 1`).
+    8. **Replay/second-scan verification:** attempt to re-trigger activation the same way as the URL checklist step 9 — expect a no-op, no second `MediaAsset`/`SlugMedia` row created, `activation_status` unchanged.
+  - **Phase A6 — archived-slug verification (either test slug):** in `/admin`, archive the now-activated test slug. Visit `https://shadz.io/<recorded-slug>` — expect the existing 410 expired page (SHADZ EXPERIENCE HAS EXPIRED), not activation and not the destination/media. Restore the slug afterward if further testing is needed.
+  - **Phase A6 — database verification queries (read-only; substitute the two slug names actually recorded from the Admin UI in steps above — shown here as `<url-slug>`/`<media-slug>` placeholders, never assume `url-a6test01`/`media-a6test01`):**
+    ```bash
+    sqlite3 /opt/shadz-os/shadz.db "SELECT slug, activation_status, owner_client_id, activated_at FROM activation_records WHERE slug IN ('<url-slug>','<media-slug>');"
+    sqlite3 /opt/shadz-os/shadz.db "SELECT id, bot_client_id, slug FROM bot_client_slugs WHERE slug IN ('<url-slug>','<media-slug>');"
+    sqlite3 /opt/shadz-os/shadz.db "SELECT slug, destination_url, content_type, is_archived FROM redirect_links WHERE slug IN ('<url-slug>','<media-slug>');"
+    sqlite3 /opt/shadz-os/shadz.db "SELECT sm.slug, sm.media_asset_id, sm.is_active, ma.id, ma.storage_key, ma.original_filename, ma.mime_type, ma.file_size FROM slug_media sm JOIN media_assets ma ON ma.id = sm.media_asset_id WHERE sm.slug = '<media-slug>';"
+    ```
+    (Verified against the actual `MediaAsset` model in `models.py` — `id`, `storage_key`, `original_filename`, `mime_type`, and `file_size` are all real, not-nullable columns on `media_assets`; the join through `slug_media.media_asset_id` is unchanged from the existing schema.)
+    **Expected state before activation:** `activation_status = unactivated`, `owner_client_id = NULL`, `activated_at = NULL`, no `bot_client_slugs` row, `destination_url` unchanged (url slug) / no active `slug_media` row (media slug).
+    **Expected state after activation:** `activation_status = activated`, `owner_client_id` set to the resolved `BotClient.id`, `activated_at` set, exactly one `bot_client_slugs` row for that slug/client, `destination_url` updated to the confirmed URL (url slug) / exactly one active `slug_media` row referencing a new `media_assets` row with a real `storage_key`/`mime_type`/`file_size` (media slug).
+    **Expected state after replay attempt:** identical to "after activation" — no additional rows, no changed values.
+  - **Phase A6 — cleanup instructions (disposable test data only):** before any cleanup action, re-run the verification queries above with the actual recorded slug names and confirm the exact `ActivationRecord`/`bot_client_slugs`/`media_assets` row ids and slug values you are about to act on. Only remove the two disposable test slugs actually created for this checklist (using the names recorded from the Admin UI, not any assumed name) and their associated `ActivationRecord`/`BotClientSlug` via the existing Admin UI archive controls. Do NOT hard-delete `redirect_links` rows (no such path exists) — archive them instead, or leave them archived as inert test artifacts. Do NOT delete the uploaded test media's R2 object or any `MediaAsset` row — R2 objects and `media_assets` rows are never deleted per existing policy; leaving the disposable test asset in place is the safe default. Do NOT delete or bulk-delete the `BotClient` used for the test if it is your own existing/reused Telegram identity — only remove a `BotClient` via Phase T1K bulk-delete if it was created solely for this test and is not the tester's ordinary account. Archive the disposable test slugs after verification rather than leaving them active.
   - `delete_activation_lifecycle_for_slug` — still not wired into any production route; no `redirect_links` hard-delete path exists yet
   - `page` slugs remain excluded from Activation Engine v1 by design
   - **Future Admin UI note (not scoped to any Activation Engine phase above):** the future Admin UI / Check Slug Panel phase should surface Activation Engine information for activation-enabled slugs — activation status, owner client, activated time, activation-token presence/state, and slug assignment state. Not implemented; not pulled into A4U, A4M, or A5.
