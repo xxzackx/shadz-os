@@ -2,6 +2,59 @@
 
 ---
 
+## Activation Engine v1 Phase A5 — Activation Finalization
+
+**Status:** Completed, deployed, and production-verified. **Phase A5 is now complete and closed. Activation Engine v1 is fully closed pending Phase A6 (regression/live-testing/production-closure documentation).**
+
+**Runtime commits:**
+- `0d7f2d83fff4ebaf8a7f00f13c781867a747cb3c` — Complete Activation Engine Phase A5 finalization
+- `24880965bbf5748f1acf375f539c7ddb0d9f575f` — Fix Activation Engine Phase A5 live-test defects: session state, slug selection, and URL confirmation hardening
+
+**Files changed:** `bot_runtime.py`, `tests/test_activation_engine_phase_a2.py`, `tests/test_activation_engine_phase_a4u.py`, `tests/test_activation_engine_phase_a4m.py`, `tests/test_activation_engine_phase_a5.py` (new), `tests/test_bot_runtime.py`, `tests/test_bot_runtime_management_flow.py` (new)
+
+**Delivered:**
+- URL and media activation now finalize atomically in one transaction: destination URL persisted (`url` slugs) or Telegram file downloaded + uploaded to R2 + exactly one active `SlugMedia` row created (`media` slugs), together with `ActivationRecord.owner_client_id`/`activation_status`/`activated_at` and the `BotClientSlug` management assignment — all committed together or rolled back together.
+- Ownership is recorded on `ActivationRecord` (`owner_client_id`, `activation_status`, `activated_at`); day-to-day slug-management authorization is governed solely by `BotClientSlug` — one Telegram user/`BotClient`/access code can hold and manage multiple slug assignments.
+- The activation token is consumed on success: `activation_status` transitions from `unactivated` to `activated`, and the same token/deep link is permanently disabled for further activation once claimed.
+- A slug already assigned to a different `BotClient` fails closed with zero mutation — no content write, no ownership change, no assignment change.
+- Duplicate and concurrent finalization is protected by an atomic conditional `UPDATE ... WHERE activation_status = 'unactivated'` compare-and-set — only one caller can ever transition a record; the loser's entire transaction (including any staged `BotClientSlug`/`MediaAsset`/`SlugMedia`) rolls back untouched, silently, with no duplicate write or duplicate message.
+- Post-activation, the chat session always returns to the plain access-code entry point (`awaiting_code`) with the existing access-code prompt sent — activation never keeps a customer automatically authenticated; managing anything still requires entering the access code.
+- Live-test defect corrections: a `BotClient` with exactly one active assigned slug now auto-selects it straight into management (no numbered "reply with a number between 1 and 1" prompt); a multi-slug account still shows/re-shows the numbered list on login and on cancel; no code path leaves a hidden one-item `awaiting_slug_selection` state; single-slug cancel returns to `awaiting_code`, multi-slug cancel re-renders the list; selecting a `url` slug still asks for the new destination immediately (no extra menu step).
+- The existing T1B URL-update confirmation now uses inline Confirm/Change/Cancel buttons as the primary UX (typed YES/NO/CANCEL/CHANGE remains a fully-unified compatibility fallback sharing the exact same claim/action implementation, `_claim_url_management_context`/`_apply_url_management_action`) — a session-claim mechanism (no schema change, no DB-level CAS) makes sequential and concurrent duplicate Confirm/Change/Cancel delivery safe; a DB failure during Confirm rolls back and restores a fresh, retryable `awaiting_confirmation` state.
+
+**Verification:**
+- 350/350 full suite passed, 28 subtests passed; `git diff --check` clean; `py_compile` clean
+- New focused tests: `tests/test_activation_engine_phase_a5.py` and `tests/test_bot_runtime_management_flow.py`
+
+**Live production tests passed:**
+1. URL activation
+2. Media activation for a repeat customer using the same client/access code
+3. Multi-slug management
+4. URL duplicate Confirm safety
+5. Media replacement — the media-activation duplicate-callback race was not reproducible through the current UI in a live session and remains covered by automated concurrency tests instead
+6. Conflicting assignment fail-closed
+7. Service logs and local/public health
+8. Final DB consistency audit
+
+**Production DB audit:** found no ownership, assignment, active-media, or reference inconsistencies.
+
+**Known accepted follow-up:**
+- R2 upload happens before the DB transaction commits; a failed or losing-concurrent finalization attempt can leave an orphaned R2 object with no DB reference. Not treated as a defect — same class of pre-existing risk as the T1C replacement-media flow.
+- Media cleanup / R2 deletion workflow is deferred to after Activation Engine v1 closure — not part of A5 or A6.
+- Confirmed cleanup candidates from this phase's live testing: `MediaAsset` ids `2` and `13`.
+- Future Admin UI should surface activation status, owner, `activated_at`, activation-token state, and slug assignment — not implemented, not pulled into any Activation Engine phase.
+
+**Touched:** `bot_runtime.py`, `tests/test_activation_engine_phase_a2.py`, `tests/test_activation_engine_phase_a4u.py`, `tests/test_activation_engine_phase_a4m.py`, `tests/test_activation_engine_phase_a5.py` (new), `tests/test_bot_runtime.py`, `tests/test_bot_runtime_management_flow.py` (new)
+**Database:** no schema/migration change — existing `activation_records`/`bot_client_slugs`/`media_assets`/`slug_media` columns only
+**Backend/routes/API:** unchanged outside `bot_runtime.py`'s conversation state machine
+**Telegram Bot:** activation finalization wired inline into the existing A4U/A4M Confirm dispatch; T1B URL-management confirmation gains inline buttons with a unified typed fallback
+
+**Final production runtime commit:** `2488096` (`24880965bbf5748f1acf375f539c7ddb0d9f575f`)
+
+**Next roadmap phase:** Activation Engine v1 Phase A6 — Regression, Live Testing and Production Closure (final Activation Engine v1 closure).
+
+---
+
 ## Activation Engine v1 Phase A4M — Media Content Setup
 
 **Status:** Completed, deployed, and production-verified. **Phase A4M is now complete and closed.**
