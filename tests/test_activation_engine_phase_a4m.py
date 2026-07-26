@@ -876,8 +876,11 @@ class ActivationMediaSetupTests(unittest.TestCase):
         self.assertEqual(
             self.db.query(models.BotClientSlug).filter(models.BotClientSlug.slug == "m1").count(), 1
         )
+        # Live-test defect fix: activation never keeps the chat
+        # automatically authenticated — a fresh access-code login is
+        # required to manage anything.
         session = bot_runtime._SESSIONS[42]
-        self.assertEqual(session["state"], "awaiting_slug_selection")
+        self.assertEqual(session, {"state": "awaiting_code"})
 
 
 class A4MWebhookCallbackDispatchTests(unittest.TestCase):
@@ -1008,15 +1011,18 @@ class A4MWebhookCallbackDispatchTests(unittest.TestCase):
         self.assertEqual(
             self.db.query(models.BotClientSlug).filter(models.BotClientSlug.slug == "m1").count(), 1
         )
+        # Live-test defect fix: activation never keeps the chat
+        # automatically authenticated — a fresh access-code login is
+        # required to manage anything.
         session = bot_runtime._SESSIONS[42]
-        self.assertEqual(session["state"], "awaiting_slug_selection")
+        self.assertEqual(session, {"state": "awaiting_code"})
 
     def test_duplicate_confirm_callback_does_not_clear_authenticated_session(self):
         # A genuinely repeated tap (distinct update_id) after activation
-        # already succeeded must not clear the winner's authenticated
-        # awaiting_slug_selection session — the session-race guard
-        # (_pop_stale_session) in A4M's own (untouched) callback handler
-        # must not clobber it.
+        # already succeeded must not clear the winner's session (the
+        # normal awaiting_code state activation always resets to) — the
+        # session-race guard (_pop_stale_session) in A4M's own (untouched)
+        # callback handler must not clobber it.
         self._drive_to_confirmation_state()
 
         self._post(self._a4m_callback_body(
@@ -1030,8 +1036,7 @@ class A4MWebhookCallbackDispatchTests(unittest.TestCase):
         self.assertEqual(record.activation_status, "activated")
         self.assertEqual(self.db.query(models.MediaAsset).count(), 1)
         session = bot_runtime._SESSIONS[42]
-        self.assertEqual(session["state"], "awaiting_slug_selection")
-        self.assertTrue(any(s["slug"] == "m1" for s in session["slugs"]))
+        self.assertEqual(session, {"state": "awaiting_code"})
 
     def test_existing_activate_now_callback_dispatch_is_unaffected(self):
         self._seed_media_slug()

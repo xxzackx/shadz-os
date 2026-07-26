@@ -1537,28 +1537,15 @@ async def _finalize_activation_confirmation(chat_id: int, db: Session) -> None:
         await _send_message(chat_id, _ACTIVATION_FINALIZE_FAILED_TEXT)
         return
 
-    # Success — clear activation-specific session data and return to the
-    # existing normal authenticated state (mirrors the post-login branch in
-    # _handle_message: the newly-created/reused BotClientSlug means the
-    # just-activated slug is immediately present in this list, so the
-    # empty-slugs branch below is only reached if the client has other
-    # unrelated gaps in assignment).
-    slugs = _get_active_assigned_slugs(client.id, db)
-    if not slugs:
-        _SESSIONS[chat_id] = {"state": "awaiting_code"}
-        await _send_message(chat_id, _ACTIVATION_COMPLETE_TEXT.format(code=client.access_code))
-        await _send_message(
-            chat_id,
-            "You're authenticated, but no active slugs are assigned to your account yet.",
-        )
-        return
-
-    _SESSIONS[chat_id] = {
-        "state": "awaiting_slug_selection",
-        "bot_client_id": client.id,
-        "slugs": slugs,
-    }
+    # Success — clear ALL activation/authenticated-management session state
+    # and return the chat to the normal access-code entry point. Activation
+    # never keeps the customer automatically logged in: they must still
+    # enter their access code afterward to manage anything, exactly like
+    # any other visit — the completion message may quote that code, but it
+    # does not substitute for entering it.
+    _SESSIONS[chat_id] = {"state": "awaiting_code"}
     await _send_message(chat_id, _ACTIVATION_COMPLETE_TEXT.format(code=client.access_code))
+    await _send_message(chat_id, "Welcome to SHADZ. Please enter your access code.")
 
 
 # ---------------------------------------------------------------------------
@@ -1601,6 +1588,44 @@ def _parse_index(text: str, count: int) -> int | None:
     return n - 1
 
 
+async def _enter_slug_list_state(chat_id: int, bot_client_id: int, slugs: list[dict]) -> None:
+    """Enter awaiting_slug_selection and immediately show the numbered
+    list — the only place this state is ever entered, so it can never be
+    reached silently without the list being displayed. Shared by the
+    login flow (multiple assigned slugs) and _return_to_slug_list_or_login
+    below, so the two paths cannot diverge.
+    """
+    _SESSIONS[chat_id] = {
+        "state": "awaiting_slug_selection",
+        "bot_client_id": bot_client_id,
+        "slugs": slugs,
+    }
+    await _send_message(chat_id, _format_slug_menu(slugs))
+
+
+async def _return_to_slug_list_or_login(chat_id: int, session: dict) -> None:
+    """Return from a per-slug management flow (cancel, or after a slug
+    turns out to no longer be available) to the correct resting state.
+
+    Never leaves a client sitting in a hidden, undisplayed
+    awaiting_slug_selection state, and never leaves a single-slug client
+    in that state at all: with zero or one active assigned slugs there is
+    nothing meaningful left to "select", so this goes straight back to the
+    plain access-code entry point instead (matching a fresh visit — the
+    client must re-enter their code to resume managing anything, exactly
+    like the rest of this bot's login-gated design). With more than one,
+    it returns to awaiting_slug_selection and immediately re-renders the
+    numbered list via _enter_slug_list_state, the same helper the login
+    flow uses, so the two paths can never diverge.
+    """
+    slugs = session.get("slugs", [])
+    if len(slugs) <= 1:
+        _SESSIONS[chat_id] = {"state": "awaiting_code"}
+        await _send_message(chat_id, "Welcome to SHADZ. Please enter your access code.")
+        return
+    await _enter_slug_list_state(chat_id, session["bot_client_id"], slugs)
+
+
 # ---------------------------------------------------------------------------
 # Link Safety Guard (Phase T1F) — blocks customers from pointing a bot-managed
 # url slug back at SHADZ itself or an internal/local address, which would
@@ -1632,6 +1657,278 @@ def _current_media_status_text(slug: str, db: Session) -> str:
     if not asset:
         return "no active media attached"
     return asset.display_name or asset.original_filename
+
+
+async def _enter_slug_management_state(
+    chat_id: int, bot_client_id: int, slugs: list[dict], chosen_slug: str, db: Session
+) -> None:
+    """Enter the correct per-content-type management state for a chosen
+    slug, branching on the authoritative DB content_type.
+
+    Shared by two call sites so both apply identical authorization/state-
+    entry logic: the single-slug auto-select path (login with exactly one
+    active assigned slug — no numbered list is ever shown) and the
+    numbered-selection path (awaiting_slug_selection, once the customer has
+    picked one of several). `slugs` — the full assigned-slug list, however
+    many items it has — is carried into the resulting session dict so
+    _return_to_slug_list_or_login keeps working for a later /cancel or
+    completion regardless of which path got here.
+    """
+    link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == chosen_slug).first()
+    if not link or link.is_archived is True:
+        await _send_message(chat_id, "That slug is no longer available.")
+        await _return_to_slug_list_or_login(
+            chat_id, {"bot_client_id": bot_client_id, "slugs": slugs}
+        )
+        return
+
+    if link.content_type == "media":
+        status = _current_media_status_text(chosen_slug, db)
+        _SESSIONS[chat_id] = {
+            "state": "awaiting_media_upload",
+            "bot_client_id": bot_client_id,
+            "slugs": slugs,
+            "selected_slug": chosen_slug,
+        }
+        await _send_message(
+            chat_id,
+            f"Current media: {status}\n\n"
+            "Send a replacement file (photo, document, video, or GIF) to update "
+            "this slug's media, or /cancel.",
+        )
+        return
+
+    # url — the only other content_type a BotClientSlug can ever be
+    # assigned for (page slugs are rejected at admin-assignment time,
+    # matching the existing fail-closed behaviour there, so there is
+    # nothing further to branch on here).
+    _SESSIONS[chat_id] = {
+        "state": "awaiting_new_url",
+        "bot_client_id": bot_client_id,
+        "slugs": slugs,
+        "selected_slug": chosen_slug,
+    }
+    await _send_message(
+        chat_id,
+        f"Current destination for '{chosen_slug}':\n{link.destination_url}\n\n"
+        "Reply with the new destination URL (must start with http:// or https://), "
+        "or /cancel.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# T1B URL Management — Confirm/Change/Cancel
+#
+# Mirrors the Activation Engine's own Confirm/Change button pattern (A4U)
+# for the pre-existing self-service URL-update flow (awaiting_confirmation
+# state) — with one shared action implementation for BOTH the inline
+# buttons and the typed YES/NO/CHANGE compatibility fallback in
+# _handle_message, so the two entry points can never diverge. Unlike A4U's
+# activation tokens, nothing here needs to survive across chats/devices or
+# a webhook redelivery window spanning multiple distinct records — the
+# whole flow lives inside one already-authenticated chat's own _SESSIONS
+# entry — so the callback_data itself carries no per-request data at all:
+# three fixed, validated, action-only strings. Every real value (which
+# slug, the new destination) comes only from _SESSIONS[chat_id]
+# (re-validated) and a fresh DB lookup, never from the callback payload.
+#
+# Idempotency: the pending-confirmation context is claimed by
+# _claim_url_management_context, which mutates _SESSIONS[chat_id]
+# synchronously with no `await` in between the validity check and the
+# claim — asyncio only switches tasks at an `await`, so nothing else can
+# observe or act on this session between those two lines. A second
+# Confirm/Change/Cancel delivery — sequential duplicate, a typed message
+# racing a button tap, or vice versa — always finds the claimed marker
+# instead of "awaiting_confirmation" and fails closed, whichever one it
+# is. This is deliberately just an in-memory session-dict claim, not
+# activation-style DB-level CAS — there is no multi-writer database race
+# here to guard against, only Python tasks sharing one process's
+# _SESSIONS dict.
+# ---------------------------------------------------------------------------
+
+_URL_MANAGEMENT_CONFIRM_CALLBACK = "urlmgmt_confirm"
+_URL_MANAGEMENT_CHANGE_CALLBACK = "urlmgmt_change"
+_URL_MANAGEMENT_CANCEL_CALLBACK = "urlmgmt_cancel"
+_URL_MANAGEMENT_CLAIMED_STATE = "awaiting_confirmation_claimed"
+_URL_MANAGEMENT_UNAVAILABLE_TEXT = "This action is no longer available."
+
+
+def _url_management_confirmation_markup() -> dict:
+    return {
+        "inline_keyboard": [[
+            {"text": "Confirm", "callback_data": _URL_MANAGEMENT_CONFIRM_CALLBACK},
+            {"text": "Change", "callback_data": _URL_MANAGEMENT_CHANGE_CALLBACK},
+            {"text": "Cancel", "callback_data": _URL_MANAGEMENT_CANCEL_CALLBACK},
+        ]]
+    }
+
+
+def _claim_url_management_context(chat_id: int) -> dict | None:
+    """Validate and claim the pending awaiting_confirmation context for
+    chat_id, synchronously (no await anywhere in this function).
+
+    Shared by both the inline-button callback handler and the typed
+    YES/NO/CHANGE fallback in _handle_message so the two entry points
+    apply identical validity/claim rules and can never diverge. Returns
+    the claimed values (bot_client_id, slugs, selected_slug,
+    pending_value, and the exact claimed_session object for identity
+    re-checks) or None if there is nothing valid to claim — a genuinely
+    invalid/stale/foreign-chat session, or one already claimed by a prior
+    or racing delivery.
+    """
+    session = _SESSIONS.get(chat_id) if chat_id is not None else None
+    valid_session = (
+        session is not None
+        and session.get("state") == "awaiting_confirmation"
+        and isinstance(session.get("selected_slug"), str)
+        and isinstance(session.get("pending_value"), str)
+    )
+    if not valid_session:
+        return None
+
+    bot_client_id = session.get("bot_client_id")
+    slugs = session.get("slugs", [])
+    selected_slug = session["selected_slug"]
+    pending_value = session["pending_value"]
+    claimed_session = {
+        "state": _URL_MANAGEMENT_CLAIMED_STATE,
+        "bot_client_id": bot_client_id,
+        "slugs": slugs,
+        "selected_slug": selected_slug,
+    }
+    _SESSIONS[chat_id] = claimed_session
+    return {
+        "bot_client_id": bot_client_id,
+        "slugs": slugs,
+        "selected_slug": selected_slug,
+        "pending_value": pending_value,
+        "claimed_session": claimed_session,
+    }
+
+
+async def _apply_url_management_action(chat_id: int, action: str, claim: dict, db: Session) -> None:
+    """Perform the actual Confirm/Change/Cancel action using an
+    already-claimed context from _claim_url_management_context.
+
+    This is the one piece of logic the inline-button callback handler and
+    the typed YES/NO/CHANGE fallback both call, so persistence, rollback/
+    retry, and the single/multi-slug return behaviour can never diverge
+    between the two entry points. `action` is one of
+    "confirm"/"change"/"cancel". On a DB failure during confirm, the
+    transaction is rolled back and the session is restored to a fresh
+    "awaiting_confirmation" with the same pending slug/URL, so the
+    customer can safely retry without retyping.
+    """
+    bot_client_id = claim["bot_client_id"]
+    slugs = claim["slugs"]
+    selected_slug = claim["selected_slug"]
+    pending_value = claim["pending_value"]
+
+    if action == "change":
+        _SESSIONS[chat_id] = {
+            "state": "awaiting_new_url",
+            "bot_client_id": bot_client_id,
+            "slugs": slugs,
+            "selected_slug": selected_slug,
+        }
+        await _send_message(
+            chat_id,
+            "No problem — please send the new destination URL (must start with "
+            "http:// or https://), or /cancel.",
+        )
+        return
+
+    if action == "cancel":
+        await _send_message(chat_id, "Cancelled.")
+        await _return_to_slug_list_or_login(
+            chat_id, {"bot_client_id": bot_client_id, "slugs": slugs}
+        )
+        return
+
+    # confirm — re-validate DB truth fresh, never trust the content_type
+    # cached at slug-selection time.
+    try:
+        link = (
+            db.query(models.RedirectLink)
+            .filter(models.RedirectLink.slug == selected_slug)
+            .first()
+        )
+        if not link or link.is_archived is True or link.content_type != "url":
+            await _send_message(chat_id, "That slug is no longer available.")
+            await _return_to_slug_list_or_login(
+                chat_id, {"bot_client_id": bot_client_id, "slugs": slugs}
+            )
+            return
+        link.destination_url = pending_value
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "URL management commit failed for chat_id=%s slug=%s", chat_id, selected_slug
+        )
+        _SESSIONS[chat_id] = {
+            "state": "awaiting_confirmation",
+            "bot_client_id": bot_client_id,
+            "slugs": slugs,
+            "selected_slug": selected_slug,
+            "pending_value": pending_value,
+        }
+        await _send_message(chat_id, "Something went wrong saving the update. Please try again.")
+        return
+
+    await _send_message(chat_id, f"Done. '{selected_slug}' now points to {pending_value}.")
+    await _return_to_slug_list_or_login(
+        chat_id, {"bot_client_id": bot_client_id, "slugs": slugs}
+    )
+
+
+async def _handle_url_management_confirmation_callback(callback_query: dict, db: Session) -> None:
+    """Handle the T1B URL-management Confirm/Change/Cancel inline-button
+    press (awaiting_confirmation state).
+
+    Never crashes on a malformed update. callback_data is one of three
+    fixed literals with no dynamic component, so nothing from the payload
+    is ever trusted for the slug, URL, or client identity.
+
+    Claims the pending context via _claim_url_management_context before
+    the only `await` in this function (_answer_callback_query), then
+    re-checks _SESSIONS[chat_id] is still that exact claimed object
+    immediately afterward, before calling _apply_url_management_action —
+    never relies solely on the claim captured before that await.
+    """
+    if not isinstance(callback_query, dict):
+        return
+
+    callback_query_id = callback_query.get("id")
+    data = callback_query.get("data")
+    action_by_callback = {
+        _URL_MANAGEMENT_CONFIRM_CALLBACK: "confirm",
+        _URL_MANAGEMENT_CHANGE_CALLBACK: "change",
+        _URL_MANAGEMENT_CANCEL_CALLBACK: "cancel",
+    }
+    action = action_by_callback.get(data) if isinstance(data, str) else None
+    if action is None:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id)
+        return
+
+    chat_id = _callback_chat_id(callback_query)
+    claim = _claim_url_management_context(chat_id) if chat_id is not None else None
+    if claim is None:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_URL_MANAGEMENT_UNAVAILABLE_TEXT)
+        return
+
+    if callback_query_id:
+        await _answer_callback_query(callback_query_id)
+
+    # Re-check identity immediately after the only await above — nothing
+    # legitimate touches this exact object once claimed, but this is the
+    # explicit "never rely solely on a pre-await claim" guard.
+    if _SESSIONS.get(chat_id) is not claim["claimed_session"]:
+        return
+
+    await _apply_url_management_action(chat_id, action, claim, db)
 
 
 # ---------------------------------------------------------------------------
@@ -1812,15 +2109,21 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
             await _send_message(chat_id, "You're authenticated, but no active slugs are assigned to your account yet.")
             return
 
-        _SESSIONS[chat_id] = {
-            "state": "awaiting_slug_selection",
-            "bot_client_id": client.id,
-            "slugs": slugs,
-        }
-        await _send_message(chat_id, _format_slug_menu(slugs))
+        if len(slugs) == 1:
+            # A single assigned slug has nothing meaningful to "select" —
+            # go straight to its management menu instead of a numbered
+            # list whose only valid answer is "1".
+            await _enter_slug_management_state(chat_id, client.id, slugs, slugs[0]["slug"], db)
+            return
+
+        await _enter_slug_list_state(chat_id, client.id, slugs)
         return
 
     if state == "awaiting_slug_selection":
+        # This state is only ever entered by _enter_slug_list_state, which
+        # never runs for zero-or-one-slug clients (see the login branch
+        # above and _return_to_slug_list_or_login) — so `slugs` here always
+        # has 2+ items and a numbered choice is always meaningful.
         slugs = session.get("slugs", [])
         idx = _parse_index(text, len(slugs))
         if idx is None:
@@ -1828,40 +2131,15 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
             return
 
         chosen = slugs[idx]
-        link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == chosen["slug"]).first()
-        if not link or link.is_archived is True:
-            await _send_message(chat_id, "That slug is no longer available.")
-            _SESSIONS[chat_id] = _reset_to_slug_menu(session)
-            return
-
-        if chosen["content_type"] == "media":
-            status = _current_media_status_text(chosen["slug"], db)
-            session["state"] = "awaiting_media_upload"
-            session["selected_slug"] = chosen["slug"]
-            _SESSIONS[chat_id] = session
-            await _send_message(
-                chat_id,
-                f"Current media: {status}\n\n"
-                "Send a replacement file (photo, document, video, or GIF) to update "
-                "this slug's media, or /cancel.",
-            )
-            return
-
-        session["state"] = "awaiting_new_url"
-        session["selected_slug"] = chosen["slug"]
-        _SESSIONS[chat_id] = session
-        await _send_message(
-            chat_id,
-            f"Current destination for '{chosen['slug']}':\n{link.destination_url}\n\n"
-            "Reply with the new destination URL (must start with http:// or https://), "
-            "or /cancel.",
+        await _enter_slug_management_state(
+            chat_id, session["bot_client_id"], slugs, chosen["slug"], db
         )
         return
 
     if state == "awaiting_new_url":
         if text.lower() == "/cancel":
-            _SESSIONS[chat_id] = _reset_to_slug_menu(session)
             await _send_message(chat_id, "Cancelled.")
+            await _return_to_slug_list_or_login(chat_id, session)
             return
         if not (text.startswith("http://") or text.startswith("https://")):
             await _send_message(chat_id, "That doesn't look like a valid URL — it must start with http:// or https://. Try again, or /cancel.")
@@ -1880,14 +2158,16 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         await _send_message(
             chat_id,
             f"Update '{session['selected_slug']}' destination to:\n{text}\n\n"
-            "Reply YES to confirm or NO to cancel.",
+            "Tap Confirm to save it, Change to send a different URL, or Cancel to go back. "
+            "(You can also reply YES or NO.)",
+            reply_markup=_url_management_confirmation_markup(),
         )
         return
 
     if state == "awaiting_media_upload":
         if text.lower() == "/cancel":
-            _SESSIONS[chat_id] = _reset_to_slug_menu(session)
             await _send_message(chat_id, "Cancelled.")
+            await _return_to_slug_list_or_login(chat_id, session)
             return
 
         candidate = _extract_media_candidate(message)
@@ -1929,6 +2209,9 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         slug = session["selected_slug"]
         link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == slug).first()
         if not link or link.is_archived is True or link.content_type != "media":
+            # Pre-existing Phase 4M guard (unchanged) — a mid-upload type
+            # change is out of scope for this fix; kept exactly as before
+            # (see tests/test_bot_runtime.py).
             await _send_message(chat_id, "That slug is no longer available.")
             _SESSIONS[chat_id] = _reset_to_slug_menu(session)
             return
@@ -1986,30 +2269,46 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
             return
 
         await _send_message(chat_id, f"Done. Media for '{slug}' has been replaced.")
-        _SESSIONS[chat_id] = _reset_to_slug_menu(session)
+        await _return_to_slug_list_or_login(chat_id, session)
+        return
+
+    if state == _URL_MANAGEMENT_CLAIMED_STATE:
+        # Another action (an inline button or a typed YES/NO/CHANGE) is
+        # already mid-flight for this exact pending confirmation —
+        # _claim_url_management_context set this transient marker
+        # synchronously and whichever caller claimed it is still running.
+        # This state is never a real destination for a reply, so it must
+        # never fall into the generic "Unknown/expired state" reset below,
+        # which would clobber the in-flight claim's own session write out
+        # from under it. Silently ignore; there is nothing safe to do
+        # with this message.
         return
 
     if state == "awaiting_confirmation":
+        # Typed compatibility fallback for the inline Confirm/Change/Cancel
+        # buttons — routes through the exact same claim
+        # (_claim_url_management_context) and action
+        # (_apply_url_management_action) the button callback uses, so the
+        # two entry points can never diverge: same idempotency rules, same
+        # persistence/rollback/retry behaviour, same single/multi-slug
+        # return behaviour. No callback object is faked and no callback
+        # answer is sent — there is no Telegram callback here to answer.
         answer = text.lower()
         if answer in ("yes", "y", "confirm"):
-            link = (
-                db.query(models.RedirectLink)
-                .filter(models.RedirectLink.slug == session["selected_slug"])
-                .first()
-            )
-            if not link or link.is_archived is True or link.content_type != "url":
-                await _send_message(chat_id, "That slug is no longer available.")
-            else:
-                link.destination_url = session["pending_value"]
-                db.commit()
-                await _send_message(chat_id, f"Done. '{session['selected_slug']}' now points to {session['pending_value']}.")
-            _SESSIONS[chat_id] = _reset_to_slug_menu(session)
+            action = "confirm"
+        elif answer in ("no", "n", "cancel"):
+            action = "cancel"
+        elif answer == "change":
+            action = "change"
+        else:
+            await _send_message(chat_id, "Please reply YES to confirm or NO to cancel.")
             return
-        if answer in ("no", "n", "cancel"):
-            _SESSIONS[chat_id] = _reset_to_slug_menu(session)
-            await _send_message(chat_id, "Cancelled.")
+
+        claim = _claim_url_management_context(chat_id)
+        if claim is None:
+            await _send_message(chat_id, _URL_MANAGEMENT_UNAVAILABLE_TEXT)
             return
-        await _send_message(chat_id, "Please reply YES to confirm or NO to cancel.")
+        await _apply_url_management_action(chat_id, action, claim, db)
         return
 
     if state == "awaiting_activation_confirmation":
@@ -2267,6 +2566,14 @@ def register_bot_webhook_routes(app) -> None:
                     await _finalize_activation_confirmation(
                         _callback_chat_id(callback_query), db
                     )
+                elif cq_data in (
+                    _URL_MANAGEMENT_CONFIRM_CALLBACK,
+                    _URL_MANAGEMENT_CHANGE_CALLBACK,
+                    _URL_MANAGEMENT_CANCEL_CALLBACK,
+                ):
+                    # Distinct fixed literals — never touches the
+                    # activation-engine callback paths above.
+                    await _handle_url_management_confirmation_callback(callback_query, db)
                 else:
                     await _handle_activation_callback(callback_query, db)
             except Exception:

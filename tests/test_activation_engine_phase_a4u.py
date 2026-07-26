@@ -228,8 +228,11 @@ class ActivationUrlSetupTests(unittest.TestCase):
 
         self._run_message(42, "YES")
 
+        # Live-test defect fix: activation never keeps the chat
+        # automatically authenticated — it must require a fresh access-code
+        # login, not sit in a management state.
         session = bot_runtime._SESSIONS[42]
-        self.assertEqual(session["state"], "awaiting_slug_selection")
+        self.assertEqual(session, {"state": "awaiting_code"})
         self.mock_send_message.assert_any_await(
             42,
             bot_runtime._ACTIVATION_URL_SAVED_TEXT.format(url="https://merchant.example.com/product"),
@@ -681,7 +684,7 @@ class ActivationUrlSetupTests(unittest.TestCase):
         self.assertEqual(record.activation_status, "activated")
         self.assertIsNotNone(record.owner_client_id)
         session = bot_runtime._SESSIONS[42]
-        self.assertEqual(session["state"], "awaiting_slug_selection")
+        self.assertEqual(session, {"state": "awaiting_code"})
 
     def test_unrelated_message_while_stuck_in_setup_state_does_not_retry(self):
         # Arbitrary chat text ("thanks", "ok", ...) must NOT be treated as
@@ -856,8 +859,11 @@ class A4UWebhookCallbackDispatchTests(unittest.TestCase):
         self.assertEqual(
             self.db.query(models.BotClientSlug).filter(models.BotClientSlug.slug == "u1").count(), 1
         )
+        # Live-test defect fix: activation never keeps the chat
+        # automatically authenticated — a fresh access-code login is
+        # required to manage anything.
         session = bot_runtime._SESSIONS[42]
-        self.assertEqual(session["state"], "awaiting_slug_selection")
+        self.assertEqual(session, {"state": "awaiting_code"})
 
     def test_duplicate_confirm_callback_same_update_id_is_deduped(self):
         self._drive_to_confirmation_state()
@@ -886,8 +892,8 @@ class A4UWebhookCallbackDispatchTests(unittest.TestCase):
         # "unactivated", and takes its existing fail-closed path (generic
         # invalid text) — a pre-existing guard, not new logic. Its session
         # cleanup now uses the session-race guard (_pop_stale_session), so
-        # it must NOT clear the winner's already-authenticated
-        # awaiting_slug_selection session out from under the customer.
+        # it must NOT clear the winner's session (the normal awaiting_code
+        # state activation always resets to) out from under the customer.
         self._drive_to_confirmation_state()
         self.mock_answer.reset_mock()
 
@@ -912,8 +918,7 @@ class A4UWebhookCallbackDispatchTests(unittest.TestCase):
             self.db.query(models.BotClientSlug).filter(models.BotClientSlug.slug == "u1").count(), 1
         )
         session = bot_runtime._SESSIONS[42]
-        self.assertEqual(session["state"], "awaiting_slug_selection")
-        self.assertTrue(any(s["slug"] == "u1" for s in session["slugs"]))
+        self.assertEqual(session, {"state": "awaiting_code"})
 
     def test_existing_activate_now_callback_dispatch_is_unaffected(self):
         # Phase A2/A3's "activate_" callback_data must still resolve/create

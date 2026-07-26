@@ -225,7 +225,13 @@ class ActivationFinalizationDirectTests(unittest.TestCase):
         self.assertEqual(assignment.bot_client_id, other_client.id)
         self.assertEqual(self.db.query(models.BotClientSlug).filter(models.BotClientSlug.slug == "u1").count(), 1)
 
-    def test_activated_slug_immediately_visible_in_management_flow(self):
+    def test_activated_slug_assigned_but_session_requires_fresh_login(self):
+        # Live-test defect fix: activation must never leave the chat
+        # automatically authenticated. The BotClientSlug assignment is
+        # created immediately (so a subsequent access-code login sees the
+        # slug right away — see test_bot_runtime_management_flow.py for
+        # the end-to-end login-after-activation coverage), but the session
+        # itself resets to awaiting_code, not awaiting_slug_selection.
         self._make_link_and_record("u1", "url", "tok-u1")
         client = self._make_client()
         self._url_session("tok-u1", client.id)
@@ -233,10 +239,12 @@ class ActivationFinalizationDirectTests(unittest.TestCase):
         self._finalize()
 
         session = bot_runtime._SESSIONS[42]
-        self.assertEqual(session["state"], "awaiting_slug_selection")
-        slugs = session["slugs"]
-        self.assertTrue(any(s["slug"] == "u1" for s in slugs))
-        # Must not fall into the "no active slugs assigned" state.
+        self.assertEqual(session, {"state": "awaiting_code"})
+        assignment = self.db.query(models.BotClientSlug).filter(models.BotClientSlug.slug == "u1").first()
+        self.assertIsNotNone(assignment)
+        self.assertEqual(assignment.bot_client_id, client.id)
+        # Must not fall into the "no active slugs assigned" state — the
+        # assignment above proves there is one.
         self.mock_send_message.assert_any_call(
             42, bot_runtime._ACTIVATION_COMPLETE_TEXT.format(code=client.access_code)
         )
@@ -449,8 +457,9 @@ class ActivationFinalizationDirectTests(unittest.TestCase):
         # duplicate A4U Confirm tap re-validates against DB truth
         # (_lookup_unactivated_url_link) at the exact moment a concurrent
         # Phase A5 finalize has already committed and replaced
-        # _SESSIONS[42] with the winner's normal authenticated
-        # awaiting_slug_selection state. The loser's own fail-closed
+        # _SESSIONS[42] with the winner's normal post-activation
+        # awaiting_code state (activation never keeps the chat
+        # automatically authenticated). The loser's own fail-closed
         # cleanup must not clobber it.
         self._make_link_and_record("u1", "url", "tok-u1")
         winner_client = self._make_client()
@@ -461,16 +470,12 @@ class ActivationFinalizationDirectTests(unittest.TestCase):
             "content_type": "url",
             "pending_url": "https://merchant.example.com/product",
         }
-        winner_session = {
-            "state": "awaiting_slug_selection",
-            "bot_client_id": winner_client.id,
-            "slugs": [{"slug": "u1", "content_type": "url", "notes": None}],
-        }
+        winner_session = {"state": "awaiting_code"}
 
         def fake_lookup(token, db):
             # By the time this duplicate/losing tap's DB-truth check runs,
             # a concurrent finalize has already committed and moved the
-            # session to the winner's authenticated state.
+            # session to the winner's post-activation state.
             bot_runtime._SESSIONS[42] = winner_session
             return None
 
@@ -483,7 +488,7 @@ class ActivationFinalizationDirectTests(unittest.TestCase):
             asyncio.run(bot_runtime._handle_a4u_confirmation_callback(cq, self.db))
 
         self.assertIs(bot_runtime._SESSIONS[42], winner_session)
-        self.assertEqual(bot_runtime._SESSIONS[42]["state"], "awaiting_slug_selection")
+        self.assertEqual(bot_runtime._SESSIONS[42], {"state": "awaiting_code"})
 
     def test_retry_requires_complete_matching_activation_context(self):
         # A session missing a required field (here: bot_client_id) must

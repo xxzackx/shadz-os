@@ -87,10 +87,17 @@ class BotRuntimeStaleTypeTests(unittest.TestCase):
         refreshed = self._reload_link(link.slug)
         self.assertEqual(refreshed.destination_url, "https://new.example.com")
 
-        self.mock_send_message.assert_awaited_once()
-        called_chat_id, called_text = self.mock_send_message.await_args.args
-        self.assertEqual(called_chat_id, chat_id)
-        self.assertIn("https://new.example.com", called_text)
+        # Confirm now also returns to the correct resting state afterward
+        # (a single assigned slug here, so a fresh access-code prompt) —
+        # the typed path is unified with the button path, which always
+        # follows its completion message with that return.
+        self.assertEqual(self.mock_send_message.await_count, 2)
+        completion_calls = [
+            call for call in self.mock_send_message.await_args_list
+            if "https://new.example.com" in call.args[1]
+        ]
+        self.assertEqual(len(completion_calls), 1)
+        self.assertEqual(completion_calls[0].args[0], chat_id)
 
     def test_url_confirmation_rejected_when_slug_became_media(self):
         client, link = self._make_client_and_link(
@@ -114,10 +121,16 @@ class BotRuntimeStaleTypeTests(unittest.TestCase):
         self.assertEqual(refreshed.destination_url, "https://old.example.com")
         self.assertEqual(refreshed.content_type, "media")
 
-        self.mock_send_message.assert_awaited_once()
-        called_chat_id, called_text = self.mock_send_message.await_args.args
-        self.assertEqual(called_chat_id, chat_id)
-        self.assertIn("no longer available", called_text)
+        # The rejection is also followed by a return to the correct
+        # resting state (single assigned slug here, so a fresh
+        # access-code prompt) — same unified behaviour as Confirm.
+        self.assertEqual(self.mock_send_message.await_count, 2)
+        rejection_calls = [
+            call for call in self.mock_send_message.await_args_list
+            if "no longer available" in call.args[1]
+        ]
+        self.assertEqual(len(rejection_calls), 1)
+        self.assertEqual(rejection_calls[0].args[0], chat_id)
 
     # ── Media upload — existing guard must remain intact ───────────────────
 

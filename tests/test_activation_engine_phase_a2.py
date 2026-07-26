@@ -561,8 +561,11 @@ class HandleMessageActivationEntryTests(unittest.TestCase):
         self._run("/start")
         self._run("XYZ789")
 
+        # Exactly one assigned slug: auto-selected straight into its
+        # management menu, never a numbered "reply with a number between
+        # 1 and 1" list (see the Phase A5 live-test defect fix).
         self.assertEqual(self.mock_send_message.await_count, 2)
-        self.assertEqual(bot_runtime._SESSIONS[1]["state"], "awaiting_slug_selection")
+        self.assertEqual(bot_runtime._SESSIONS[1]["state"], "awaiting_new_url")
 
 
 class ActivationConfirmationSessionFallthroughTests(unittest.TestCase):
