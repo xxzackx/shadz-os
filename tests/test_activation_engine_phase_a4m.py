@@ -827,20 +827,57 @@ class ActivationMediaSetupTests(unittest.TestCase):
 
         self.assertEqual(self.db.query(models.MediaAsset).count(), 0)
 
-    # -- post-confirmation placeholder / A5 handoff ----------------------------
+    # -- post-confirmation: Phase A5 finalizes ---------------------------------
 
-    def test_unrelated_text_after_confirmation_preserves_confirmed_media(self):
+    def test_message_after_direct_confirm_call_does_not_finalize(self):
+        # _run_a4m_callback calls the handler directly, bypassing the
+        # webhook route's orchestration hook — so unlike a real webhook
+        # delivery, no finalize call happens yet, and the session is left
+        # sitting in _ACTIVATION_SETUP_STATE with confirmed_activation_media,
+        # exactly like a failed/interrupted attempt would be. A4M has no
+        # typed-confirm fallback (button-only, by original design) — a
+        # plain message here must NOT retry finalization (no re-download/
+        # re-upload from unrelated chat text); it only gets a reminder to
+        # re-tap Confirm.
         self._activate_media_slug("m1", "tok-m1")
         self._send_photo()
         self._run_a4m_callback(f"{bot_runtime._A4M_CONFIRM_PAYLOAD_PREFIX}tok-m1")
-        confirmed = dict(bot_runtime._SESSIONS[42]["confirmed_activation_media"])
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
+        self.assertIn("confirmed_activation_media", session)
+        self.mock_send_message.reset_mock()
 
         self._run_message(42, "hi there")
 
+        record = self.db.query(models.ActivationRecord).filter(models.ActivationRecord.slug == "m1").first()
+        self.assertEqual(record.activation_status, "unactivated")
+        self.mock_download.assert_not_awaited()
+        self.mock_upload.assert_not_called()
+        self.mock_send_message.assert_awaited_once_with(42, bot_runtime._ACTIVATION_FINALIZE_RETRY_MEDIA_TEXT)
         session = bot_runtime._SESSIONS[42]
         self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
-        self.assertEqual(session["confirmed_activation_media"], confirmed)
-        self.assertNotEqual(session["state"], "awaiting_code")
+
+    def test_retapping_confirm_after_direct_call_finalizes(self):
+        # The only retry surface for a media session is re-tapping Confirm
+        # (existing UX) — the callback dispatch re-invokes
+        # _finalize_activation_confirmation via the webhook route's
+        # orchestration hook (simulated directly here by calling both in
+        # sequence, matching what the route does).
+        self._activate_media_slug("m1", "tok-m1")
+        self._send_photo()
+        self._run_a4m_callback(f"{bot_runtime._A4M_CONFIRM_PAYLOAD_PREFIX}tok-m1")
+
+        self._run_a4m_callback(f"{bot_runtime._A4M_CONFIRM_PAYLOAD_PREFIX}tok-m1")
+        asyncio.run(bot_runtime._finalize_activation_confirmation(42, self.db))
+
+        record = self.db.query(models.ActivationRecord).filter(models.ActivationRecord.slug == "m1").first()
+        self.assertEqual(record.activation_status, "activated")
+        self.assertIsNotNone(record.owner_client_id)
+        self.assertEqual(
+            self.db.query(models.BotClientSlug).filter(models.BotClientSlug.slug == "m1").count(), 1
+        )
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["state"], "awaiting_slug_selection")
 
 
 class A4MWebhookCallbackDispatchTests(unittest.TestCase):
@@ -945,7 +982,10 @@ class A4MWebhookCallbackDispatchTests(unittest.TestCase):
         self._post(self._activation_callback_body(1001, "cbq-activate"))
         self._post(self._photo_message_body(1002))
 
-    def test_a4m_confirm_callback_is_dispatched_and_preserves_session(self):
+    def test_a4m_confirm_callback_finalizes_activation_immediately(self):
+        # Phase A5: no second button, no extra tap — the same request that
+        # dispatches the A4M Confirm callback also finalizes activation,
+        # via the existing T1C download/upload path (mocked in setUp).
         self._drive_to_confirmation_state()
 
         response = self._post(
@@ -953,10 +993,45 @@ class A4MWebhookCallbackDispatchTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        self.mock_download.assert_awaited_once()
+        self.mock_upload.assert_called_once()
+        self.assertEqual(self.db.query(models.MediaAsset).count(), 1)
+        active_media = (
+            self.db.query(models.SlugMedia)
+            .filter(models.SlugMedia.slug == "m1", models.SlugMedia.is_active == True)
+            .all()
+        )
+        self.assertEqual(len(active_media), 1)
+        record = self.db.query(models.ActivationRecord).filter(models.ActivationRecord.slug == "m1").first()
+        self.assertEqual(record.activation_status, "activated")
+        self.assertIsNotNone(record.owner_client_id)
+        self.assertEqual(
+            self.db.query(models.BotClientSlug).filter(models.BotClientSlug.slug == "m1").count(), 1
+        )
         session = bot_runtime._SESSIONS[42]
-        self.assertEqual(session["state"], bot_runtime._ACTIVATION_SETUP_STATE)
-        self.assertIn("confirmed_activation_media", session)
-        self.assertEqual(self.db.query(models.MediaAsset).count(), 0)
+        self.assertEqual(session["state"], "awaiting_slug_selection")
+
+    def test_duplicate_confirm_callback_does_not_clear_authenticated_session(self):
+        # A genuinely repeated tap (distinct update_id) after activation
+        # already succeeded must not clear the winner's authenticated
+        # awaiting_slug_selection session — the session-race guard
+        # (_pop_stale_session) in A4M's own (untouched) callback handler
+        # must not clobber it.
+        self._drive_to_confirmation_state()
+
+        self._post(self._a4m_callback_body(
+            2001, "cbq-confirm-a", f"{bot_runtime._A4M_CONFIRM_PAYLOAD_PREFIX}tok-m1"
+        ))
+        self._post(self._a4m_callback_body(
+            2002, "cbq-confirm-b", f"{bot_runtime._A4M_CONFIRM_PAYLOAD_PREFIX}tok-m1"
+        ))
+
+        record = self.db.query(models.ActivationRecord).filter(models.ActivationRecord.slug == "m1").first()
+        self.assertEqual(record.activation_status, "activated")
+        self.assertEqual(self.db.query(models.MediaAsset).count(), 1)
+        session = bot_runtime._SESSIONS[42]
+        self.assertEqual(session["state"], "awaiting_slug_selection")
+        self.assertTrue(any(s["slug"] == "m1" for s in session["slugs"]))
 
     def test_existing_activate_now_callback_dispatch_is_unaffected(self):
         self._seed_media_slug()

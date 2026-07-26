@@ -64,6 +64,24 @@ Scope:
     download/upload/MediaAsset-creation/slug-attachment sequence. Still
     never touches ActivationRecord.owner_client_id/activation_status/
     activated_at or BotClientSlug.
+  - activation finalization (Phase A5): runs inline, in the same request,
+    immediately after A4U/A4M's own Confirm step lands the session in
+    _ACTIVATION_SETUP_STATE with confirmed content — no second button, no
+    extra tap. A4U/A4M's Confirm handlers themselves are untouched (still
+    only ever stash validated content into the session); the webhook route
+    and the A4U typed-YES compatibility path both call
+    _finalize_activation_confirmation immediately afterward. It re-validates
+    every authoritative record from scratch, creates or reuses the
+    BotClientSlug assignment the activated BotClient needs to immediately
+    manage the slug (failing closed if the slug already belongs to a
+    different client), and performs the destination-URL write or the full
+    Telegram-download/R2-upload/MediaAsset/SlugMedia sequence together with
+    ActivationRecord.owner_client_id/activation_status/activated_at in one
+    transaction — committing all of it together or rolling all of it back.
+    The activation_status transition itself is an atomic conditional UPDATE
+    (WHERE activation_status = 'unactivated'), so two concurrent
+    finalizations for the same token can never both persist: the loser's
+    entire transaction is rolled back, untouched, as a silent no-op.
 
 Conversation state is held in an in-memory dict, acceptable for a single
 uvicorn process (no --workers flag in this deployment) and acceptable to lose
@@ -77,6 +95,7 @@ import logging
 import os
 import re
 from collections import deque
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import httpx
@@ -130,6 +149,59 @@ _SESSIONS: dict[int, dict] = {}
 # ---------------------------------------------------------------------------
 
 _SEEN_UPDATE_IDS: deque = deque(maxlen=500)
+
+
+def _pop_stale_session(chat_id: int | None, expected_session: dict | None) -> None:
+    """Clear _SESSIONS[chat_id] only if it's still the exact stale session
+    object the caller read earlier — guards against a genuinely concurrent
+    interleaving where something else replaces the session in the gap
+    between this caller's read and its cleanup. See
+    _pop_session_unless_already_activated for the sequential case (the far
+    more common one), which this alone does not cover.
+    """
+    if chat_id is not None and _SESSIONS.get(chat_id) is expected_session:
+        _SESSIONS.pop(chat_id, None)
+
+
+def _pop_session_unless_already_activated(
+    chat_id: int | None, expected_session: dict | None, token: str, db: Session
+) -> None:
+    """Clear a session on a genuinely invalid/expired activation token —
+    but never when a winner has already moved this exact chat's session
+    past this activation flow.
+
+    A DB-truth lookup for THIS token can fail because its own
+    ActivationRecord is already "activated" in two different situations,
+    and only one of them should skip the pop:
+      - A Phase A5 finalize for this exact token already succeeded AND
+        replaced this chat's session with the winner's normal
+        authenticated state (no longer carrying this activation_token at
+        all) — sequentially (a customer double-tapping Confirm: the first
+        tap activates and resets the session, then the second tap's
+        callback re-validates and finds the record no longer
+        "unactivated") or via a genuine concurrent race. Here the current
+        session must be left alone.
+      - The record became activated by some other means entirely, while
+        THIS chat's own session was never touched by anyone and still
+        looks exactly like the same unfinished activation flow (still
+        carries this activation_token). Here there is no winner state to
+        protect, and the existing fail-closed behaviour (clear the stale
+        session) is correct and unchanged.
+    The current session is re-read fresh (not the possibly-stale
+    `expected_session` the caller captured earlier) specifically to tell
+    these two apart.
+    """
+    status = (
+        db.query(models.ActivationRecord.activation_status)
+        .filter(models.ActivationRecord.activation_token == token)
+        .scalar()
+        if token else None
+    )
+    if status == "activated":
+        current = _SESSIONS.get(chat_id) if chat_id is not None else None
+        if current is not None and current.get("activation_token") != token:
+            return
+    _pop_stale_session(chat_id, expected_session)
 
 
 def _reset_to_slug_menu(session: dict) -> dict:
@@ -290,15 +362,6 @@ _ACTIVATION_URL_RETRY_TEXT = "No problem — please send the destination URL aga
 _ACTIVATION_URL_SAVED_TEXT = (
     "Got it. Destination saved for setup:\n{url}\n\n"
     "We'll continue setting up your product next."
-)
-# Sent for any message that isn't the explicit duplicate-confirmation
-# keyword while a session sits in the TEMPORARY post-confirmation
-# placeholder (_handle_message, state == _ACTIVATION_SETUP_STATE with
-# confirmed_destination_url set) — deliberately does not interpret or save
-# the message, just acknowledges the already-confirmed state.
-_ACTIVATION_SETUP_AWAITING_TEXT = (
-    "Your destination URL is already confirmed. Setup is awaiting "
-    "completion — we'll follow up shortly."
 )
 
 # ---------------------------------------------------------------------------
@@ -944,8 +1007,14 @@ async def _handle_a4u_confirmation_callback(callback_query: dict, db: Session) -
     if link is None:
         if callback_query_id:
             await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
-        if chat_id is not None:
-            _SESSIONS.pop(chat_id, None)
+        # Session-race guard: a losing/duplicate tap can reach here after a
+        # Phase A5 finalize for this exact token already succeeded —
+        # sequentially (the common case: the first tap already activated
+        # and reset the session before this second tap's callback runs) or
+        # concurrently. Either way, _SESSIONS[chat_id] may already be that
+        # winner's authenticated state and must never be cleared just
+        # because this token is no longer "unactivated".
+        _pop_session_unless_already_activated(chat_id, session, token, db)
         return
 
     # Duplicate-safety: a repeat Confirm tap after the session already
@@ -976,8 +1045,7 @@ async def _handle_a4u_confirmation_callback(callback_query: dict, db: Session) -
     if not valid_session:
         if callback_query_id:
             await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
-        if chat_id is not None:
-            _SESSIONS.pop(chat_id, None)
+        _pop_stale_session(chat_id, session)
         return
 
     if callback_query_id:
@@ -1110,8 +1178,12 @@ async def _handle_a4m_confirmation_callback(callback_query: dict, db: Session) -
     if link is None:
         if callback_query_id:
             await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
-        if chat_id is not None:
-            _SESSIONS.pop(chat_id, None)
+        # Session-race guard: see the matching comment in
+        # _handle_a4u_confirmation_callback — a Phase A5 finalize for this
+        # exact token may have already succeeded (sequentially or
+        # concurrently), so never clear the session just because this
+        # token is no longer "unactivated".
+        _pop_session_unless_already_activated(chat_id, session, token, db)
         return
 
     # Duplicate-safety: a repeat Confirm tap after the session already
@@ -1141,8 +1213,7 @@ async def _handle_a4m_confirmation_callback(callback_query: dict, db: Session) -
     if not valid_session:
         if callback_query_id:
             await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
-        if chat_id is not None:
-            _SESSIONS.pop(chat_id, None)
+        _pop_stale_session(chat_id, session)
         return
 
     if action == "confirm" and not _is_valid_pending_activation_media(session.get("pending_activation_media")):
@@ -1151,7 +1222,7 @@ async def _handle_a4m_confirmation_callback(callback_query: dict, db: Session) -
         # — fail closed rather than confirm nothing.
         if callback_query_id:
             await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
-        _SESSIONS.pop(chat_id, None)
+        _pop_stale_session(chat_id, session)
         return
 
     if callback_query_id:
@@ -1174,6 +1245,320 @@ async def _handle_a4m_confirmation_callback(callback_query: dict, db: Session) -
     session["state"] = _ACTIVATION_MEDIA_INPUT_STATE
     _SESSIONS[chat_id] = session
     await _send_message(chat_id, _ACTIVATION_MEDIA_RETRY_TEXT)
+
+
+# ---------------------------------------------------------------------------
+# Activation Engine v1 — Phase A5 (Activation Finalization)
+#
+# Runs INLINE, in the same request, immediately after A4U/A4M's own Confirm
+# step lands the session in _ACTIVATION_SETUP_STATE with confirmed content —
+# no second button, no extra tap. A4U/A4M's Confirm handlers themselves are
+# untouched: they still only stash validated content into the session. The
+# two call sites that invoke _finalize_activation_confirmation are the
+# webhook route (right after dispatching an a4uconfirm_/a4uchange_ or
+# a4mconfirm_/a4mchange_ callback) and _handle_message's A4U typed-YES
+# compatibility branch — the only other place a Confirm can happen. Both
+# call sites call it unconditionally; the function itself no-ops unless
+# there's actually something to finalize.
+#
+# A retap of Confirm (already a no-op inside A4U/A4M's own duplicate-safety
+# branch) or any further message while still sitting in
+# _ACTIVATION_SETUP_STATE (see the replaced placeholder in _handle_message
+# below) both re-enter this same function — that doubles as the retry path
+# after a failed attempt, without a dedicated button.
+# ---------------------------------------------------------------------------
+
+_ACTIVATION_ALREADY_COMPLETE_TEXT = "This product has already been activated."
+_ACTIVATION_FINALIZE_FAILED_TEXT = (
+    "Something went wrong completing activation. Please try again in a moment."
+)
+_ACTIVATION_ASSIGNMENT_CONFLICT_TEXT = (
+    "This product can't be activated right now. Please contact SHADZ support."
+)
+# Sent by the narrow retry surface in _handle_message when a session is
+# still stuck in _ACTIVATION_SETUP_STATE (an earlier finalize attempt
+# failed) and the incoming message wasn't the specific retry trigger for
+# its content type — reuses A4U's own existing "Confirm"/typed-YES UX
+# rather than treating arbitrary text as an implicit retry.
+_ACTIVATION_FINALIZE_RETRY_URL_TEXT = (
+    "Please tap Confirm above, or reply YES, to finish activating your product."
+)
+_ACTIVATION_FINALIZE_RETRY_MEDIA_TEXT = (
+    "Please tap Confirm above to finish activating your product."
+)
+# "{code}" is the same plain-text BotClient.access_code already sent by
+# _ACCESS_CODE_READY_TEXT earlier in this flow — not a new secret.
+_ACTIVATION_COMPLETE_TEXT = (
+    "Activation completed. Your SHADZ product is now active.\n\n"
+    "Access code: {code}\n\n"
+    "Use your code any time to manage this product."
+)
+
+
+def _callback_chat_id(callback_query: dict) -> int | None:
+    """Extract chat_id from a callback_query, or None for a malformed one.
+
+    A small new helper for Phase A5's own call sites only — the existing
+    A2/A3/A4U/A4M handlers each already inline this same extraction and are
+    left as-is (not refactored to use this).
+    """
+    if not isinstance(callback_query, dict):
+        return None
+    message = callback_query.get("message")
+    chat = message.get("chat") if isinstance(message, dict) else None
+    return chat.get("id") if isinstance(chat, dict) else None
+
+
+async def _reject_finalization(
+    chat_id: int, session: dict | None, text: str | None = None
+) -> None:
+    """Shared fail-closed exit for _finalize_activation_confirmation.
+
+    Sends an optional message and clears the activation session via
+    _pop_stale_session — see that helper for why the identity check matters
+    for the idempotent "someone else already finalized this" case. Never
+    touches the DB — callers only reach this after any staged DB changes
+    have already been rolled back (or were never staged).
+    """
+    if text is not None:
+        await _send_message(chat_id, text)
+    _pop_stale_session(chat_id, session)
+
+
+async def _finalize_activation_confirmation(chat_id: int, db: Session) -> None:
+    """Immediately finalize an A4U/A4M activation once its Confirm step has
+    landed the session in _ACTIVATION_SETUP_STATE with confirmed content.
+
+    A no-op unless the session is actually sitting in that state with
+    confirmed_destination_url or confirmed_activation_media set — safe to
+    call unconditionally after every A4U/A4M Confirm/Change dispatch (a
+    Change never reaches that state) and after any later message/callback
+    that lands here again (the retry path after a failed attempt).
+
+    Re-fetches every authoritative record fresh — never trusts the session
+    for anything beyond the token/content_type/bot_client_id it already
+    carries, and reuses _lookup_unactivated_record for the exists/
+    unactivated/link-not-archived checks it already performs for A2/A3.
+
+    Ownership: a BotClientSlug for (client, slug) is created if missing, or
+    reused as-is if it already points at this exact client. If it points at
+    a DIFFERENT client, this fails closed with zero mutation. The DB's own
+    UNIQUE constraint on BotClientSlug.slug is the defense-in-depth backstop
+    against a genuine race with an out-of-band admin assignment (caught by
+    the outer except below).
+
+    Concurrency: the transition of ActivationRecord.activation_status from
+    "unactivated" to "activated" is performed as a single conditional
+    UPDATE ... WHERE activation_status = 'unactivated', and the returned
+    row count is checked. SQLite serializes concurrent writers, so two
+    simultaneous finalizations for the same token can never both see
+    rowcount == 1 — the loser's entire transaction (including any
+    BotClientSlug/MediaAsset/SlugMedia it staged) is rolled back untouched,
+    and it exits through the same silent, no-mutation path as an
+    already-activated token found on the early read below (that early read
+    is a cheap fast-path for the common case; the UPDATE's row count is
+    what actually guarantees correctness under a genuine race).
+    """
+    session = _SESSIONS.get(chat_id)
+    if session is None or session.get("state") != _ACTIVATION_SETUP_STATE:
+        return
+    if "confirmed_destination_url" not in session and "confirmed_activation_media" not in session:
+        return
+
+    token = session.get("activation_token")
+    content_type = "url" if "confirmed_destination_url" in session else "media"
+
+    record = _lookup_unactivated_record(token, db)
+    if record is None:
+        # Either genuinely invalid/archived/missing, or a concurrent
+        # winner already activated it — check raw DB truth to tell the
+        # two apart, independent of anything cached in the session. An
+        # already-"activated" record is a safe, silent no-op: never
+        # reveals which case occurred.
+        raw_status = (
+            db.query(models.ActivationRecord.activation_status)
+            .filter(models.ActivationRecord.activation_token == token)
+            .scalar()
+            if token else None
+        )
+        if raw_status == "activated":
+            await _reject_finalization(chat_id, session, None)
+        else:
+            await _reject_finalization(chat_id, session, _ACTIVATION_INVALID_LINK_TEXT)
+        return
+
+    link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == record.slug).first()
+    if not link or link.content_type != content_type:
+        await _reject_finalization(chat_id, session, _ACTIVATION_INVALID_LINK_TEXT)
+        return
+
+    bot_client_id = session.get("bot_client_id")
+    client = None
+    if isinstance(bot_client_id, int) and not isinstance(bot_client_id, bool):
+        client = (
+            db.query(models.BotClient)
+            .filter(models.BotClient.id == bot_client_id, models.BotClient.is_active.is_(True))
+            .first()
+        )
+    if client is None:
+        await _reject_finalization(chat_id, session, _ACTIVATION_CLIENT_BLOCKED_TEXT)
+        return
+
+    confirmed_url = None
+    pending_media = None
+    if content_type == "url":
+        confirmed_url = session.get("confirmed_destination_url")
+        if (
+            not isinstance(confirmed_url, str)
+            or not (confirmed_url.startswith("http://") or confirmed_url.startswith("https://"))
+            or _is_blocked_destination_url(confirmed_url)
+        ):
+            await _reject_finalization(chat_id, session, _ACTIVATION_INVALID_LINK_TEXT)
+            return
+    else:
+        pending_media = session.get("confirmed_activation_media")
+        if not _is_valid_pending_activation_media(pending_media):
+            await _reject_finalization(chat_id, session, _ACTIVATION_INVALID_LINK_TEXT)
+            return
+
+    # Ownership: reuse an existing assignment to this exact client, fail
+    # closed on one that belongs to someone else, otherwise stage a new one.
+    existing_assignment = (
+        db.query(models.BotClientSlug).filter(models.BotClientSlug.slug == record.slug).first()
+    )
+    if existing_assignment is not None and existing_assignment.bot_client_id != client.id:
+        await _reject_finalization(chat_id, session, _ACTIVATION_ASSIGNMENT_CONFLICT_TEXT)
+        return
+    assignment_needed = existing_assignment is None
+
+    # Media: download from Telegram and upload to R2 BEFORE any DB write —
+    # mirrors the existing T1C replacement-media flow. A failure here
+    # touches no DB row and leaves the session/token untouched, so
+    # re-tapping Confirm retries this same function from scratch.
+    #
+    # Concurrency note: this upload can't be part of the SQLite
+    # transaction below, so two genuinely concurrent finalizations for the
+    # same token can both reach here and both upload before the atomic
+    # compare-and-set (below) picks a winner. The loser's uploaded object
+    # is never referenced by any DB row and is never cleaned up — a
+    # documented, accepted orphan-R2 risk (same class as an ordinary
+    # post-upload commit failure, and the same one T1C's own replacement-
+    # media flow already carries), not something this phase adds cleanup
+    # for.
+    media_asset_kwargs = None
+    if content_type == "media":
+        try:
+            file_bytes = await _download_telegram_file(pending_media["telegram_file_id"])
+        except Exception:
+            logger.exception(
+                "A5 media download failed for chat_id=%s slug=%s", chat_id, record.slug
+            )
+            await _send_message(chat_id, _ACTIVATION_FINALIZE_FAILED_TEXT)
+            return
+
+        if len(file_bytes) > _MAX_TELEGRAM_MEDIA_BYTES:
+            await _send_message(chat_id, _ACTIVATION_FINALIZE_FAILED_TEXT)
+            return
+
+        storage_key = _make_storage_key(pending_media["media_type"], pending_media["original_filename"])
+        public_url = _make_public_url(storage_key)
+        try:
+            _upload_bytes_to_r2(storage_key, file_bytes, pending_media["mime_type"])
+        except Exception:
+            logger.exception(
+                "A5 R2 upload failed for chat_id=%s slug=%s", chat_id, record.slug
+            )
+            await _send_message(chat_id, _ACTIVATION_FINALIZE_FAILED_TEXT)
+            return
+
+        media_asset_kwargs = {
+            "media_type": pending_media["media_type"],
+            "storage_provider": "r2",
+            "storage_key": storage_key,
+            "public_url": public_url,
+            "original_filename": pending_media["original_filename"],
+            "mime_type": pending_media["mime_type"],
+            "file_size": len(file_bytes),
+        }
+
+    # Everything from here on is staged together and either committed as
+    # one unit or rolled back as one unit: the BotClientSlug assignment,
+    # content persistence, and the activation-record transition.
+    try:
+        if assignment_needed:
+            db.add(models.BotClientSlug(bot_client_id=client.id, slug=record.slug))
+
+        if content_type == "url":
+            link.destination_url = confirmed_url
+        else:
+            asset = models.MediaAsset(**media_asset_kwargs)
+            db.add(asset)
+            db.flush()
+            (
+                db.query(models.SlugMedia)
+                .filter(models.SlugMedia.slug == record.slug, models.SlugMedia.is_active == True)
+                .update({"is_active": False})
+            )
+            db.add(models.SlugMedia(slug=record.slug, media_asset_id=asset.id, is_active=True))
+
+        # Atomic compare-and-set: only a caller that still finds the row
+        # "unactivated" at the moment this statement executes can flip it.
+        claimed = (
+            db.query(models.ActivationRecord)
+            .filter(
+                models.ActivationRecord.activation_token == token,
+                models.ActivationRecord.activation_status == "unactivated",
+            )
+            .update(
+                {
+                    "activation_status": "activated",
+                    "owner_client_id": client.id,
+                    "activated_at": datetime.now(timezone.utc),
+                },
+                synchronize_session=False,
+            )
+        )
+        if claimed != 1:
+            # Lost the race to a concurrent finalize (or the token went
+            # stale between the read above and here) — roll back
+            # everything staged in this transaction, including the
+            # BotClientSlug/content changes, and exit through the same
+            # silent no-mutation path as the early idempotency check.
+            db.rollback()
+            await _reject_finalization(chat_id, session, None)
+            return
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "A5 finalization commit failed for chat_id=%s slug=%s", chat_id, record.slug
+        )
+        await _send_message(chat_id, _ACTIVATION_FINALIZE_FAILED_TEXT)
+        return
+
+    # Success — clear activation-specific session data and return to the
+    # existing normal authenticated state (mirrors the post-login branch in
+    # _handle_message: the newly-created/reused BotClientSlug means the
+    # just-activated slug is immediately present in this list, so the
+    # empty-slugs branch below is only reached if the client has other
+    # unrelated gaps in assignment).
+    slugs = _get_active_assigned_slugs(client.id, db)
+    if not slugs:
+        _SESSIONS[chat_id] = {"state": "awaiting_code"}
+        await _send_message(chat_id, _ACTIVATION_COMPLETE_TEXT.format(code=client.access_code))
+        await _send_message(
+            chat_id,
+            "You're authenticated, but no active slugs are assigned to your account yet.",
+        )
+        return
+
+    _SESSIONS[chat_id] = {
+        "state": "awaiting_slug_selection",
+        "bot_client_id": client.id,
+        "slugs": slugs,
+    }
+    await _send_message(chat_id, _ACTIVATION_COMPLETE_TEXT.format(code=client.access_code))
 
 
 # ---------------------------------------------------------------------------
@@ -1634,41 +2019,28 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         await _send_message(chat_id, _ACTIVATION_CONFIRMATION_REMINDER_TEXT)
         return
 
-    # --- TEMPORARY Phase A5 handoff placeholder -----------------------------
-    # A url slug's A4U session lands in _ACTIVATION_SETUP_STATE with
-    # confirmed_destination_url set once confirmed; a media slug's A4M
-    # session likewise lands here with confirmed_activation_media set
-    # (Telegram metadata only — no MediaAsset/R2 object exists yet). There
-    # is no Phase A5 yet, so without this branch ANY further message would
-    # fall into the generic "Unknown/expired state" fallback below and
-    # reset the session to awaiting_code, discarding the confirmed value —
-    # that is the defect this branch exists to prevent. It does not
-    # implement any A5 behaviour: it never interprets or saves new text,
-    # never touches the confirmed URL/media, never activates the record,
-    # never writes the live redirect or slug media, never assigns
-    # ownership, and never consumes the token. Phase A5 should replace this
-    # entire branch outright rather than extend it.
-    if state == _ACTIVATION_SETUP_STATE and (
-        "confirmed_destination_url" in session or "confirmed_activation_media" in session
-    ):
+    # Phase A5 replaces the former TEMPORARY handoff placeholder outright:
+    # a session only still sits here (state == _ACTIVATION_SETUP_STATE with
+    # confirmed_destination_url or confirmed_activation_media set) if an
+    # earlier finalization attempt failed — a fresh Confirm now finalizes
+    # immediately (see the webhook route and the typed-YES branch below).
+    # Deliberately narrow: retrying only reuses the SAME existing UX each
+    # content type already offers, rather than treating arbitrary chat text
+    # as an implicit retry (which would re-attempt a Telegram
+    # download/R2 upload on every unrelated "thanks"/"ok"). A url session
+    # accepts the same typed YES/Y/Confirm keywords its own Confirm state
+    # already recognises; a media session is button-only, matching A4M's
+    # original design (no typed fallback) — any text there is just a
+    # reminder to re-tap Confirm, never a retry trigger.
+    if state == _ACTIVATION_SETUP_STATE and "confirmed_destination_url" in session:
         if text.lower() in ("yes", "y", "confirm"):
-            # Explicit duplicate confirmation text — idempotent no-op, no DB
-            # write, session/confirmed value preserved. A brief repeat
-            # acknowledgement.
-            if "confirmed_destination_url" in session:
-                await _send_message(
-                    chat_id,
-                    _ACTIVATION_URL_SAVED_TEXT.format(url=session["confirmed_destination_url"]),
-                )
-            else:
-                await _send_message(chat_id, _ACTIVATION_MEDIA_SAVED_TEXT)
+            await _finalize_activation_confirmation(chat_id, db)
             return
-        # Any other text: not processed as activation content. Session and
-        # the confirmed value are left completely untouched — only a brief
-        # neutral status reply is sent.
-        await _send_message(chat_id, _ACTIVATION_SETUP_AWAITING_TEXT)
+        await _send_message(chat_id, _ACTIVATION_FINALIZE_RETRY_URL_TEXT)
         return
-    # --- end TEMPORARY Phase A5 handoff placeholder -------------------------
+    if state == _ACTIVATION_SETUP_STATE and "confirmed_activation_media" in session:
+        await _send_message(chat_id, _ACTIVATION_FINALIZE_RETRY_MEDIA_TEXT)
+        return
 
     if state in (_ACTIVATION_URL_INPUT_STATE, _ACTIVATION_URL_CONFIRM_STATE):
         # Re-validate the activation session from scratch on every message —
@@ -1724,6 +2096,10 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
                 chat_id,
                 _ACTIVATION_URL_SAVED_TEXT.format(url=session["confirmed_destination_url"]),
             )
+            # Phase A5: finalize immediately, in this same message — the
+            # same function the webhook route calls after the inline
+            # Confirm button, so both confirmation paths behave identically.
+            await _finalize_activation_confirmation(chat_id, db)
             return
         if answer in ("no", "n", "change", "retry", "cancel"):
             session.pop("pending_url", None)
@@ -1875,11 +2251,22 @@ def register_bot_webhook_routes(app) -> None:
                     # Distinct prefix dispatch — never touches the A2/A3
                     # "activate_" callback path below.
                     await _handle_a4u_confirmation_callback(callback_query, db)
+                    # Phase A5: runs immediately, in this same request — a
+                    # no-op unless the session actually landed in
+                    # _ACTIVATION_SETUP_STATE with confirmed content (i.e.
+                    # only after a genuine Confirm, never a Change or a
+                    # rejected/duplicate tap).
+                    await _finalize_activation_confirmation(
+                        _callback_chat_id(callback_query), db
+                    )
                 elif isinstance(cq_data, str) and (
                     cq_data.startswith(_A4M_CONFIRM_PAYLOAD_PREFIX)
                     or cq_data.startswith(_A4M_CHANGE_PAYLOAD_PREFIX)
                 ):
                     await _handle_a4m_confirmation_callback(callback_query, db)
+                    await _finalize_activation_confirmation(
+                        _callback_chat_id(callback_query), db
+                    )
                 else:
                     await _handle_activation_callback(callback_query, db)
             except Exception:
