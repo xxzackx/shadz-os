@@ -156,6 +156,7 @@ class ActivationFinalizationDirectTests(unittest.TestCase):
 
     def test_successful_url_finalization_persists_destination_and_activates(self):
         link, record = self._make_link_and_record("u1", "url", "tok-u1")
+        original_token = record.activation_token
         client = self._make_client()
         self._url_session("tok-u1", client.id)
 
@@ -167,6 +168,10 @@ class ActivationFinalizationDirectTests(unittest.TestCase):
         self.assertEqual(record.activation_status, "activated")
         self.assertEqual(record.owner_client_id, client.id)
         self.assertIsNotNone(record.activated_at)
+        # Token consumption is status-based, not physical deletion: the
+        # activation_token column is retained unchanged after activation —
+        # replay protection is enforced solely by activation_status.
+        self.assertEqual(record.activation_token, original_token)
 
     def test_url_finalization_clears_activation_session_data(self):
         self._make_link_and_record("u1", "url", "tok-u1")
@@ -255,6 +260,7 @@ class ActivationFinalizationDirectTests(unittest.TestCase):
 
     def test_successful_media_finalization_persists_asset_activates_and_assigns(self):
         link, record = self._make_link_and_record("m1", "media", "tok-m1")
+        original_token = record.activation_token
         client = self._make_client()
         self._media_session("tok-m1", client.id)
 
@@ -275,6 +281,10 @@ class ActivationFinalizationDirectTests(unittest.TestCase):
         self.assertEqual(
             self.db.query(models.BotClientSlug).filter(models.BotClientSlug.slug == "m1").count(), 1
         )
+        # Token consumption is status-based, not physical deletion: the
+        # activation_token column is retained unchanged after activation —
+        # replay protection is enforced solely by activation_status.
+        self.assertEqual(record.activation_token, original_token)
 
     def test_media_finalization_deactivates_prior_active_media(self):
         self._make_link_and_record("m1", "media", "tok-m1")
