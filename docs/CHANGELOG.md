@@ -2,6 +2,45 @@
 
 ---
 
+## Activation Engine v1 — Production Hotfix H1A: Unassign Lifecycle Consistency
+
+**Status:** Completed, deployed, and production live-tested. **Phase H1A is now complete and closed.**
+
+**Scope:** Narrow production hotfix to the admin "Unassign" action only (`DELETE /admin/bot/clients/{client_id}/slugs/{slug}`, `bot_admin.remove_slug_assignment`). No H1B/H1C/H1D work, no unrelated cleanup or refactoring — see Next hotfix phase below.
+
+**Runtime commit:** `966487dc20bb824fa9d8d7dff14f97c502e2b416` — Fix activation unassign lifecycle consistency
+
+**Files changed:** `bot_admin.py`, `tests/test_activation_engine_h1a.py` (new)
+
+**Problem:** Unassign previously only hard-deleted the `BotClientSlug` assignment row. For an activation-enabled `url`/`media` slug this left `ActivationRecord` stuck `activated` with a stale `owner_client_id`/`activated_at`, the URL slug's old `destination_url` still live, and (for media) the old `SlugMedia` row still active — the slug could never be cleanly reactivated through the Activation Engine after Unassign.
+
+**Delivered:** `remove_slug_assignment` now resets the slug to a clean, reusable `unactivated` lifecycle state, atomically with the `BotClientSlug` delete (single transaction, single `db.commit()`):
+- If the slug has an `ActivationRecord`: `activation_status → unactivated`, `owner_client_id → NULL`, `activated_at → NULL`. `activation_token` is preserved unchanged — never regenerated, never deleted — so the same token reactivates the slug.
+- `url` slugs: `destination_url` cleared to `""` (the column is non-nullable; `main.py:redirect_slug` already treats an empty string as "no destination", and in practice the Activation Gateway intercepts the slug's next scan before that check is ever reached).
+- `media` slugs: the current active `SlugMedia` row (if any) is deactivated (`is_active = False`) — the same convention already used by `POST /admin/media/detach`. The `MediaAsset` row and its R2 object are never touched; orphan-media cleanup stays explicitly out of scope for this phase.
+- Slugs with no `ActivationRecord` (not activation-enabled) are unaffected beyond the assignment removal — unchanged prior behaviour.
+- Wrapped in the same `try`/`except IntegrityError` + `db.rollback()` pattern already used elsewhere in `bot_admin.py`.
+
+**Automated test results:**
+- Focused: `tests/test_activation_engine_h1a.py` — `4 passed` (URL unassign lifecycle reset; media unassign lifecycle reset with `MediaAsset` preservation; non-activation slug unaffected beyond assignment removal; simulated `IntegrityError` mid-commit leaves no partial state, verified via a fresh DB session)
+- Relevant Activation Engine / Bot Client admin regression suite: `311 passed, 28 subtests passed`
+- Full suite: `354 passed, 28 subtests passed`
+
+**Production deployment (VPS, Mr.Zack):** VPS synced to runtime commit `966487d`; `HEAD` and `origin/master` confirmed matching; `shadz.service` restarted; local `/health` passed before public checks; public `/health` returned 200.
+
+**Production live test — URL unassign:** confirmed against a production activation-enabled `url` slug — `BotClientSlug` assignment removed; `ActivationRecord` reset to `unactivated` with `owner_client_id`/`activated_at` cleared and `activation_token` unchanged; `destination_url` cleared; the slug's next scan re-entered the Activation Engine first-scan flow via the same activation token.
+
+**Production live test — media unassign:** confirmed against a production activation-enabled `media` slug — `BotClientSlug` assignment removed; `ActivationRecord` reset the same way; the previously active `SlugMedia` row deactivated; historical/inactive `SlugMedia` rows left untouched; `MediaAsset` row and its R2 object preserved (not deleted); the slug's next scan re-entered the Activation Engine first-scan flow.
+
+**Touched:** `bot_admin.py`, `tests/test_activation_engine_h1a.py`, `docs/CHANGELOG.md`, `docs/PROJECT_STATE.md`
+**Database:** no schema/migration change
+**Backend/routes/API:** `DELETE /admin/bot/clients/{client_id}/slugs/{slug}` behaviour extended (route path and method unchanged); admin "Unassign" button label unchanged
+**Telegram Bot:** unchanged
+
+**Next hotfix phase:** H1B — Telegram username refresh (not yet started). Scope: Telegram numeric user ID remains the ownership identity; whenever the same Telegram numeric user ID interacts with the bot, refresh the latest username/profile metadata in the backend; Admin Panel should then show the latest username; no Telegram account transfer flow is required.
+
+---
+
 ## Activation Engine v1 Phase A6 — Regression, Live Testing and Production Closure
 
 **Status:** Completed through automated regression review and production live verification against production runtime commit `e7840d1`. **Phase A6 is now complete and closed. Activation Engine v1 (Phases A1–A6) is fully complete and closed.**
