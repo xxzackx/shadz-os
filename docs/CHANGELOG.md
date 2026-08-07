@@ -2,6 +2,44 @@
 
 ---
 
+## Activation Engine v1 — Production Hotfix H1B: Telegram Username Refresh
+
+**Status:** Completed, deployed, and production live-tested. **Phase H1B is now complete and closed.**
+
+**Scope:** Narrow production hotfix to Telegram username metadata refresh for an existing `BotClient` resolved by its permanent numeric Telegram `user_id`. No H1C/H1D work, no Admin UI change, no unrelated cleanup or refactoring — see Next hotfix phase below.
+
+**Runtime commit:** `d6d3e00e013baef17354442a3ec0a4855da401df` — Refresh Telegram username on BotClient reuse (Hotfix H1B)
+
+**Files changed:** `bot_runtime.py`, `tests/test_activation_engine_phase_a3.py`
+
+**Problem:** existing-client reuse during the activation path (`_resolve_or_create_bot_client_for_telegram`'s "reused" branch) did not refresh `telegram_username`. If a customer changed their Telegram username and then activated another slug without re-entering their access code, the existing `BotClient` row kept the stale username indefinitely — the Admin Panel never reflected the change for that identity. The access-code login path (`_handle_message`'s `awaiting_code` branch) already refreshed `telegram_username` on every login and was already correct.
+
+**Delivered:** `_resolve_or_create_bot_client_for_telegram`'s existing-active-match ("reused") branch now refreshes `telegram_username` from the incoming Telegram payload whenever it differs, including to `None` if the customer removes their username:
+- Identity/ownership invariant unchanged and re-verified: the numeric Telegram `user_id` remains the sole ownership identity; username is metadata only and is never used to resolve, create, or transfer a `BotClient`.
+- Reusing an existing active match still never regenerates `access_code`, renames `client_name`, or touches `is_active` — only `telegram_username` can change.
+- A username change never creates a duplicate `BotClient` and never transfers slug ownership, `ActivationRecord` ownership, or access-code/client identity.
+- `_handle_activation_callback`'s commit is now conditional (`status == "created"`, or a `"reused"` client whose `telegram_username` was actually modified per `db.is_modified`) — an unchanged reused client triggers no unnecessary commit.
+- The pre-existing access-code login flow (`_handle_message`'s `awaiting_code` branch) already unconditionally refreshed `telegram_user_id`/`telegram_username` on every login and was left unchanged.
+
+**Automated test results:**
+- Focused: `tests/test_activation_engine_phase_a3.py` — `47 passed, 4 subtests passed`
+- Full suite: `362 passed, 28 subtests passed`
+
+**Production deployment (VPS, Mr.Zack):** VPS synced to runtime commit `d6d3e00`; `shadz.service` restarted; local readiness check (`http://127.0.0.1:8000/health`) returned HTTP 200 on attempt 1.
+
+**Production live test:** same Telegram account, Telegram username changed, no access-code re-login — user opened a new activation-enabled slug and pressed "Activate Now"; Admin Panel immediately displayed the new username. (No-duplicate-client, unchanged-access-code, and unchanged-ownership invariants are covered by the automated regression tests above, not directly observed in this live test.)
+
+**Touched:** `bot_runtime.py`, `tests/test_activation_engine_phase_a3.py`, `docs/CHANGELOG.md`, `docs/PROJECT_STATE.md`
+**Database:** no schema/migration change
+**Admin UI:** no change required — the existing Admin Panel already reads `BotClient.telegram_username` directly and displays the refreshed value automatically
+**Telegram Bot:** identity resolution/ownership behaviour unchanged; `telegram_username` metadata refresh added to the existing activation-callback resolution path only
+
+**Deferred — H1G — Telegram Authenticated-Session Identity Revalidation** (not part of H1B; to be handled at the end of the overall Hotfix H1 phase): the existing Phase T1G authenticated-session re-check in `_handle_message` trusts `chat_id → _SESSIONS[chat_id]["bot_client_id"]` and verifies the referenced `BotClient` is active, but does not currently require the incoming Telegram `from.id` to equal the stored `BotClient.telegram_user_id` before continuing authenticated operations. Identified during the H1B audit; explicitly out of scope for H1B and not implemented here.
+
+**Next hotfix phase:** H1C — URL slug blank destination (not yet started).
+
+---
+
 ## Activation Engine v1 — Production Hotfix H1A: Unassign Lifecycle Consistency
 
 **Status:** Completed, deployed, and production live-tested. **Phase H1A is now complete and closed.**
