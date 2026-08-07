@@ -160,8 +160,6 @@ class LinkAdminActivationWiringTests(unittest.TestCase):
         self.assertEqual(record.activation_status, "unactivated")
 
     def test_upsert_new_media_slug_creates_activation_record(self):
-        # upsert_link requires a non-empty destination_url for any new slug,
-        # regardless of content_type — matches existing endpoint behaviour.
         response = self.client.post(
             "/admin/link/media-xyz789",
             json={"destination_url": "https://example.com", "phone_number": "555-0106"},

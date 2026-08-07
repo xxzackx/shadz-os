@@ -121,11 +121,12 @@ def _generate_activation_token(db: Session) -> str:
 class LinkCreate(BaseModel):
     """Body for POST /admin/link — auto-generates slug from content_type.
 
-    destination_url is required for url content_type.
-    media and page slugs may omit it (stored as empty string).
+    destination_url is optional for all content types (Hotfix H1C) — stored
+    as empty string if omitted, and may be populated later via Admin Change
+    Destination or the Activation Engine.
     """
     content_type: str
-    destination_url: str = ""   # optional for media/page; required for url
+    destination_url: str = ""   # optional for all content types
     client_name: str | None = None
     phone_number: str | None = None
     notes: str | None = None
@@ -222,17 +223,12 @@ def register_link_admin_routes(admin_router):
         """Create a new redirect link with an auto-generated slug.
 
         content_type must be one of: url, media, page
-        destination_url is required for url; optional for media and page.
+        destination_url is optional for all content types — a url slug may be
+        created with no destination and populated later via Admin Change
+        Destination or the Activation Engine (Hotfix H1C).
         """
         # generate_slug validates content_type and raises 400 if invalid
         slug = generate_slug(payload.content_type, db)
-
-        # url links must have a destination
-        if payload.content_type == "url" and not payload.destination_url:
-            raise HTTPException(
-                status_code=400,
-                detail="destination_url is required for url content_type",
-            )
 
         if payload.phone_number is None:
             raise HTTPException(status_code=400, detail="Phone number is required")
@@ -288,7 +284,9 @@ def register_link_admin_routes(admin_router):
         - Slug EXISTS in DB → update any provided fields; omitted fields are left
           unchanged.  Legacy slugs (e.g. 'a') are allowed — no format check needed.
         - Slug NOT in DB + valid format → create new record; content_type inferred
-          from slug prefix unless explicitly provided; destination_url required.
+          from slug prefix unless explicitly provided; destination_url is optional
+          for url slugs (Hotfix H1C) but still required for media/page slugs
+          (pre-H1C behaviour, unchanged).
         - Slug NOT in DB + invalid format → 400.  Use POST /admin/link to auto-generate.
 
         content_type is validated against VALID_CONTENT_TYPES when provided.
@@ -336,13 +334,6 @@ def register_link_admin_routes(admin_router):
                 ),
             )
 
-        # destination_url is required when creating a new slug
-        if not payload.destination_url:
-            raise HTTPException(
-                status_code=400,
-                detail="destination_url is required when creating a new slug",
-            )
-
         if payload.phone_number is None:
             raise HTTPException(status_code=400, detail="Phone number is required")
         phone = payload.phone_number.strip()
@@ -359,9 +350,17 @@ def register_link_admin_routes(admin_router):
                 detail="content_type could not be determined — please provide it explicitly",
             )
 
+        # destination_url is required for new media/page slugs (pre-H1C
+        # behaviour, preserved); url slugs are exempt (Hotfix H1C).
+        if resolved_content_type != "url" and not payload.destination_url:
+            raise HTTPException(
+                status_code=400,
+                detail="destination_url is required when creating a new slug",
+            )
+
         link = models.RedirectLink(
             slug=slug,
-            destination_url=payload.destination_url,
+            destination_url=payload.destination_url or "",
             content_type=resolved_content_type,
             client_name=payload.client_name,
             phone_number=phone,

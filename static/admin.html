@@ -1050,12 +1050,6 @@
 
       document.getElementById('createResult').style.display = 'none';
 
-      // destination_url only required for url type
-      if (contentType === 'url' && !destUrl) {
-        showMsg('c-msg', 'error', 'Destination URL is required for url content type.');
-        return;
-      }
-
       const clientName = document.getElementById('c-name').value.trim();
       const phone      = document.getElementById('c-phone').value.trim();
       const notes      = document.getElementById('c-notes').value.trim();
