@@ -721,9 +721,11 @@ def _resolve_or_create_bot_client_for_telegram(
     matching (usernames can change; they are not identity).
 
     Returns (status, client):
-      - ("reused", client): exactly one existing active match — returned
-        untouched, access code never regenerated, profile fields never
-        rewritten even if the Telegram profile changed since last time.
+      - ("reused", client): exactly one existing active match — same
+        identity, same access code, same client_name. Hotfix H1B: the
+        stored telegram_username is refreshed to whatever Telegram just
+        sent (including None, if the customer removed their username) —
+        this is metadata refresh only, never identity resolution.
       - ("created", client): no existing match — a new active BotClient is
         staged (add/flush, not committed) with an access code from the one
         existing bot_admin generator.
@@ -745,6 +747,8 @@ def _resolve_or_create_bot_client_for_telegram(
         existing = matches[0]
         if not existing.is_active:
             return "inactive", None
+        if existing.telegram_username != telegram_username:
+            existing.telegram_username = telegram_username
         return "reused", existing
 
     client = models.BotClient(
@@ -873,9 +877,13 @@ async def _handle_activation_callback(callback_query: dict, db: Session) -> None
             await _send_message(chat_id, _ACTIVATION_CLIENT_BLOCKED_TEXT)
         return
 
-    # A reused client is already committed — only a newly created client has
-    # anything pending to persist.
-    if status == "created":
+    # "created" always has a new row pending. "reused" only has something
+    # pending when H1B's username refresh actually changed a scalar on the
+    # client — an unchanged reused client must not trigger a commit.
+    needs_commit = status == "created" or (
+        status == "reused" and db.is_modified(client, include_collections=False)
+    )
+    if needs_commit:
         try:
             db.commit()
         except Exception:

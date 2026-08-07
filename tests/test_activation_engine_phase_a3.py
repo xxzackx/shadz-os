@@ -111,9 +111,9 @@ class ResolveOrCreateBotClientTests(unittest.TestCase):
         self.assertEqual(status, "reused")
         self.assertEqual(client.id, existing.id)
         self.assertEqual(client.access_code, "ZZ9999")
-        # A profile change during activation must not rename/modify the client.
+        # H1B: username metadata refreshes, but identity/name/code do not.
         self.assertEqual(client.client_name, "Existing Client")
-        self.assertEqual(client.telegram_username, "old_name")
+        self.assertEqual(client.telegram_username, "new_name")
         self.assertEqual(self.db.query(models.BotClient).count(), 1)
 
     def test_existing_inactive_match_is_rejected_and_not_reactivated(self):
@@ -162,6 +162,92 @@ class ResolveOrCreateBotClientTests(unittest.TestCase):
 
         self.assertEqual(status, "ambiguous")
         self.assertIsNone(client)
+
+    # -- H1B: Telegram username refresh on reuse ---------------------------
+
+    def test_reuse_with_unchanged_username_is_a_no_op(self):
+        existing = models.BotClient(
+            client_name="Existing Client", access_code="SAME01", telegram_user_id="5001",
+            telegram_username="steady_name", is_active=True,
+        )
+        self.db.add(existing)
+        self.db.commit()
+
+        status, client = bot_runtime._resolve_or_create_bot_client_for_telegram(
+            self.db, "5001", "steady_name", None, None
+        )
+
+        self.assertEqual(status, "reused")
+        self.assertEqual(client.id, existing.id)
+        self.assertEqual(client.telegram_username, "steady_name")
+        self.assertEqual(self.db.query(models.BotClient).count(), 1)
+
+    def test_reuse_with_username_removed_sets_none_without_crashing(self):
+        existing = models.BotClient(
+            client_name="Existing Client", access_code="NONE01", telegram_user_id="5002",
+            telegram_username="had_a_name", is_active=True,
+        )
+        self.db.add(existing)
+        self.db.commit()
+
+        status, client = bot_runtime._resolve_or_create_bot_client_for_telegram(
+            self.db, "5002", None, None, None
+        )
+
+        self.assertEqual(status, "reused")
+        self.assertIsNone(client.telegram_username)
+
+    def test_username_refresh_does_not_affect_other_bot_client_fields(self):
+        existing = models.BotClient(
+            client_name="Existing Client", access_code="KEEP01", telegram_user_id="5003",
+            telegram_username="old_name", is_active=True,
+        )
+        self.db.add(existing)
+        self.db.commit()
+        existing_id = existing.id
+
+        status, client = bot_runtime._resolve_or_create_bot_client_for_telegram(
+            self.db, "5003", "new_name", None, None
+        )
+
+        self.assertEqual(client.id, existing_id)
+        self.assertTrue(client.is_active)
+        self.assertEqual(client.access_code, "KEEP01")
+        self.assertEqual(client.client_name, "Existing Client")
+
+    def test_different_telegram_id_with_old_username_does_not_inherit_ownership(self):
+        existing = models.BotClient(
+            client_name="Existing Client", access_code="OWNER1", telegram_user_id="6001",
+            telegram_username="shared_handle", is_active=True,
+        )
+        self.db.add(existing)
+        self.db.commit()
+
+        status, client = bot_runtime._resolve_or_create_bot_client_for_telegram(
+            self.db, "6002", "shared_handle", None, None
+        )
+
+        self.assertEqual(status, "created")
+        self.assertNotEqual(client.id, existing.id)
+        self.assertEqual(self.db.query(models.BotClient).count(), 2)
+        self.db.refresh(existing)
+        self.assertEqual(existing.telegram_user_id, "6001")
+
+    def test_different_telegram_id_with_new_username_does_not_inherit_ownership(self):
+        existing = models.BotClient(
+            client_name="Existing Client", access_code="OWNER2", telegram_user_id="6003",
+            telegram_username="renamed_handle", is_active=True,
+        )
+        self.db.add(existing)
+        self.db.commit()
+
+        status, client = bot_runtime._resolve_or_create_bot_client_for_telegram(
+            self.db, "6004", "renamed_handle", None, None
+        )
+
+        self.assertEqual(status, "created")
+        self.assertNotEqual(client.id, existing.id)
+        self.assertEqual(self.db.query(models.BotClient).count(), 2)
 
 
 class HandleActivationCallbackA3Tests(unittest.TestCase):
@@ -310,6 +396,79 @@ class HandleActivationCallbackA3Tests(unittest.TestCase):
 
         self.assertEqual(self.db.query(models.BotClient).count(), 1)
         self.mock_send_message.assert_awaited_once_with(42, bot_runtime._ACTIVATION_CLIENT_BLOCKED_TEXT)
+
+    def test_reused_client_username_refreshes_and_persists_across_calls(self):
+        existing = models.BotClient(
+            client_name="Existing", access_code="REFR01", telegram_user_id="140",
+            telegram_username="old_handle", is_active=True,
+        )
+        self.db.add(existing)
+        self.db.commit()
+        self._make_link_and_record("u1", "url", "tok-u1")
+
+        self._run("activate_tok-u1", from_user={"id": 140, "username": "new_handle"})
+
+        self.assertEqual(self.db.query(models.BotClient).count(), 1)
+        self.db.refresh(existing)
+        self.assertEqual(existing.telegram_username, "new_handle")
+        self.assertEqual(existing.access_code, "REFR01")
+        self.assertEqual(existing.client_name, "Existing")
+
+    def test_reused_client_unchanged_username_does_not_commit(self):
+        existing = models.BotClient(
+            client_name="Existing", access_code="NOCOMMIT", telegram_user_id="142",
+            telegram_username="steady_handle", is_active=True,
+        )
+        self.db.add(existing)
+        self.db.commit()
+        self._make_link_and_record("u1", "url", "tok-u1")
+
+        with patch.object(self.db, "commit") as mock_commit:
+            self._run("activate_tok-u1", from_user={"id": 142, "username": "steady_handle"})
+
+        mock_commit.assert_not_called()
+        self.assertEqual(self.db.query(models.BotClient).count(), 1)
+        self.db.refresh(existing)
+        self.assertEqual(existing.telegram_username, "steady_handle")
+        # Callback still proceeds normally past resolution (access code sent).
+        self.mock_send_message.assert_any_await(
+            42, bot_runtime._ACCESS_CODE_READY_TEXT.format(code="NOCOMMIT")
+        )
+
+    def test_username_refresh_does_not_affect_slug_or_activation_ownership(self):
+        existing = models.BotClient(
+            client_name="Existing", access_code="OWNKEEP", telegram_user_id="141",
+            telegram_username="old_handle", is_active=True,
+        )
+        self.db.add(existing)
+        self.db.commit()
+        other_link = models.RedirectLink(
+            slug="already-owned", destination_url="https://example.com/other", content_type="url",
+        )
+        self.db.add(other_link)
+        self.db.commit()
+        owned_record = models.ActivationRecord(
+            slug="already-owned", activation_token="tok-owned",
+            activation_status="activated", owner_client_id=existing.id,
+        )
+        self.db.add(owned_record)
+        self.db.add(models.BotClientSlug(bot_client_id=existing.id, slug="already-owned"))
+        self.db.commit()
+        self._make_link_and_record("u1", "url", "tok-u1")
+
+        self._run("activate_tok-u1", from_user={"id": 141, "username": "new_handle"})
+
+        self.db.refresh(owned_record)
+        self.assertEqual(owned_record.owner_client_id, existing.id)
+        self.assertEqual(owned_record.activation_status, "activated")
+        slug_assignment = (
+            self.db.query(models.BotClientSlug)
+            .filter(models.BotClientSlug.slug == "already-owned")
+            .first()
+        )
+        self.assertEqual(slug_assignment.bot_client_id, existing.id)
+        self.db.refresh(existing)
+        self.assertEqual(existing.access_code, "OWNKEEP")
 
     def test_multiple_matching_telegram_clients_fail_closed(self):
         self.db.add_all([
