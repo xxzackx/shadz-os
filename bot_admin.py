@@ -278,10 +278,28 @@ def register_bot_admin_routes(admin_router) -> None:
     def remove_slug_assignment(
         client_id: int, slug: str, db: Session = Depends(get_db)
     ):
-        """Remove a slug assignment from a bot client.
+        """Remove a slug assignment from a bot client (admin Unassign).
 
-        Hard-deletes the assignment row only.  The redirect link itself is
-        never touched.  Raises 404 if the assignment does not exist.
+        Hard-deletes the BotClientSlug assignment row.  The redirect link
+        itself is never deleted.  Raises 404 if the assignment does not exist.
+
+        Activation Engine v1 (H1A): if the slug has an ActivationRecord
+        (activation-enabled url/media slug), it is atomically reset to a
+        clean, reusable unactivated state in the same transaction as the
+        assignment removal:
+          - activation_status -> "unactivated", owner_client_id -> NULL,
+            activated_at -> NULL. activation_token is preserved unchanged
+            (never regenerated or deleted) so the same token can activate
+            the slug again.
+          - url slugs: destination_url is cleared to "" — RedirectLink.
+            destination_url is non-nullable, and main.py's redirect_slug
+            already treats an empty string as "no destination".
+          - media slugs: the current active SlugMedia row (if any) is
+            deactivated (is_active = False), the same convention already
+            used by POST /admin/media/detach. The MediaAsset row and its R2
+            object are never touched — orphan media cleanup is out of scope.
+        Slugs with no ActivationRecord are unaffected by the reset above;
+        only the assignment row is removed.
         """
         slug = slug.strip()
         if not slug:
@@ -304,7 +322,45 @@ def register_bot_admin_routes(admin_router) -> None:
             )
 
         db.delete(assignment)
-        db.commit()
+
+        activation = (
+            db.query(models.ActivationRecord)
+            .filter(models.ActivationRecord.slug == slug)
+            .first()
+        )
+        if activation is not None:
+            activation.activation_status = "unactivated"
+            activation.owner_client_id = None
+            activation.activated_at = None
+
+            link = (
+                db.query(models.RedirectLink)
+                .filter(models.RedirectLink.slug == slug)
+                .first()
+            )
+            if link is not None and link.content_type == "url":
+                link.destination_url = ""
+            elif link is not None and link.content_type == "media":
+                active_media = (
+                    db.query(models.SlugMedia)
+                    .filter(
+                        models.SlugMedia.slug == slug,
+                        models.SlugMedia.is_active == True,
+                    )
+                    .first()
+                )
+                if active_media is not None:
+                    active_media.is_active = False
+
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to unassign slug '{slug}' due to a conflict — please retry",
+            )
+
         return {
             "success": True,
             "bot_client_id": client_id,
