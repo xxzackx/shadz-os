@@ -2,6 +2,38 @@
 
 ---
 
+## Activation Engine v1 — Production Hotfix H1C: URL Slug Creation Without Required Destination
+
+**Status:** Completed, deployed, and production live-tested. **Phase H1C is now complete and closed.**
+
+**Scope:** Narrow production hotfix to Admin URL slug creation only (`POST /admin/link` and the new-slug branch of `POST /admin/link/{slug}`). No unrelated cleanup or refactoring, no Activation Engine/BotClientSlug/Telegram flow changes, no Page Engine or media changes.
+
+**Runtime/test commit:** `ad72ecbeba6fcb4f8f019d6f873992450509c336` — Fix Activation Engine H1C URL slug creation
+
+**Files changed:** `link_admin.py`, `static/admin.html`, `tests/test_link_admin_activation.py`, `tests/test_activation_engine_h1c.py` (new)
+
+**Problem:** creating a `url` content_type slug required a non-empty `destination_url`, both in `create_link` (`POST /admin/link`) and in the new-slug branch of `upsert_link` (`POST /admin/link/{slug}`), plus a matching client-side gate in the Admin "Create New Link" form. This blocked creating a URL slug up front and setting its destination later (e.g. via the Activation Engine or Admin Change Destination), even though the runtime already tolerated an empty destination — H1A's Unassign flow already clears `destination_url` to `""` for exactly this reason.
+
+**Delivered:**
+- `create_link`: removed the `content_type == "url" and not destination_url` 400 check. `destination_url` is now optional for all content types; omitted/blank values are stored as `""`.
+- `upsert_link` new-slug branch: removed the old unconditional "any new slug requires a destination" check and replaced it with one scoped to non-`url` content types only (`resolved_content_type != "url" and not destination_url`) — `media`/`page` new-slug creation via this endpoint keeps its exact pre-H1C requirement; `url` is exempt. Model construction uses `payload.destination_url or ""` so a `url` slug never writes `None` into the non-nullable `destination_url` column.
+- `static/admin.html`: removed the matching client-side "Destination URL is required for url content type" gate from the Create Link form; the destination input already had no HTML `required` attribute.
+- No change to the public redirect guard (`main.py:redirect_slug`) — it already treats a falsy `destination_url` as a safe 404, not a 500 or empty-string redirect; this is the same guard H1A's Unassign already relies on.
+- No change to activation tokens, ownership rules, `BotClientSlug` assignment logic, the Telegram activation flow, media behavior, Page Engine behavior, or the existing "Change Destination" update path (`upsert_link`'s existing-slug branch) — a url slug's `ActivationRecord` is still created exactly as before regardless of whether `destination_url` was supplied.
+- No DB schema/migration change — `destination_url` remains non-nullable; blank creation stores `""`, matching the existing H1A-established convention, not `NULL`.
+
+**Automated test results:**
+- Focused: `tests/test_activation_engine_h1c.py` + `tests/test_link_admin_activation.py` + `tests/test_activation_engine_h1a.py` — 44/44 passed
+- Full suite: **377 passed, 28 subtests passed**
+
+**Production deployment (VPS, Mr.Zack):** VPS synced to runtime commit `ad72ecb`; `HEAD`/`origin/master` confirmed matching; `shadz.service` active; local readiness check passed before public verification.
+
+**Production live test:** (1) created a new URL slug with blank destination; (2) first scan correctly entered the existing Telegram Activation Engine flow; (3) after setting the destination through activation, the slug opened the destination normally; (4) created a URL slug with a destination already supplied; (5) because the slug was still unactivated, first scan correctly entered Telegram activation instead of redirecting directly; (6) existing post-activation redirect behavior worked normally.
+
+**Final production runtime commit: `ad72ecb` (`ad72ecbeba6fcb4f8f019d6f873992450509c336`). Activation Engine v1 Production Hotfix H1C is now complete and closed.**
+
+---
+
 ## Activation Engine v1 — Production Hotfix H1B: Telegram Username Refresh
 
 **Status:** Completed, deployed, and production live-tested. **Phase H1B is now complete and closed.**
@@ -36,7 +68,7 @@
 
 **Deferred — H1G — Telegram Authenticated-Session Identity Revalidation** (not part of H1B; to be handled at the end of the overall Hotfix H1 phase): the existing Phase T1G authenticated-session re-check in `_handle_message` trusts `chat_id → _SESSIONS[chat_id]["bot_client_id"]` and verifies the referenced `BotClient` is active, but does not currently require the incoming Telegram `from.id` to equal the stored `BotClient.telegram_user_id` before continuing authenticated operations. Identified during the H1B audit; explicitly out of scope for H1B and not implemented here.
 
-**Next hotfix phase:** H1C — URL slug blank destination (not yet started).
+**Next hotfix phase:** H1C — URL slug blank destination — completed and closed, see the H1C entry above.
 
 ---
 
