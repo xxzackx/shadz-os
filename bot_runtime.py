@@ -330,12 +330,12 @@ _ACTIVATION_URL_CONFIRM_STATE = "awaiting_activation_url_confirmation"
 
 _ACTIVATION_URL_PROMPT_TEXT = (
     "Now let's set up your destination.\n\n"
-    "Reply with the destination URL for this product (must start with "
-    "http:// or https://)."
+    "Reply with the destination URL for this product — a domain such as "
+    "example.com or a full http:// / https:// URL."
 )
 _ACTIVATION_URL_INVALID_FORMAT_TEXT = (
-    "That doesn't look like a valid URL — it must start with http:// or "
-    "https://. Please try again."
+    "That doesn't look like a valid web URL. Send a domain such as "
+    "example.com or a full http:// / https:// URL, then try again."
 )
 # Reuses the same wording/guard as the T1B self-service flow's blocked-
 # destination check (_is_blocked_destination_url) — deliberately duplicated
@@ -346,10 +346,10 @@ _ACTIVATION_URL_BLOCKED_TEXT = (
     "This link cannot be used because it points back to SHADZ or an "
     "internal address. Please send an external public link instead."
 )
-# "{url}" here is the validated, trimmed destination — text.strip() only.
-# Never call this "normalized": no scheme/host/path rewriting is performed,
-# so the customer always sees exactly what they typed (minus surrounding
-# whitespace).
+# "{url}" here is the validated, normalized destination (Hotfix H1D):
+# trimmed, with "https://" prepended when the customer didn't supply a
+# scheme. An explicitly supplied http:// or https:// is preserved
+# verbatim — no other host/path rewriting is performed.
 _ACTIVATION_URL_CONFIRM_PROMPT_TEXT = (
     "Confirm destination:\n{url}\n\n"
     "Tap Confirm to save it, or Change URL to send a different one."
@@ -1635,6 +1635,66 @@ async def _return_to_slug_list_or_login(chat_id: int, session: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Telegram URL Auto Normalization (Hotfix H1D) — applies to Telegram bot
+# destination-URL input only (the T1B self-service "awaiting_new_url" flow
+# and the Activation Engine A4U flow). Trims whitespace and, when the
+# customer's input has no http(s) scheme, prepends "https://" so plain
+# domains like "google.com" work without typing a scheme. An explicitly
+# supplied http:// or https:// (any case) is preserved verbatim — never
+# rewritten or double-prefixed. Scheme detection is done on the raw trimmed
+# input via regex, not urlparse(...).scheme — urlparse treats anything
+# before a ":" as a scheme (including a bare "example.com" in
+# "example.com:8080/path"), which would wrongly reject a scheme-less
+# host:port input. Any other explicit scheme (javascript:, file:, ftp:,
+# ...) is rejected outright. Scheme-less input is only normalized when its
+# parsed hostname contains a dot (i.e. looks like a domain), so unscoped
+# junk text like "not-a-url" still fails validation instead of silently
+# becoming a URL. Does not replace _is_blocked_destination_url — callers
+# still run the normalized result through that existing guard.
+# ---------------------------------------------------------------------------
+
+_EXPLICIT_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+\-]*):")
+
+
+def _normalize_telegram_destination_url(text: str) -> str | None:
+    """Return a normalized http(s) URL for Telegram destination-URL input,
+    or None if the input can't be turned into a valid http(s) URL."""
+    trimmed = (text or "").strip()
+    if not trimmed:
+        return None
+
+    if re.match(r"^https?://", trimmed, re.IGNORECASE):
+        candidate = trimmed
+        added_scheme = False
+    else:
+        if _EXPLICIT_SCHEME_RE.match(trimmed):
+            # An explicit non-http(s) scheme (javascript:, file:, ftp:,
+            # ...) — never prepend on top of it.
+            return None
+        candidate = "https://" + trimmed
+        added_scheme = True
+
+    try:
+        parsed = urlparse(candidate)
+    except ValueError:
+        return None
+
+    if parsed.scheme.lower() not in ("http", "https"):
+        return None
+    hostname = parsed.hostname
+    if not hostname:
+        return None
+    if added_scheme and "." not in hostname:
+        return None
+    try:
+        parsed.port
+    except ValueError:
+        return None
+
+    return candidate
+
+
+# ---------------------------------------------------------------------------
 # Link Safety Guard (Phase T1F) — blocks customers from pointing a bot-managed
 # url slug back at SHADZ itself or an internal/local address, which would
 # otherwise allow slug chaining or route confusion.
@@ -1719,8 +1779,8 @@ async def _enter_slug_management_state(
     await _send_message(
         chat_id,
         f"Current destination for '{chosen_slug}':\n{link.destination_url}\n\n"
-        "Reply with the new destination URL (must start with http:// or https://), "
-        "or /cancel.",
+        "Reply with the new destination URL — a domain such as example.com "
+        "or a full http:// / https:// URL — or /cancel.",
     )
 
 
@@ -2149,10 +2209,11 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
             await _send_message(chat_id, "Cancelled.")
             await _return_to_slug_list_or_login(chat_id, session)
             return
-        if not (text.startswith("http://") or text.startswith("https://")):
-            await _send_message(chat_id, "That doesn't look like a valid URL — it must start with http:// or https://. Try again, or /cancel.")
+        normalized_url = _normalize_telegram_destination_url(text)
+        if normalized_url is None:
+            await _send_message(chat_id, "That doesn't look like a valid web URL. Send a domain such as example.com or a full http:// / https:// URL, then try again — or /cancel.")
             return
-        if _is_blocked_destination_url(text):
+        if _is_blocked_destination_url(normalized_url):
             await _send_message(
                 chat_id,
                 "This link cannot be used because it points back to SHADZ or an internal address. "
@@ -2160,12 +2221,12 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
             )
             return
 
-        session["pending_value"] = text
+        session["pending_value"] = normalized_url
         session["state"] = "awaiting_confirmation"
         _SESSIONS[chat_id] = session
         await _send_message(
             chat_id,
-            f"Update '{session['selected_slug']}' destination to:\n{text}\n\n"
+            f"Update '{session['selected_slug']}' destination to:\n{normalized_url}\n\n"
             "Tap Confirm to save it, Change to send a different URL, or Cancel to go back. "
             "(You can also reply YES or NO.)",
             reply_markup=_url_management_confirmation_markup(),
@@ -2363,24 +2424,25 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
             return
 
         if state == _ACTIVATION_URL_INPUT_STATE:
-            if not (text.startswith("http://") or text.startswith("https://")):
+            normalized_url = _normalize_telegram_destination_url(text)
+            if normalized_url is None:
                 await _send_message(chat_id, _ACTIVATION_URL_INVALID_FORMAT_TEXT)
                 return
-            if _is_blocked_destination_url(text):
+            if _is_blocked_destination_url(normalized_url):
                 await _send_message(chat_id, _ACTIVATION_URL_BLOCKED_TEXT)
                 return
 
-            # Validated, trimmed URL — text.strip() only. No scheme/host/
-            # path canonicalization is performed, so the customer's intent
-            # is never rewritten.
-            trimmed_url = text.strip()
-            session["pending_url"] = trimmed_url
+            # Normalized URL (Hotfix H1D) — trimmed, with a scheme
+            # detected case-insensitively or "https://" prepended when
+            # none was supplied. An explicitly supplied http:// or
+            # https:// is preserved verbatim.
+            session["pending_url"] = normalized_url
             session["state"] = _ACTIVATION_URL_CONFIRM_STATE
             _SESSIONS[chat_id] = session
             markup = _a4u_confirmation_markup(token)
             await _send_message(
                 chat_id,
-                _ACTIVATION_URL_CONFIRM_PROMPT_TEXT.format(url=trimmed_url),
+                _ACTIVATION_URL_CONFIRM_PROMPT_TEXT.format(url=normalized_url),
                 reply_markup=markup,
             )
             return

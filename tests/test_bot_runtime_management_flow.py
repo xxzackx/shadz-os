@@ -218,8 +218,8 @@ class LoginSlugSelectionTests(DirectTestsBase):
         self.mock_send_message.assert_any_await(
             42,
             "Current destination for 'u1':\nhttps://example.com\n\n"
-            "Reply with the new destination URL (must start with http:// or https://), "
-            "or /cancel.",
+            "Reply with the new destination URL — a domain such as example.com "
+            "or a full http:// / https:// URL — or /cancel.",
         )
 
     def test_multiple_slugs_show_numbered_selection_list(self):
@@ -288,8 +288,8 @@ class LoginSlugSelectionTests(DirectTestsBase):
         self.mock_send_message.assert_awaited_once_with(
             42,
             "Current destination for 'u1':\nhttps://example.com\n\n"
-            "Reply with the new destination URL (must start with http:// or https://), "
-            "or /cancel.",
+            "Reply with the new destination URL — a domain such as example.com "
+            "or a full http:// / https:// URL — or /cancel.",
         )
 
     def test_typed_cancel_single_slug_returns_to_awaiting_code(self):
