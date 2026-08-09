@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from fastapi import Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -147,6 +147,24 @@ class LinkUpdate(BaseModel):
     notes: str | None = None
 
 
+def _as_utc(value):
+    """Tag a naive datetime as UTC before it reaches JSON serialization.
+
+    RedirectLink timestamps are always written with datetime.now(timezone.utc),
+    but SQLite/SQLAlchemy reads them back naive (a documented sqlite3
+    limitation). A naive value serializes to JSON with no offset, which a
+    browser `new Date(...)` call (as used throughout static/admin.html)
+    silently misreads as local time instead of UTC — e.g. a slug created at
+    2026-08-10 00:35 UTC+7 (2026-08-09T17:35:38 UTC) was displayed as
+    2026-08-09 17:35 Cambodia time, 7 hours early (H1E). Already tz-aware
+    values (e.g. a future non-SQLite backend) pass through unchanged, so
+    this never double-converts.
+    """
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
 class LinkInfo(BaseModel):
     """Full detail response for a single redirect link."""
     slug: str
@@ -160,6 +178,8 @@ class LinkInfo(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+    _tag_utc = field_validator("created_at", "updated_at", mode="before")(_as_utc)
 
 
 class ActiveMediaInfo(BaseModel):
@@ -184,6 +204,8 @@ class LinkSearchResult(BaseModel):
     updated_at: datetime
     active_media: ActiveMediaInfo | None = None   # populated for media slugs
     is_archived: bool = False
+
+    _tag_utc = field_validator("created_at", "updated_at", mode="before")(_as_utc)
 
 
 class SearchResponse(BaseModel):
