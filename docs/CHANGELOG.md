@@ -2,6 +2,37 @@
 
 ---
 
+## Activation Engine v1 — Production Hotfix H1E: Timezone Audit and Correction
+
+**Status:** Completed, deployed, and production live-tested. **Phase H1E is now complete and closed.**
+
+**Scope:** Narrow production hotfix to Admin timestamp display only — the Pydantic/API serialization boundary in `link_admin.py` for `RedirectLink.created_at`/`updated_at` as returned by the Admin link creation and search responses. No database schema change, no migration, no VPS timezone change, no ORM datetime redesign, no timestamp-write change, no Activation Engine lifecycle/token/ownership change.
+
+**Runtime/test commit:** `931067ca83388c50d676da8b5fccc15a4bf2e74f` — Fix Admin UTC timestamp serialization for H1E
+
+**Files changed:** `link_admin.py`, `tests/test_link_admin_timezone_h1e.py` (new)
+
+**Problem:** `RedirectLink.created_at`/`updated_at` were always correctly written with `datetime.now(timezone.utc)`, but SQLite/SQLAlchemy silently returns a naive `datetime` on read (a documented sqlite3 limitation) — value still correct, but with no `tzinfo`. FastAPI/Pydantic then serialized that naive value to JSON with no UTC offset. `static/admin.html`'s existing `new Date(...).toLocaleString()` calls interpret an offset-less ISO string as local time rather than UTC, so a slug created at `2026-08-10 00:35` Cambodia local time (`2026-08-09T17:35:38` UTC) displayed in Admin as `2026-08-09 17:35` — 7 hours early.
+
+**Delivered:**
+- New `link_admin._as_utc(value)` helper: tags a naive `datetime` with `tzinfo=timezone.utc`; an already timezone-aware value passes through unchanged (no double conversion).
+- Wired via a Pydantic `field_validator("created_at", "updated_at", mode="before")` onto both `LinkInfo` (`POST /admin/link`, `GET`/`POST /admin/link/{slug}`) and `LinkSearchResult` (`GET /admin/links/search`) — the two response models that carry these fields into the live Admin JSON responses `static/admin.html` reads.
+- No change to how timestamps are written, no change to `RedirectLink`'s column types, no migration — purely a serialization-boundary fix.
+- Browser `new Date(...).toLocaleString()` now correctly resolves the UTC-qualified timestamp to Cambodia local time via existing behavior — no frontend change required.
+
+**Automated test results:**
+- Focused: `tests/test_link_admin_timezone_h1e.py` — 7/7 passed
+- Full suite: **402 passed**
+- `git diff --check`: clean
+
+**Production deployment (VPS, Mr.Zack):** VPS fast-forwarded to runtime commit `931067c`; `shadz.service` active; local readiness check (`http://127.0.0.1:8000/health`) returned HTTP 200 before public verification. No database timestamp migration was required.
+
+**Production live test:** newly created slug timestamps display the correct Cambodia local time; existing slug records also now display the correct Cambodia local time.
+
+**Final production runtime commit: `931067c` (`931067ca83388c50d676da8b5fccc15a4bf2e74f`). Activation Engine v1 Production Hotfix H1E is now complete and closed.**
+
+---
+
 ## Activation Engine v1 — Production Hotfix H1D: Telegram URL Auto Normalization
 
 **Status:** Completed, deployed, and production live-tested. **Phase H1D is now complete and closed.**
