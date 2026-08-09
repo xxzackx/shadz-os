@@ -2,6 +2,40 @@
 
 ---
 
+## Activation Engine v1 — Production Hotfix H1D: Telegram URL Auto Normalization
+
+**Status:** Completed, deployed, and production live-tested. **Phase H1D is now complete and closed.**
+
+**Scope:** Narrow production hotfix to Telegram Bot destination-URL input only — the Activation Engine A4U URL setup flow and the existing T1B self-service Change Destination flow. No Admin URL slug creation change (H1C untouched), no unassign lifecycle change (H1A untouched), no Telegram identity/username behavior change (H1B untouched), no URL security architecture redesign, no media/Page Engine/ownership/token/schema change.
+
+**Runtime/test commit:** `108e54019795e78e38d3c1782e3d37e5165b34a3` — Fix Activation Engine H1D URL normalization
+
+**Files changed:** `bot_runtime.py`, `tests/test_activation_engine_h1d.py` (new), `tests/test_bot_runtime_management_flow.py`
+
+**Problem:** both Telegram destination-URL entry points (A4U URL setup and the T1B self-service `awaiting_new_url` flow) required input to literally start with `http://` or `https://`; a customer typing a bare domain such as `google.com` was rejected with an invalid-format message, even though that's the most natural way to type a URL.
+
+**Delivered:**
+- New `bot_runtime._normalize_telegram_destination_url(text)`, shared by both entry points: trims surrounding whitespace; detects an explicit `http://`/`https://` scheme case-insensitively via regex on the raw input (not `urlparse(...).scheme`, which would misread a scheme-less `example.com:8080/path` as having scheme `example.com`) and preserves it verbatim — never rewritten or double-prefixed; rejects any other explicit scheme (`javascript:`, `file:`, `ftp:`, ...) outright; otherwise prepends `https://` to scheme-less input.
+- Scheme-less host:port input now normalizes correctly, e.g. `example.com:8080/path` → `https://example.com:8080/path`.
+- A scheme-less bare single-label/junk value (e.g. `not-a-url`, `localhost`, `example`) is still rejected — validated against the parsed hostname after building the candidate, only for the case where the scheme was added by the normalizer.
+- A missing/empty hostname is rejected. A malformed port (e.g. `https://example.com:abc`, or `example.com:abc` after normalization) is rejected by safely accessing the parsed `.port` and catching `ValueError`.
+- The pre-existing `_is_blocked_destination_url` SHADZ/internal/loopback guard is unchanged and still runs on the normalized result in both flows — no change to blocked-host policy.
+- The normalized URL (not the raw input) is what's shown back to the customer for confirmation in both flows, and only the confirmed normalized value is ever saved (`RedirectLink.destination_url`, or the in-memory `pending_url` that Phase A5 later persists).
+- Telegram prompts and invalid-format error messages (`_ACTIVATION_URL_PROMPT_TEXT`, `_ACTIVATION_URL_INVALID_FORMAT_TEXT`, and the self-service prompt/error strings) were reworded so they no longer incorrectly claim a URL must start with `http://` or `https://` — they now state a domain (e.g. `example.com`) or a full `http://`/`https://` URL is accepted.
+
+**Automated test results:**
+- Focused: `tests/test_activation_engine_h1d.py` (18), `tests/test_activation_engine_phase_a4u.py` (44), `tests/test_bot_runtime_management_flow.py` + `tests/test_bot_runtime.py` (46) — all passed
+- Full suite: **395 passed, 28 subtests passed**
+- `git diff --check`: clean
+
+**Production deployment (VPS, Mr.Zack):** VPS fast-forwarded to runtime commit `108e540`; `shadz.service` active; local readiness check (`http://127.0.0.1:8000/health`) returned HTTP 200 before public verification.
+
+**Production live test:** all H1D production live tests passed — scheme-less domain and host:port input normalized and shown correctly before confirmation in both the Activation Engine A4U flow and the T1B self-service Change Destination flow; explicit `http://`/`https://` input preserved verbatim; blocked/internal destinations still rejected after normalization; invalid input (non-http(s) scheme, malformed port, bare junk text) still rejected.
+
+**Final production runtime commit: `108e540` (`108e54019795e78e38d3c1782e3d37e5165b34a3`). Activation Engine v1 Production Hotfix H1D is now complete and closed.**
+
+---
+
 ## Activation Engine v1 — Production Hotfix H1C: URL Slug Creation Without Required Destination
 
 **Status:** Completed, deployed, and production live-tested. **Phase H1C is now complete and closed.**
