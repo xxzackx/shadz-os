@@ -2,6 +2,40 @@
 
 ---
 
+## Activation Engine v1 — Production Hotfix H1G: Authenticated Session Identity Revalidation
+
+**Status:** Completed and deployed. Automated regression and production health verification passed; manual live identity-transfer testing was skipped by operator decision (see Production live test below). **Phase H1G is now complete and closed.**
+
+**Scope:** Narrow production hotfix to authenticated Telegram Bot management session revalidation only (`bot_runtime.py`). No `_SESSIONS` redesign, no DB-backed sessions, no Telegram ownership rule change, no Activation Engine activation ownership change, no access-code behavior change, no `BotClient` lifecycle semantics change, no H1A–H1F behavior change, no schema/migration change, no Admin UI change.
+
+**Runtime/test commit:** `ecdaffcec3aa34be54033a007eba99eff39237e2` — Fix Activation Engine H1G session identity revalidation
+
+**Files changed:** `bot_runtime.py`, `tests/test_activation_engine_h1g.py` (new), `tests/test_activation_engine_h1d.py`, `tests/test_bot_runtime.py`, `tests/test_bot_runtime_management_flow.py`
+
+**Problem:** Authenticated Telegram Bot management sessions trusted the stored `_SESSIONS[chat_id].bot_client_id` and the referenced `BotClient`'s active status, but never revalidated that the current Telegram sender still matched the `BotClient` owner. Because access-code login rebinds `BotClient.telegram_user_id` to whoever most recently logs in with that code, an older authenticated session opened by a different Telegram account could remain usable after ownership had moved to someone else.
+
+**Delivered:**
+- Every authenticated management interaction now additionally requires `BotClient.telegram_user_id == current Telegram sender numeric id` before continuing — numeric Telegram user ID only, never username.
+- Coverage: the authenticated message-management flow (`_handle_message`, scoped structurally to sessions without an `activation_token`, so the separate Activation Engine flow is untouched); the URL-management inline-button Confirm/Change/Cancel callback (`_handle_url_management_confirmation_callback` / `_claim_url_management_context`); and the typed YES/NO/CHANGE confirmation fallback. A missing or invalid sender fails closed.
+- New shared helpers `_resolve_active_bot_client` and `_resolve_authenticated_bot_client` centralize the check so it is not duplicated between the message path and the callback path.
+- On identity mismatch: the authenticated action is blocked before it reaches any management handler, the session resets to `awaiting_code`, no management mutation occurs, and the customer is told to enter the access code again.
+- The pre-existing inactive/missing-`BotClient` behavior (in both `_handle_message` and the callback path) is unchanged and explicitly distinguished from an H1G identity mismatch — an inactive/missing `BotClient` still gets the existing response, never the new identity-mismatch message.
+- H1B Telegram username refresh behavior is unaffected. H1F multilingual Activation Engine flow is unaffected. No DB schema or migration change.
+
+**Automated test results:**
+- Focused: `tests/test_activation_engine_h1g.py` — 15 passed
+- Relevant regression (`test_bot_runtime.py`, `test_bot_runtime_management_flow.py`, `test_activation_engine_h1d/h1f/phase_a2/a3/a4u/a4m/a5.py`): 335 passed, 67 subtests passed
+- Full suite: **449 passed, 67 subtests passed**
+- `git diff --check`: clean
+
+**Production deployment (VPS, Mr.Zack):** VPS fast-forwarded to runtime commit `ecdaffc`; `HEAD` == `origin/master`; working tree clean; `shadz.service` active; `/health` returned HTTP 200 with `{"status":"ok"}`; Uvicorn startup completed with no traceback. An initial health request immediately after the service restart hit a brief startup-timing race (`connection refused`); the retry after Uvicorn finished starting returned HTTP 200 — not an H1G runtime failure.
+
+**Production live test:** Manual two-Telegram-account identity-transfer live testing was **not performed** — skipped by operator decision, due to limited available Telegram test accounts and the low-frequency nature of the scenario. This is recorded as skipped, not as a passed live test; verification for this phase rests on the automated regression coverage above plus production health verification.
+
+**Final production runtime commit: `ecdaffc` (`ecdaffcec3aa34be54033a007eba99eff39237e2`). Activation Engine v1 Production Hotfix H1G is now complete and closed. H1G was the final locked phase in the Hotfix H1 roadmap. The next phase will be discussed separately.**
+
+---
+
 ## Activation Engine v1 — Production Hotfix H1F: Multilingual Activation Flow
 
 **Status:** Completed, deployed, and production live-tested. **Phase H1F is now complete and closed.**
