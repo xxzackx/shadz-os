@@ -215,7 +215,9 @@ class SelfServiceUrlNormalizationTests(unittest.TestCase):
         )
 
     def test_bare_domain_is_normalized_before_confirmation(self):
-        client = models.BotClient(client_name="Test Client", access_code="ABC123", is_active=True)
+        client = models.BotClient(
+            client_name="Test Client", access_code="ABC123", is_active=True, telegram_user_id="999",
+        )
         self.db.add(client)
         self.db.commit()
 

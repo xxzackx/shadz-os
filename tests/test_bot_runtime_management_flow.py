@@ -85,9 +85,10 @@ class DirectTestsBase(unittest.TestCase):
         self.db.close()
         bot_runtime._SESSIONS.clear()
 
-    def _make_client(self, access_code="ABC123", is_active=True):
+    def _make_client(self, access_code="ABC123", is_active=True, telegram_user_id="999"):
         client = models.BotClient(
             client_name="Test Client", access_code=access_code, is_active=is_active,
+            telegram_user_id=telegram_user_id,
         )
         self.db.add(client)
         self.db.commit()
@@ -363,27 +364,30 @@ class LoginSlugSelectionTests(DirectTestsBase):
 # ---------------------------------------------------------------------------
 
 class UrlManagementConfirmationButtonTests(DirectTestsBase):
-    def _confirm_callback(self, chat_id=42, callback_query_id="cbq-1"):
+    def _confirm_callback(self, chat_id=42, callback_query_id="cbq-1", sender_id=999):
         cq = {
             "id": callback_query_id,
             "data": bot_runtime._URL_MANAGEMENT_CONFIRM_CALLBACK,
             "message": {"chat": {"id": chat_id}},
+            "from": {"id": sender_id},
         }
         asyncio.run(bot_runtime._handle_url_management_confirmation_callback(cq, self.db))
 
-    def _change_callback(self, chat_id=42, callback_query_id="cbq-1"):
+    def _change_callback(self, chat_id=42, callback_query_id="cbq-1", sender_id=999):
         cq = {
             "id": callback_query_id,
             "data": bot_runtime._URL_MANAGEMENT_CHANGE_CALLBACK,
             "message": {"chat": {"id": chat_id}},
+            "from": {"id": sender_id},
         }
         asyncio.run(bot_runtime._handle_url_management_confirmation_callback(cq, self.db))
 
-    def _cancel_callback(self, chat_id=42, callback_query_id="cbq-1"):
+    def _cancel_callback(self, chat_id=42, callback_query_id="cbq-1", sender_id=999):
         cq = {
             "id": callback_query_id,
             "data": bot_runtime._URL_MANAGEMENT_CANCEL_CALLBACK,
             "message": {"chat": {"id": chat_id}},
+            "from": {"id": sender_id},
         }
         asyncio.run(bot_runtime._handle_url_management_confirmation_callback(cq, self.db))
 
@@ -602,11 +606,12 @@ class UrlManagementConfirmationButtonTests(DirectTestsBase):
 # ---------------------------------------------------------------------------
 
 class TypedUrlManagementFallbackTests(DirectTestsBase):
-    def _confirm_callback(self, chat_id=42, callback_query_id="cbq-1"):
+    def _confirm_callback(self, chat_id=42, callback_query_id="cbq-1", sender_id=999):
         cq = {
             "id": callback_query_id,
             "data": bot_runtime._URL_MANAGEMENT_CONFIRM_CALLBACK,
             "message": {"chat": {"id": chat_id}},
+            "from": {"id": sender_id},
         }
         asyncio.run(bot_runtime._handle_url_management_confirmation_callback(cq, self.db))
 
@@ -804,7 +809,9 @@ class UrlManagementWebhookDispatchTests(unittest.TestCase):
         )
 
     def test_confirm_callback_dispatched_through_webhook_persists_url(self):
-        client = models.BotClient(client_name="Test", access_code="AB12CD", is_active=True)
+        client = models.BotClient(
+            client_name="Test", access_code="AB12CD", is_active=True, telegram_user_id="999",
+        )
         self.db.add(client)
         link = models.RedirectLink(slug="u1", destination_url="https://old.example.com", content_type="url")
         self.db.add(link)
@@ -817,7 +824,7 @@ class UrlManagementWebhookDispatchTests(unittest.TestCase):
             "slugs": [{"slug": "u1", "content_type": "url", "notes": None}],
             "selected_slug": "u1",
         }
-        asyncio.run(bot_runtime._handle_message(42, "https://new.example.com", {}, self.db, {"text": "https://new.example.com"}))
+        asyncio.run(bot_runtime._handle_message(42, "https://new.example.com", {"id": 999}, self.db, {"text": "https://new.example.com"}))
 
         response = self._post({
             "update_id": 9001,
@@ -825,6 +832,7 @@ class UrlManagementWebhookDispatchTests(unittest.TestCase):
                 "id": "cbq-1",
                 "data": bot_runtime._URL_MANAGEMENT_CONFIRM_CALLBACK,
                 "message": {"chat": {"id": 42}},
+                "from": {"id": 999},
             },
         })
 

@@ -53,7 +53,10 @@ class BotRuntimeStaleTypeTests(unittest.TestCase):
         bot_runtime._SESSIONS.clear()
 
     def _make_client_and_link(self, content_type, slug, destination_url=""):
-        client = models.BotClient(client_name="Test Client", access_code="AB12CD", is_active=True)
+        client = models.BotClient(
+            client_name="Test Client", access_code="AB12CD", is_active=True,
+            telegram_user_id="999",
+        )
         self.db.add(client)
         link = models.RedirectLink(
             slug=slug,
@@ -83,7 +86,7 @@ class BotRuntimeStaleTypeTests(unittest.TestCase):
             "selected_slug": link.slug,
             "pending_value": "https://new.example.com",
         }
-        asyncio.run(bot_runtime._handle_message(chat_id, "YES", {}, self.db, {}))
+        asyncio.run(bot_runtime._handle_message(chat_id, "YES", {"id": 999}, self.db, {}))
         refreshed = self._reload_link(link.slug)
         self.assertEqual(refreshed.destination_url, "https://new.example.com")
 
@@ -116,7 +119,7 @@ class BotRuntimeStaleTypeTests(unittest.TestCase):
             "selected_slug": link.slug,
             "pending_value": "https://new.example.com",
         }
-        asyncio.run(bot_runtime._handle_message(chat_id, "YES", {}, self.db, {}))
+        asyncio.run(bot_runtime._handle_message(chat_id, "YES", {"id": 999}, self.db, {}))
         refreshed = self._reload_link(link.slug)
         self.assertEqual(refreshed.destination_url, "https://old.example.com")
         self.assertEqual(refreshed.content_type, "media")
@@ -155,7 +158,7 @@ class BotRuntimeStaleTypeTests(unittest.TestCase):
                 "file_name": "x.png",
             }
         }
-        asyncio.run(bot_runtime._handle_message(chat_id, "", {}, self.db, message))
+        asyncio.run(bot_runtime._handle_message(chat_id, "", {"id": 999}, self.db, message))
         count = (
             self.db.query(models.SlugMedia)
             .filter(models.SlugMedia.slug == link.slug)
@@ -179,7 +182,7 @@ class BotRuntimeStaleTypeTests(unittest.TestCase):
         }
         # Plain text carries no supported media field — existing behaviour is
         # to re-prompt without touching the DB, not to reject the slug itself.
-        asyncio.run(bot_runtime._handle_message(chat_id, "hello", {}, self.db, {"text": "hello"}))
+        asyncio.run(bot_runtime._handle_message(chat_id, "hello", {"id": 999}, self.db, {"text": "hello"}))
         count = (
             self.db.query(models.SlugMedia)
             .filter(models.SlugMedia.slug == link.slug)

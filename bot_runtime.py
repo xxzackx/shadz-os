@@ -2034,6 +2034,14 @@ _URL_MANAGEMENT_CHANGE_CALLBACK = "urlmgmt_change"
 _URL_MANAGEMENT_CANCEL_CALLBACK = "urlmgmt_cancel"
 _URL_MANAGEMENT_CLAIMED_STATE = "awaiting_confirmation_claimed"
 _URL_MANAGEMENT_UNAVAILABLE_TEXT = "This action is no longer available."
+# H1G: distinguishes an identity-driven session reset from every other
+# reason _claim_url_management_context can fail to claim (stale/foreign-
+# chat/already-claimed), without a broader result-object refactor.
+_URL_MANAGEMENT_IDENTITY_INVALIDATED = object()
+_H1G_SESSION_INVALID_TEXT = (
+    "This session is no longer valid for your Telegram account. "
+    "Please enter your access code to continue."
+)
 
 
 def _url_management_confirmation_markup() -> dict:
@@ -2046,18 +2054,32 @@ def _url_management_confirmation_markup() -> dict:
     }
 
 
-def _claim_url_management_context(chat_id: int) -> dict | None:
+def _claim_url_management_context(chat_id: int, from_user: dict, db: Session) -> dict | None:
     """Validate and claim the pending awaiting_confirmation context for
-    chat_id, synchronously (no await anywhere in this function).
+    chat_id.
 
     Shared by both the inline-button callback handler and the typed
     YES/NO/CHANGE fallback in _handle_message so the two entry points
     apply identical validity/claim rules and can never diverge. Returns
     the claimed values (bot_client_id, slugs, selected_slug,
     pending_value, and the exact claimed_session object for identity
-    re-checks) or None if there is nothing valid to claim — a genuinely
-    invalid/stale/foreign-chat session, or one already claimed by a prior
-    or racing delivery.
+    re-checks); or None if there is nothing valid to claim — a genuinely
+    invalid/stale/foreign-chat session, one already claimed by a prior or
+    racing delivery, or (pre-H1G behaviour, unchanged) its BotClient is
+    inactive or missing; or _URL_MANAGEMENT_IDENTITY_INVALIDATED (H1G) if
+    the session was otherwise valid and its BotClient IS active, but no
+    longer owned by the current Telegram sender — distinguished from plain
+    None specifically so callers can tell the customer to log in again,
+    instead of the generic "no longer available" the inactive/missing
+    case still gets.
+
+    H1G: this is the only entry point through which an authenticated
+    Confirm/Change/Cancel action can reach _apply_url_management_action —
+    the typed fallback in _handle_message is already covered by its own
+    earlier identity check, but the inline-button callback route
+    (_handle_url_management_confirmation_callback) has no other
+    revalidation point, so the check lives here to cover both without
+    duplicating it.
     """
     session = _SESSIONS.get(chat_id) if chat_id is not None else None
     valid_session = (
@@ -2070,6 +2092,19 @@ def _claim_url_management_context(chat_id: int) -> dict | None:
         return None
 
     bot_client_id = session.get("bot_client_id")
+    if _resolve_active_bot_client(bot_client_id, db) is None:
+        # Inactive/missing BotClient — the pre-H1G callback behaviour:
+        # block and reset the session, but this is NOT an H1G identity
+        # invalidation, so it must never get the H1G "session is no longer
+        # valid for your Telegram account" message — only plain None,
+        # which callers already answer with the generic unavailable text.
+        _SESSIONS[chat_id] = {"state": "awaiting_code"}
+        return None
+
+    if _resolve_authenticated_bot_client(bot_client_id, from_user, db) is None:
+        _SESSIONS[chat_id] = {"state": "awaiting_code"}
+        return _URL_MANAGEMENT_IDENTITY_INVALIDATED
+
     slugs = session.get("slugs", [])
     selected_slug = session["selected_slug"]
     pending_value = session["pending_value"]
@@ -2196,7 +2231,15 @@ async def _handle_url_management_confirmation_callback(callback_query: dict, db:
         return
 
     chat_id = _callback_chat_id(callback_query)
-    claim = _claim_url_management_context(chat_id) if chat_id is not None else None
+    claim = (
+        _claim_url_management_context(chat_id, callback_query.get("from"), db)
+        if chat_id is not None else None
+    )
+    if claim is _URL_MANAGEMENT_IDENTITY_INVALIDATED:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_URL_MANAGEMENT_UNAVAILABLE_TEXT)
+        await _send_message(chat_id, _H1G_SESSION_INVALID_TEXT)
+        return
     if claim is None:
         if callback_query_id:
             await _answer_callback_query(callback_query_id, text=_URL_MANAGEMENT_UNAVAILABLE_TEXT)
@@ -2324,6 +2367,67 @@ def _upload_bytes_to_r2(storage_key: str, data: bytes, mime_type: str) -> None:
     client.put_object(Bucket=bucket, Key=storage_key, Body=data, ContentType=mime_type)
 
 
+def _telegram_sender_id(from_user: dict) -> str | None:
+    """Extract the current message/callback's numeric Telegram sender id as
+    a string, for comparison against BotClient.telegram_user_id (H1G). Same
+    int/non-bool/positive validation as the activation entry's from.id
+    check, and the same str() conversion access-code login already uses
+    when binding a BotClient to its Telegram owner.
+    """
+    telegram_user_id = from_user.get("id") if isinstance(from_user, dict) else None
+    if (
+        not isinstance(telegram_user_id, int)
+        or isinstance(telegram_user_id, bool)
+        or telegram_user_id <= 0
+    ):
+        return None
+    return str(telegram_user_id)
+
+
+def _resolve_active_bot_client(
+    bot_client_id: int | None, db: Session
+) -> "models.BotClient | None":
+    """The active-only half of _resolve_authenticated_bot_client, split out
+    so a caller can distinguish the pre-existing "inactive/missing
+    BotClient" case from an H1G identity mismatch — see
+    _claim_url_management_context, which needs that distinction to avoid
+    sending the H1G identity-mismatch message for a plain deactivation.
+    Same query the pre-existing T1G deactivation check in _handle_message
+    already used.
+    """
+    if bot_client_id is None:
+        return None
+    return (
+        db.query(models.BotClient)
+        .filter(models.BotClient.id == bot_client_id, models.BotClient.is_active.is_(True))
+        .first()
+    )
+
+
+def _resolve_authenticated_bot_client(
+    bot_client_id: int | None, from_user: dict, db: Session
+) -> "models.BotClient | None":
+    """H1G: the single shared authenticated-session identity check, used by
+    every authenticated management entry point — both _handle_message and
+    the url-management inline-button callback route through this.
+
+    Resolves bot_client_id to an active BotClient (via
+    _resolve_active_bot_client), then additionally requires its
+    telegram_user_id to still match the current Telegram sender (numeric
+    id only — never username). Returns None if bot_client_id is missing,
+    the BotClient is inactive, or the identity no longer matches; callers
+    own resetting/invalidating the session and picking the right response
+    for their own entry point.
+    """
+    active_client = _resolve_active_bot_client(bot_client_id, db)
+    if active_client is None:
+        return None
+    sender_telegram_id = _telegram_sender_id(from_user)
+    if sender_telegram_id is None or active_client.telegram_user_id != sender_telegram_id:
+        return None
+    return active_client
+
+
 # ---------------------------------------------------------------------------
 # Conversation state machine
 # ---------------------------------------------------------------------------
@@ -2368,6 +2472,28 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
                     "or enter a new access code if you have one.",
                 )
                 return
+
+            # H1G: an active BotClient row is not enough — for authenticated
+            # slug-management sessions (reached only via access-code login
+            # below; identified structurally by NOT carrying an
+            # "activation_token", the key every Activation Engine session
+            # always carries, so this can never miss a future authenticated
+            # management state the way a hardcoded state whitelist could),
+            # the Telegram sender currently in this chat must still be the
+            # same person who authenticated the session. Access-code login
+            # rebinds BotClient.telegram_user_id to whoever last logged in
+            # with that code, so a management session opened earlier by a
+            # different Telegram account must not keep acting as this
+            # client once ownership has moved. Numeric Telegram user id is
+            # the ownership identity — never compare on username. The
+            # separate Activation Engine flow (H1F and earlier) resolves/
+            # binds its own BotClient fresh at each activation step and is
+            # untouched by H1G.
+            if "activation_token" not in session:
+                if _resolve_authenticated_bot_client(bot_client_id, from_user, db) is None:
+                    _SESSIONS[chat_id] = {"state": "awaiting_code"}
+                    await _send_message(chat_id, _H1G_SESSION_INVALID_TEXT)
+                    return
 
     if state == "awaiting_code":
         code = text.strip()
@@ -2588,7 +2714,10 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
             await _send_message(chat_id, "Please reply YES to confirm or NO to cancel.")
             return
 
-        claim = _claim_url_management_context(chat_id)
+        claim = _claim_url_management_context(chat_id, from_user, db)
+        if claim is _URL_MANAGEMENT_IDENTITY_INVALIDATED:
+            await _send_message(chat_id, _H1G_SESSION_INVALID_TEXT)
+            return
         if claim is None:
             await _send_message(chat_id, _URL_MANAGEMENT_UNAVAILABLE_TEXT)
             return
