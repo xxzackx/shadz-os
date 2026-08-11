@@ -2,6 +2,41 @@
 
 ---
 
+## Activation Engine v1 — Production Hotfix H1F: Multilingual Activation Flow
+
+**Status:** Completed, deployed, and production live-tested. **Phase H1F is now complete and closed.**
+
+**Scope:** Narrow production hotfix to the Telegram activation flow only (`bot_runtime.py` + new `activation_i18n.py`). No changes to the self-service management flow, Admin Panel, Page Engine, or Media Engine. No database/schema/migration change. No H1G (Authenticated Session Identity Revalidation) work.
+
+**Runtime/test commit:** `5c9147096098b37660edae6d0711aea4ddad63ae` — Add multilingual Activation Engine flow H1F
+
+**Files changed:** `bot_runtime.py`, `activation_i18n.py` (new), `tests/test_activation_engine_h1f.py` (new), `tests/test_activation_engine_phase_a2.py`
+
+**Supported languages:** English (`en`), Khmer (`km`), Indonesian (`id`), Simplified Chinese (`zh-Hans`).
+
+**Delivered:**
+- A language-selector step is inserted at the very start of activation: `/start activate_<token>` → `_handle_activation_entry` now shows a 2x2 language-picker keyboard (`_activation_language_markup`) instead of the Phase A2 entry message directly. The customer must choose a language before any activation confirmation or activation instructions are shown.
+- Picking a language (`_handle_activation_language_callback`, distinct `actlang_<lang>_<token>` callback-data prefix, re-validated against DB truth exactly like the existing Phase A2/A3/A4U/A4M guards) reveals the localized entry message and the localized "Activate Now" button, and stores the choice as `session["language"]` on the existing in-memory activation session — no new persistence layer, no DB schema change.
+- The chosen language is carried forward through Phase A3 (access-code-ready message), A4U (URL prompt, invalid-format/blocked-destination errors, Confirm/Change URL buttons and confirmation prompt, saved/retry text), A4M (media prompt, unsupported-type/too-large errors, Confirm/Change Media buttons and confirmation prompt, saved/retry text), and Phase A5 finalization (failure/conflict messages and the final completion message) — every one of these looks up its text/button label via new `activation_i18n.text()`/`activation_i18n.button()` helpers keyed on `session["language"]`.
+- A missing or unrecognised `session["language"]` (e.g. a session predating this deploy, or a corrupted value) falls back to English automatically — never crashes, never emits an empty string.
+- Token/record re-validation, `BotClient` resolution, `BotClientSlug` ownership assignment, the atomic `activation_status` transition, Telegram username refresh (H1B), and URL normalization (H1D) are all completely unchanged — this hotfix only changes which language the customer-facing text renders in.
+
+**Automated test results:**
+- Focused: `tests/test_activation_engine_h1f.py` — 32 passed, 39 subtests passed
+- Activation-related (all `test_activation_engine*` + `test_link_admin_activation.py`): 350 passed, 67 subtests passed
+- Full suite: **434 passed, 67 subtests passed**
+- `git diff --check`: clean
+
+**Production deployment (VPS, Mr.Zack):** VPS deployed the exact runtime commit `5c91470`; `HEAD` == `origin/master`; `shadz.service` active; `/health` returned 200.
+
+**Production live test:** the 4-language selector and the full activation flow (language selection → entry → access code → URL/media setup → confirmation → finalization) were exercised live via Telegram and passed.
+
+**Known non-blocking follow-up:** Khmer and Indonesian translations have passed functional/live rendering tests but have not yet received native-speaker linguistic review. If wording corrections are later needed, they should be handled as a small, self-contained translation hotfix (editing only `activation_i18n.py` translation strings) without reopening H1F's architecture.
+
+**Final production runtime commit: `5c91470` (`5c9147096098b37660edae6d0711aea4ddad63ae`). Activation Engine v1 Production Hotfix H1F is now complete and closed. Next: Activation Engine v1 Production Hotfix H1G — Authenticated Session Identity Revalidation (not yet started).**
+
+---
+
 ## Activation Engine v1 — Production Hotfix H1E: Timezone Audit and Correction
 
 **Status:** Completed, deployed, and production live-tested. **Phase H1E is now complete and closed.**
