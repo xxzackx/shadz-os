@@ -1,4 +1,5 @@
-"""Telegram Bot Runtime — Phase T1B + T1C + Activation Engine v1 Phase A2 + A3.
+"""Telegram Bot Runtime — Phase T1B + T1C + Activation Engine v1 Phase A2 + A3
++ Hotfix H1F (Multilingual Activation Flow).
 
 Webhook-based customer self-service chat flow. Customers authenticate with the
 plain-text access_code issued via the admin Bot Engine (bot_admin.py), then
@@ -82,6 +83,23 @@ Scope:
     (WHERE activation_status = 'unactivated'), so two concurrent
     finalizations for the same token can never both persist: the loser's
     entire transaction is rolled back, untouched, as a silent no-op.
+  - multilingual activation flow (Hotfix H1F): inserts a language-selector
+    step between the /start deep link and Phase A2's entry message —
+    _handle_activation_entry now shows a 4-language picker
+    (activation_i18n.SUPPORTED_LANGUAGES) instead of the entry text
+    directly; the entry message/button only appear once a language is
+    chosen (_handle_activation_language_callback). The chosen language is
+    stored on the SAME in-memory session dict every later phase already
+    carries (session["language"]) — no new persistence layer, no DB
+    schema change. Every activation message/button from that point on
+    (entry, access-code-ready, url/media prompts and confirmations,
+    finalize outcomes) is looked up via activation_i18n.text()/button()
+    using that stored language, falling back to English for a missing or
+    unrecognised value (e.g. a session that predates this deploy).
+    Ownership, token validation, URL/media activation logic, Telegram
+    username refresh, URL normalization, and every other Activation
+    Engine behavior are unchanged — only which language the customer-
+    facing text renders in.
 
 Conversation state is held in an in-memory dict, acceptable for a single
 uvicorn process (no --workers flag in this deployment) and acceptable to lose
@@ -102,6 +120,7 @@ import httpx
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+import activation_i18n
 import models
 from database import get_db
 # Reuses the one existing access-code generator instead of adding a second —
@@ -396,11 +415,15 @@ def _build_a4u_callback_payload(prefix: str, activation_token: str) -> str | Non
     return payload
 
 
-def _a4u_confirmation_markup(activation_token: str) -> dict | None:
+def _a4u_confirmation_markup(
+    activation_token: str, lang: str = activation_i18n.DEFAULT_LANGUAGE
+) -> dict | None:
     """Build the "Confirm" / "Change URL" inline keyboard, or None if the
     token can't produce safe callback_data for either button — callers must
     fail safe (fall back to text-only, never send a button with invalid or
-    oversized callback_data)."""
+    oversized callback_data). H1F: button labels are localized to lang
+    (defaults to English, so every pre-H1F caller/test keeps working
+    unchanged)."""
     confirm_payload = _build_a4u_callback_payload(_A4U_CONFIRM_PAYLOAD_PREFIX, activation_token)
     change_payload = _build_a4u_callback_payload(_A4U_CHANGE_PAYLOAD_PREFIX, activation_token)
     if not confirm_payload or not change_payload:
@@ -411,8 +434,8 @@ def _a4u_confirmation_markup(activation_token: str) -> dict | None:
         return None
     return {
         "inline_keyboard": [[
-            {"text": "Confirm", "callback_data": confirm_payload},
-            {"text": "Change URL", "callback_data": change_payload},
+            {"text": activation_i18n.button("CONFIRM", lang), "callback_data": confirm_payload},
+            {"text": activation_i18n.button("CHANGE_URL", lang), "callback_data": change_payload},
         ]]
     }
 
@@ -465,12 +488,14 @@ _ACTIVATION_MEDIA_SAVED_TEXT = (
 )
 
 
-def _a4m_confirmation_markup(activation_token: str) -> dict | None:
+def _a4m_confirmation_markup(
+    activation_token: str, lang: str = activation_i18n.DEFAULT_LANGUAGE
+) -> dict | None:
     """Build the "Confirm" / "Change Media" inline keyboard, or None if the
     token can't produce safe callback_data for either button — mirrors
     _a4u_confirmation_markup, reusing the same generic (prefix-agnostic
     despite its name) _build_a4u_callback_payload validator with the
-    A4M-specific prefixes."""
+    A4M-specific prefixes. H1F: button labels are localized to lang."""
     confirm_payload = _build_a4u_callback_payload(_A4M_CONFIRM_PAYLOAD_PREFIX, activation_token)
     change_payload = _build_a4u_callback_payload(_A4M_CHANGE_PAYLOAD_PREFIX, activation_token)
     if not confirm_payload or not change_payload:
@@ -481,8 +506,8 @@ def _a4m_confirmation_markup(activation_token: str) -> dict | None:
         return None
     return {
         "inline_keyboard": [[
-            {"text": "Confirm", "callback_data": confirm_payload},
-            {"text": "Change Media", "callback_data": change_payload},
+            {"text": activation_i18n.button("CONFIRM", lang), "callback_data": confirm_payload},
+            {"text": activation_i18n.button("CHANGE_MEDIA", lang), "callback_data": change_payload},
         ]]
     }
 
@@ -526,10 +551,14 @@ def _build_activation_payload(activation_token: str) -> str | None:
     return payload
 
 
-def _activation_entry_markup(activation_token: str) -> dict | None:
+def _activation_entry_markup(
+    activation_token: str, lang: str = activation_i18n.DEFAULT_LANGUAGE
+) -> dict | None:
     """Build the "Activate Now" inline keyboard, or None if the token can't
     produce a safe callback_data payload — callers must fail safe (never
-    send a button with invalid/oversized callback_data)."""
+    send a button with invalid/oversized callback_data). H1F: the button
+    label is localized to lang (defaults to English, so every pre-H1F
+    caller/test keeps working unchanged)."""
     payload = _build_activation_payload(activation_token)
     if not payload:
         logger.error(
@@ -538,8 +567,90 @@ def _activation_entry_markup(activation_token: str) -> dict | None:
         )
         return None
     return {
-        "inline_keyboard": [[{"text": "Activate Now", "callback_data": payload}]]
+        "inline_keyboard": [[
+            {"text": activation_i18n.button("ACTIVATE_NOW", lang), "callback_data": payload}
+        ]]
     }
+
+
+# ---------------------------------------------------------------------------
+# Activation Engine v1 Hotfix H1F — Multilingual Activation Flow
+#
+# Inserts a language-selection step between the /start deep link and the
+# existing Phase A2 entry message: _handle_activation_entry now shows a
+# language picker instead of the entry text directly, and the chosen
+# language is stored on the SAME in-memory session dict Phase A2/A3/A4U/A4M
+# already carry (session["language"]) — no new persistence mechanism, no DB
+# schema change. Every downstream activation message/button (entry text,
+# access-code-ready, url/media prompts and confirmations, finalize
+# messages) is looked up through activation_i18n.text()/button() using that
+# stored language, falling back to English if unset (e.g. a session that
+# predates this deploy) or unrecognised. A distinct callback_data prefix
+# ("actlang_") keeps language-selection callbacks from ever colliding with
+# the existing "activate_"/"a4uconfirm_"/etc. prefixes the webhook route
+# already dispatches on.
+# ---------------------------------------------------------------------------
+
+_ACTIVATION_LANGUAGE_SELECT_STATE = "awaiting_activation_language"
+_ACTIVATION_LANG_PAYLOAD_PREFIX = "actlang_"
+
+
+def _build_activation_lang_payload(lang: str, activation_token: str) -> str | None:
+    """Build and validate an "actlang_<lang>_<token>" callback_data string.
+
+    Same format/length/charset check _build_activation_payload uses (shared
+    _START_PAYLOAD_RE / _MAX_ACTIVATION_PAYLOAD_BYTES), plus a check that
+    lang is one of the exact 4 supported codes. Real activation tokens are
+    fixed-length (secrets.token_urlsafe(24) -> 32 chars), leaving ample
+    headroom under Telegram's 64-byte callback_data limit even with this
+    longer prefix.
+    """
+    if lang not in activation_i18n.LANGUAGE_CODES or not activation_token:
+        return None
+    payload = f"{_ACTIVATION_LANG_PAYLOAD_PREFIX}{lang}_{activation_token}"
+    if len(payload.encode("utf-8")) > _MAX_ACTIVATION_PAYLOAD_BYTES:
+        return None
+    if not _START_PAYLOAD_RE.match(payload):
+        return None
+    return payload
+
+
+def _activation_language_markup(activation_token: str) -> dict | None:
+    """Build the language-selector inline keyboard (one button per
+    supported language, 2 per row — a clean 2x2 grid for the 4 supported
+    languages), or None if the token can't produce safe callback_data for
+    every button — fails safe exactly like the other activation markup
+    builders (never sends a partial keyboard)."""
+    rows: list[list[dict]] = []
+    row: list[dict] = []
+    for code, label in activation_i18n.SUPPORTED_LANGUAGES:
+        payload = _build_activation_lang_payload(code, activation_token)
+        if payload is None:
+            logger.error(
+                "Activation token produces an invalid language-select callback_data "
+                "payload — refusing to build the language selector"
+            )
+            return None
+        row.append({"text": label, "callback_data": payload})
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return {"inline_keyboard": rows}
+
+
+def _session_language(chat_id: int, activation_token: str) -> str:
+    """Read session["language"] for chat_id, only if that session still
+    carries the same activation_token — otherwise (no session, mismatched
+    token, missing/unrecognised language) falls back to English. Never
+    trusts a stale/unrelated session's language for a different token."""
+    session = _SESSIONS.get(chat_id)
+    if session and session.get("activation_token") == activation_token:
+        lang = session.get("language")
+        if lang in activation_i18n.LANGUAGE_CODES:
+            return lang
+    return activation_i18n.DEFAULT_LANGUAGE
 
 
 def build_activation_deep_link(activation_token: str) -> str | None:
@@ -669,26 +780,105 @@ def _lookup_unactivated_media_link(token: str, db: Session) -> "models.RedirectL
 async def _handle_activation_entry(chat_id: int, payload: str, db: Session) -> None:
     """Handle a /start deep-link payload carrying an activation token.
 
-    Only recognises the payload and shows the Phase A2 entry message — does
-    not create a BotClient, claim ownership, mark the record activated, or
-    issue an access code. A valid unactivated token gets its own
-    activation-specific session state — it is never placed into the
-    ordinary Bot Client access-code login flow. An unknown, already-
-    activated, malformed, or otherwise unusable token clears any stale
-    session and shows one generic activation-invalid message, without
-    revealing which case occurred or falling back to the login prompt.
+    H1F: only recognises the payload and shows the language selector — does
+    not yet show the Phase A2 entry message, create a BotClient, claim
+    ownership, mark the record activated, or issue an access code. A valid
+    unactivated token gets its own activation-specific session state — it
+    is never placed into the ordinary Bot Client access-code login flow.
+    An unknown, already-activated, malformed, or otherwise unusable token
+    clears any stale session and shows one generic activation-invalid
+    message (in English — no language has been chosen yet), without
+    revealing which case occurred or falling back to the login prompt. The
+    Phase A2 entry message itself is now sent by
+    _handle_activation_language_callback once the customer picks a
+    language.
     """
     token = payload[len(_ACTIVATION_PAYLOAD_PREFIX):]
     record = _lookup_unactivated_record(token, db)
-    markup = _activation_entry_markup(token) if record else None
+    markup = _activation_language_markup(token) if record else None
 
     if not record or markup is None:
         _SESSIONS.pop(chat_id, None)
         await _send_message(chat_id, _ACTIVATION_INVALID_LINK_TEXT)
         return
 
-    _SESSIONS[chat_id] = {"state": "awaiting_activation_confirmation", "activation_token": token}
-    await _send_message(chat_id, _ACTIVATION_ENTRY_TEXT, reply_markup=markup)
+    _SESSIONS[chat_id] = {"state": _ACTIVATION_LANGUAGE_SELECT_STATE, "activation_token": token}
+    await _send_message(
+        chat_id, activation_i18n.text("LANGUAGE_PROMPT", activation_i18n.DEFAULT_LANGUAGE), reply_markup=markup
+    )
+
+
+async def _handle_activation_language_callback(callback_query: dict, db: Session) -> None:
+    """Handle a language-selector button press (H1F).
+
+    Mirrors _handle_activation_callback's validation shape: never crashes
+    on a malformed update, always answers the callback query at most once
+    (only if Telegram supplied a callback_query_id), and validates the
+    inbound callback_data through the same shared-shape builder
+    (_build_activation_lang_payload) used to generate it BEFORE any DB
+    lookup. Re-validates the token/record from scratch — never trusts that
+    the language-select session is still valid.
+
+    On success, stores the chosen language on a fresh
+    "awaiting_activation_confirmation" session (the same state Phase A2
+    used to enter directly) and sends the localized entry message with the
+    localized "Activate Now" button — from here on, _handle_activation_callback
+    (Phase A3) and everything after it reads session["language"] to stay in
+    the chosen language for the rest of the flow.
+    """
+    if not isinstance(callback_query, dict):
+        return
+
+    callback_query_id = callback_query.get("id")
+    data = callback_query.get("data")
+    if not isinstance(data, str):
+        data = ""
+
+    if not data.startswith(_ACTIVATION_LANG_PAYLOAD_PREFIX):
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id)
+        return
+
+    remainder = data[len(_ACTIVATION_LANG_PAYLOAD_PREFIX):]
+    lang_code, sep, token = remainder.partition("_")
+
+    # Validate the payload format/length/charset/lang BEFORE the DB
+    # lookup — mirrors every other activation callback handler's guard
+    # order. None of the 4 supported language codes contain "_", so
+    # partitioning on the first "_" unambiguously separates lang_code from
+    # token even though tokens themselves may contain underscores.
+    if not sep or _build_activation_lang_payload(lang_code, token) != data:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+        return
+
+    record = _lookup_unactivated_record(token, db)
+    if not record:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+        return
+
+    if callback_query_id:
+        await _answer_callback_query(callback_query_id)
+
+    message = callback_query.get("message")
+    chat = message.get("chat") if isinstance(message, dict) else None
+    chat_id = chat.get("id") if isinstance(chat, dict) else None
+    if chat_id is None:
+        return
+
+    markup = _activation_entry_markup(token, lang_code)
+    if markup is None:
+        _SESSIONS.pop(chat_id, None)
+        await _send_message(chat_id, _ACTIVATION_INVALID_LINK_TEXT)
+        return
+
+    _SESSIONS[chat_id] = {
+        "state": "awaiting_activation_confirmation",
+        "activation_token": token,
+        "language": lang_code,
+    }
+    await _send_message(chat_id, activation_i18n.text("ENTRY", lang_code), reply_markup=markup)
 
 
 def _default_bot_client_name(
@@ -834,6 +1024,10 @@ async def _handle_activation_callback(callback_query: dict, db: Session) -> None
     message = callback_query.get("message")
     chat = message.get("chat") if isinstance(message, dict) else None
     chat_id = chat.get("id") if isinstance(chat, dict) else None
+    # H1F: carry forward the language chosen at the selector step (stored on
+    # the "awaiting_activation_confirmation" session _handle_activation_language_callback
+    # just set) — falls back to English if missing/unrecognised.
+    lang = _session_language(chat_id, token) if chat_id is not None else activation_i18n.DEFAULT_LANGUAGE
 
     from_user = callback_query.get("from")
     telegram_user_id = from_user.get("id") if isinstance(from_user, dict) else None
@@ -843,7 +1037,7 @@ async def _handle_activation_callback(callback_query: dict, db: Session) -> None
         or telegram_user_id <= 0
     ):
         if chat_id is not None:
-            await _send_message(chat_id, _ACTIVATION_MISSING_IDENTITY_TEXT)
+            await _send_message(chat_id, activation_i18n.text("MISSING_IDENTITY", lang))
         return
 
     # Re-fetch the slug's content_type fresh — _lookup_unactivated_record
@@ -851,7 +1045,7 @@ async def _handle_activation_callback(callback_query: dict, db: Session) -> None
     link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == record.slug).first()
     if not link:
         if chat_id is not None:
-            await _send_message(chat_id, _ACTIVATION_MISSING_IDENTITY_TEXT)
+            await _send_message(chat_id, activation_i18n.text("MISSING_IDENTITY", lang))
         return
 
     try:
@@ -867,14 +1061,14 @@ async def _handle_activation_callback(callback_query: dict, db: Session) -> None
         logger.exception("Failed to resolve/create BotClient for activation token")
         if chat_id is not None:
             _SESSIONS.pop(chat_id, None)
-            await _send_message(chat_id, _ACTIVATION_CLIENT_BLOCKED_TEXT)
+            await _send_message(chat_id, activation_i18n.text("CLIENT_BLOCKED", lang))
         return
 
     if status in ("inactive", "ambiguous"):
         db.rollback()
         if chat_id is not None:
             _SESSIONS.pop(chat_id, None)
-            await _send_message(chat_id, _ACTIVATION_CLIENT_BLOCKED_TEXT)
+            await _send_message(chat_id, activation_i18n.text("CLIENT_BLOCKED", lang))
         return
 
     # "created" always has a new row pending. "reused" only has something
@@ -891,7 +1085,7 @@ async def _handle_activation_callback(callback_query: dict, db: Session) -> None
             logger.exception("Failed to commit BotClient resolution for activation token")
             if chat_id is not None:
                 _SESSIONS.pop(chat_id, None)
-                await _send_message(chat_id, _ACTIVATION_CLIENT_BLOCKED_TEXT)
+                await _send_message(chat_id, activation_i18n.text("CLIENT_BLOCKED", lang))
             return
 
     if chat_id is not None:
@@ -901,26 +1095,29 @@ async def _handle_activation_callback(callback_query: dict, db: Session) -> None
                 "activation_token": token,
                 "bot_client_id": client.id,
                 "content_type": link.content_type,
+                "language": lang,
             }
-            await _send_message(chat_id, _ACCESS_CODE_READY_TEXT.format(code=client.access_code))
-            await _send_message(chat_id, _ACTIVATION_URL_PROMPT_TEXT)
+            await _send_message(chat_id, activation_i18n.text("ACCESS_CODE_READY", lang, code=client.access_code))
+            await _send_message(chat_id, activation_i18n.text("URL_PROMPT", lang))
         elif link.content_type == "media":
             _SESSIONS[chat_id] = {
                 "state": _ACTIVATION_MEDIA_INPUT_STATE,
                 "activation_token": token,
                 "bot_client_id": client.id,
                 "content_type": link.content_type,
+                "language": lang,
             }
-            await _send_message(chat_id, _ACCESS_CODE_READY_TEXT.format(code=client.access_code))
-            await _send_message(chat_id, _ACTIVATION_MEDIA_PROMPT_TEXT)
+            await _send_message(chat_id, activation_i18n.text("ACCESS_CODE_READY", lang, code=client.access_code))
+            await _send_message(chat_id, activation_i18n.text("MEDIA_PROMPT", lang))
         else:
             _SESSIONS[chat_id] = {
                 "state": _ACTIVATION_SETUP_STATE,
                 "activation_token": token,
                 "bot_client_id": client.id,
                 "content_type": link.content_type,
+                "language": lang,
             }
-            await _send_message(chat_id, _ACCESS_CODE_READY_TEXT.format(code=client.access_code))
+            await _send_message(chat_id, activation_i18n.text("ACCESS_CODE_READY", lang, code=client.access_code))
 
 
 async def _handle_a4u_confirmation_callback(callback_query: dict, db: Session) -> None:
@@ -1014,7 +1211,9 @@ async def _handle_a4u_confirmation_callback(callback_query: dict, db: Session) -
     link = _lookup_unactivated_url_link(token, db)
     if link is None:
         if callback_query_id:
-            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+            await _answer_callback_query(
+                callback_query_id, text=activation_i18n.text("CALLBACK_INVALID", _session_language(chat_id, token))
+            )
         # Session-race guard: a losing/duplicate tap can reach here after a
         # Phase A5 finalize for this exact token already succeeded —
         # sequentially (the common case: the first tap already activated
@@ -1052,12 +1251,16 @@ async def _handle_a4u_confirmation_callback(callback_query: dict, db: Session) -
     valid_session = session_matches_token and session.get("state") == _ACTIVATION_URL_CONFIRM_STATE
     if not valid_session:
         if callback_query_id:
-            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+            await _answer_callback_query(
+                callback_query_id, text=activation_i18n.text("CALLBACK_INVALID", _session_language(chat_id, token))
+            )
         _pop_stale_session(chat_id, session)
         return
 
     if callback_query_id:
         await _answer_callback_query(callback_query_id)
+
+    lang = session.get("language", activation_i18n.DEFAULT_LANGUAGE)
 
     if action == "confirm":
         session["confirmed_destination_url"] = session.get("pending_url")
@@ -1065,7 +1268,7 @@ async def _handle_a4u_confirmation_callback(callback_query: dict, db: Session) -
         session["state"] = _ACTIVATION_SETUP_STATE
         _SESSIONS[chat_id] = session
         await _send_message(
-            chat_id, _ACTIVATION_URL_SAVED_TEXT.format(url=session["confirmed_destination_url"])
+            chat_id, activation_i18n.text("URL_SAVED", lang, url=session["confirmed_destination_url"])
         )
         return
 
@@ -1074,7 +1277,7 @@ async def _handle_a4u_confirmation_callback(callback_query: dict, db: Session) -
     session.pop("confirmed_destination_url", None)
     session["state"] = _ACTIVATION_URL_INPUT_STATE
     _SESSIONS[chat_id] = session
-    await _send_message(chat_id, _ACTIVATION_URL_RETRY_TEXT)
+    await _send_message(chat_id, activation_i18n.text("URL_RETRY", lang))
 
 
 def _is_valid_pending_activation_media(pending) -> bool:
@@ -1185,7 +1388,9 @@ async def _handle_a4m_confirmation_callback(callback_query: dict, db: Session) -
     link = _lookup_unactivated_media_link(token, db)
     if link is None:
         if callback_query_id:
-            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+            await _answer_callback_query(
+                callback_query_id, text=activation_i18n.text("CALLBACK_INVALID", _session_language(chat_id, token))
+            )
         # Session-race guard: see the matching comment in
         # _handle_a4u_confirmation_callback — a Phase A5 finalize for this
         # exact token may have already succeeded (sequentially or
@@ -1220,7 +1425,9 @@ async def _handle_a4m_confirmation_callback(callback_query: dict, db: Session) -
     valid_session = session_matches_token and session.get("state") == _ACTIVATION_MEDIA_CONFIRM_STATE
     if not valid_session:
         if callback_query_id:
-            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+            await _answer_callback_query(
+                callback_query_id, text=activation_i18n.text("CALLBACK_INVALID", _session_language(chat_id, token))
+            )
         _pop_stale_session(chat_id, session)
         return
 
@@ -1229,12 +1436,16 @@ async def _handle_a4m_confirmation_callback(callback_query: dict, db: Session) -
         # media metadata can't legitimately happen through the normal flow
         # — fail closed rather than confirm nothing.
         if callback_query_id:
-            await _answer_callback_query(callback_query_id, text=_ACTIVATION_CALLBACK_INVALID_TEXT)
+            await _answer_callback_query(
+                callback_query_id, text=activation_i18n.text("CALLBACK_INVALID", _session_language(chat_id, token))
+            )
         _pop_stale_session(chat_id, session)
         return
 
     if callback_query_id:
         await _answer_callback_query(callback_query_id)
+
+    lang = session.get("language", activation_i18n.DEFAULT_LANGUAGE)
 
     if action == "confirm":
         # In-memory move only — no DB or R2 write. Phase A5 performs the
@@ -1243,7 +1454,7 @@ async def _handle_a4m_confirmation_callback(callback_query: dict, db: Session) -
         session.pop("pending_activation_media", None)
         session["state"] = _ACTIVATION_SETUP_STATE
         _SESSIONS[chat_id] = session
-        await _send_message(chat_id, _ACTIVATION_MEDIA_SAVED_TEXT)
+        await _send_message(chat_id, activation_i18n.text("MEDIA_SAVED", lang))
         return
 
     # action == "change" — nothing was ever persisted, so there is nothing
@@ -1252,7 +1463,7 @@ async def _handle_a4m_confirmation_callback(callback_query: dict, db: Session) -
     session.pop("confirmed_activation_media", None)
     session["state"] = _ACTIVATION_MEDIA_INPUT_STATE
     _SESSIONS[chat_id] = session
-    await _send_message(chat_id, _ACTIVATION_MEDIA_RETRY_TEXT)
+    await _send_message(chat_id, activation_i18n.text("MEDIA_RETRY", lang))
 
 
 # ---------------------------------------------------------------------------
@@ -1373,6 +1584,7 @@ async def _finalize_activation_confirmation(chat_id: int, db: Session) -> None:
     if "confirmed_destination_url" not in session and "confirmed_activation_media" not in session:
         return
 
+    lang = session.get("language", activation_i18n.DEFAULT_LANGUAGE)
     token = session.get("activation_token")
     content_type = "url" if "confirmed_destination_url" in session else "media"
 
@@ -1392,12 +1604,12 @@ async def _finalize_activation_confirmation(chat_id: int, db: Session) -> None:
         if raw_status == "activated":
             await _reject_finalization(chat_id, session, None)
         else:
-            await _reject_finalization(chat_id, session, _ACTIVATION_INVALID_LINK_TEXT)
+            await _reject_finalization(chat_id, session, activation_i18n.text("INVALID_LINK", lang))
         return
 
     link = db.query(models.RedirectLink).filter(models.RedirectLink.slug == record.slug).first()
     if not link or link.content_type != content_type:
-        await _reject_finalization(chat_id, session, _ACTIVATION_INVALID_LINK_TEXT)
+        await _reject_finalization(chat_id, session, activation_i18n.text("INVALID_LINK", lang))
         return
 
     bot_client_id = session.get("bot_client_id")
@@ -1409,7 +1621,7 @@ async def _finalize_activation_confirmation(chat_id: int, db: Session) -> None:
             .first()
         )
     if client is None:
-        await _reject_finalization(chat_id, session, _ACTIVATION_CLIENT_BLOCKED_TEXT)
+        await _reject_finalization(chat_id, session, activation_i18n.text("CLIENT_BLOCKED", lang))
         return
 
     confirmed_url = None
@@ -1421,12 +1633,12 @@ async def _finalize_activation_confirmation(chat_id: int, db: Session) -> None:
             or not (confirmed_url.startswith("http://") or confirmed_url.startswith("https://"))
             or _is_blocked_destination_url(confirmed_url)
         ):
-            await _reject_finalization(chat_id, session, _ACTIVATION_INVALID_LINK_TEXT)
+            await _reject_finalization(chat_id, session, activation_i18n.text("INVALID_LINK", lang))
             return
     else:
         pending_media = session.get("confirmed_activation_media")
         if not _is_valid_pending_activation_media(pending_media):
-            await _reject_finalization(chat_id, session, _ACTIVATION_INVALID_LINK_TEXT)
+            await _reject_finalization(chat_id, session, activation_i18n.text("INVALID_LINK", lang))
             return
 
     # Ownership: reuse an existing assignment to this exact client, fail
@@ -1435,7 +1647,7 @@ async def _finalize_activation_confirmation(chat_id: int, db: Session) -> None:
         db.query(models.BotClientSlug).filter(models.BotClientSlug.slug == record.slug).first()
     )
     if existing_assignment is not None and existing_assignment.bot_client_id != client.id:
-        await _reject_finalization(chat_id, session, _ACTIVATION_ASSIGNMENT_CONFLICT_TEXT)
+        await _reject_finalization(chat_id, session, activation_i18n.text("ASSIGNMENT_CONFLICT", lang))
         return
     assignment_needed = existing_assignment is None
 
@@ -1461,11 +1673,11 @@ async def _finalize_activation_confirmation(chat_id: int, db: Session) -> None:
             logger.exception(
                 "A5 media download failed for chat_id=%s slug=%s", chat_id, record.slug
             )
-            await _send_message(chat_id, _ACTIVATION_FINALIZE_FAILED_TEXT)
+            await _send_message(chat_id, activation_i18n.text("FINALIZE_FAILED", lang))
             return
 
         if len(file_bytes) > _MAX_TELEGRAM_MEDIA_BYTES:
-            await _send_message(chat_id, _ACTIVATION_FINALIZE_FAILED_TEXT)
+            await _send_message(chat_id, activation_i18n.text("FINALIZE_FAILED", lang))
             return
 
         storage_key = _make_storage_key(pending_media["media_type"], pending_media["original_filename"])
@@ -1476,7 +1688,7 @@ async def _finalize_activation_confirmation(chat_id: int, db: Session) -> None:
             logger.exception(
                 "A5 R2 upload failed for chat_id=%s slug=%s", chat_id, record.slug
             )
-            await _send_message(chat_id, _ACTIVATION_FINALIZE_FAILED_TEXT)
+            await _send_message(chat_id, activation_i18n.text("FINALIZE_FAILED", lang))
             return
 
         media_asset_kwargs = {
@@ -1542,7 +1754,7 @@ async def _finalize_activation_confirmation(chat_id: int, db: Session) -> None:
         logger.exception(
             "A5 finalization commit failed for chat_id=%s slug=%s", chat_id, record.slug
         )
-        await _send_message(chat_id, _ACTIVATION_FINALIZE_FAILED_TEXT)
+        await _send_message(chat_id, activation_i18n.text("FINALIZE_FAILED", lang))
         return
 
     # Success — clear ALL activation/authenticated-management session state
@@ -1550,9 +1762,12 @@ async def _finalize_activation_confirmation(chat_id: int, db: Session) -> None:
     # never keeps the customer automatically logged in: they must still
     # enter their access code afterward to manage anything, exactly like
     # any other visit — the completion message may quote that code, but it
-    # does not substitute for entering it.
+    # does not substitute for entering it. The final welcome-back prompt
+    # reverts to English — the chosen language belonged to the activation
+    # session only, which just ended; ordinary access-code login (T1B) is
+    # out of H1F's locked scope.
     _SESSIONS[chat_id] = {"state": "awaiting_code"}
-    await _send_message(chat_id, _ACTIVATION_COMPLETE_TEXT.format(code=client.access_code))
+    await _send_message(chat_id, activation_i18n.text("COMPLETE", lang, code=client.access_code))
     await _send_message(chat_id, "Welcome to SHADZ. Please enter your access code.")
 
 
@@ -2384,7 +2599,31 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         # Ordinary text here must never fall into Bot Client login — the
         # session (and its activation_token) is preserved untouched, and the
         # text is never treated as an access code.
-        await _send_message(chat_id, _ACTIVATION_CONFIRMATION_REMINDER_TEXT)
+        await _send_message(
+            chat_id,
+            activation_i18n.text(
+                "CONFIRMATION_REMINDER", session.get("language", activation_i18n.DEFAULT_LANGUAGE)
+            ),
+        )
+        return
+
+    if state == _ACTIVATION_LANGUAGE_SELECT_STATE:
+        # H1F: ordinary text while the language selector is showing must
+        # never fall into Bot Client login either — re-validate the token
+        # from scratch (same pattern as every other activation state) and
+        # re-send the same selector (no language is known yet, so this
+        # stays the neutral English prompt) rather than treating the text
+        # as an access code or an implicit language choice.
+        token = session.get("activation_token")
+        record = _lookup_unactivated_record(token, db)
+        markup = _activation_language_markup(token) if record else None
+        if markup is None:
+            _SESSIONS.pop(chat_id, None)
+            await _send_message(chat_id, _ACTIVATION_INVALID_LINK_TEXT)
+            return
+        await _send_message(
+            chat_id, activation_i18n.text("LANGUAGE_PROMPT", activation_i18n.DEFAULT_LANGUAGE), reply_markup=markup
+        )
         return
 
     # Phase A5 replaces the former TEMPORARY handoff placeholder outright:
@@ -2404,10 +2643,16 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         if text.lower() in ("yes", "y", "confirm"):
             await _finalize_activation_confirmation(chat_id, db)
             return
-        await _send_message(chat_id, _ACTIVATION_FINALIZE_RETRY_URL_TEXT)
+        await _send_message(
+            chat_id,
+            activation_i18n.text("FINALIZE_RETRY_URL", session.get("language", activation_i18n.DEFAULT_LANGUAGE)),
+        )
         return
     if state == _ACTIVATION_SETUP_STATE and "confirmed_activation_media" in session:
-        await _send_message(chat_id, _ACTIVATION_FINALIZE_RETRY_MEDIA_TEXT)
+        await _send_message(
+            chat_id,
+            activation_i18n.text("FINALIZE_RETRY_MEDIA", session.get("language", activation_i18n.DEFAULT_LANGUAGE)),
+        )
         return
 
     if state in (_ACTIVATION_URL_INPUT_STATE, _ACTIVATION_URL_CONFIRM_STATE):
@@ -2417,19 +2662,20 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         # or a forged/stale session). Shared with the A4U callback handler
         # via _lookup_unactivated_url_link.
         token = session.get("activation_token")
+        lang = session.get("language", activation_i18n.DEFAULT_LANGUAGE)
         link = _lookup_unactivated_url_link(token, db)
         if link is None:
             _SESSIONS.pop(chat_id, None)
-            await _send_message(chat_id, _ACTIVATION_INVALID_LINK_TEXT)
+            await _send_message(chat_id, activation_i18n.text("INVALID_LINK", lang))
             return
 
         if state == _ACTIVATION_URL_INPUT_STATE:
             normalized_url = _normalize_telegram_destination_url(text)
             if normalized_url is None:
-                await _send_message(chat_id, _ACTIVATION_URL_INVALID_FORMAT_TEXT)
+                await _send_message(chat_id, activation_i18n.text("URL_INVALID_FORMAT", lang))
                 return
             if _is_blocked_destination_url(normalized_url):
-                await _send_message(chat_id, _ACTIVATION_URL_BLOCKED_TEXT)
+                await _send_message(chat_id, activation_i18n.text("URL_BLOCKED", lang))
                 return
 
             # Normalized URL (Hotfix H1D) — trimmed, with a scheme
@@ -2439,10 +2685,10 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
             session["pending_url"] = normalized_url
             session["state"] = _ACTIVATION_URL_CONFIRM_STATE
             _SESSIONS[chat_id] = session
-            markup = _a4u_confirmation_markup(token)
+            markup = _a4u_confirmation_markup(token, lang)
             await _send_message(
                 chat_id,
-                _ACTIVATION_URL_CONFIRM_PROMPT_TEXT.format(url=normalized_url),
+                activation_i18n.text("URL_CONFIRM_PROMPT", lang, url=normalized_url),
                 reply_markup=markup,
             )
             return
@@ -2463,7 +2709,7 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
             _SESSIONS[chat_id] = session
             await _send_message(
                 chat_id,
-                _ACTIVATION_URL_SAVED_TEXT.format(url=session["confirmed_destination_url"]),
+                activation_i18n.text("URL_SAVED", lang, url=session["confirmed_destination_url"]),
             )
             # Phase A5: finalize immediately, in this same message — the
             # same function the webhook route calls after the inline
@@ -2475,9 +2721,9 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
             session.pop("confirmed_destination_url", None)
             session["state"] = _ACTIVATION_URL_INPUT_STATE
             _SESSIONS[chat_id] = session
-            await _send_message(chat_id, _ACTIVATION_URL_RETRY_TEXT)
+            await _send_message(chat_id, activation_i18n.text("URL_RETRY", lang))
             return
-        await _send_message(chat_id, _ACTIVATION_URL_CONFIRM_INVALID_REPLY_TEXT)
+        await _send_message(chat_id, activation_i18n.text("URL_CONFIRM_INVALID_REPLY", lang))
         return
 
     if state in (_ACTIVATION_MEDIA_INPUT_STATE, _ACTIVATION_MEDIA_CONFIRM_STATE):
@@ -2485,17 +2731,18 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         # same rationale as the url branch above, shared via
         # _lookup_unactivated_media_link.
         token = session.get("activation_token")
+        lang = session.get("language", activation_i18n.DEFAULT_LANGUAGE)
         link = _lookup_unactivated_media_link(token, db)
         if link is None:
             _SESSIONS.pop(chat_id, None)
-            await _send_message(chat_id, _ACTIVATION_INVALID_LINK_TEXT)
+            await _send_message(chat_id, activation_i18n.text("INVALID_LINK", lang))
             return
 
         if state == _ACTIVATION_MEDIA_CONFIRM_STATE:
             # A4M confirmation is inline-button-only (no typed YES/NO
             # fallback, unlike A4U) — any message here, text or media, is
             # unrelated input and must not corrupt the session.
-            await _send_message(chat_id, _ACTIVATION_MEDIA_CONFIRM_REMINDER_TEXT)
+            await _send_message(chat_id, activation_i18n.text("MEDIA_CONFIRM_REMINDER", lang))
             return
 
         # state == _ACTIVATION_MEDIA_INPUT_STATE
@@ -2509,19 +2756,19 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         # actual download/upload/MediaAsset sequence.
         candidate = _extract_media_candidate(message)
         if candidate is None:
-            await _send_message(chat_id, _ACTIVATION_MEDIA_UNSUPPORTED_TEXT)
+            await _send_message(chat_id, activation_i18n.text("MEDIA_UNSUPPORTED", lang))
             return
 
         file_id, mime_type, reported_size, file_name = candidate
         if not file_id:
-            await _send_message(chat_id, _ACTIVATION_MEDIA_UNSUPPORTED_TEXT)
+            await _send_message(chat_id, activation_i18n.text("MEDIA_UNSUPPORTED", lang))
             return
 
         media_type = _media_type_for_mime(mime_type)
         if media_type is None:
             await _send_message(
                 chat_id,
-                _ACTIVATION_MEDIA_UNSUPPORTED_TYPE_TEXT.format(mime=mime_type or "unknown"),
+                activation_i18n.text("MEDIA_UNSUPPORTED_TYPE", lang, mime=mime_type or "unknown"),
             )
             return
 
@@ -2534,12 +2781,14 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
             # above, since this is likewise "not a usable file", not a
             # too-large file.
             if isinstance(reported_size, bool) or not isinstance(reported_size, int) or reported_size <= 0:
-                await _send_message(chat_id, _ACTIVATION_MEDIA_UNSUPPORTED_TEXT)
+                await _send_message(chat_id, activation_i18n.text("MEDIA_UNSUPPORTED", lang))
                 return
             if reported_size > _MAX_TELEGRAM_MEDIA_BYTES:
                 await _send_message(
                     chat_id,
-                    _ACTIVATION_MEDIA_TOO_LARGE_TEXT.format(
+                    activation_i18n.text(
+                        "MEDIA_TOO_LARGE",
+                        lang,
                         size=reported_size // (1024 * 1024),
                         max=_MAX_TELEGRAM_MEDIA_BYTES // (1024 * 1024),
                     ),
@@ -2560,10 +2809,10 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         }
         session["state"] = _ACTIVATION_MEDIA_CONFIRM_STATE
         _SESSIONS[chat_id] = session
-        markup = _a4m_confirmation_markup(token)
+        markup = _a4m_confirmation_markup(token, lang)
         await _send_message(
             chat_id,
-            _ACTIVATION_MEDIA_CONFIRM_PROMPT_TEXT.format(name=safe_name),
+            activation_i18n.text("MEDIA_CONFIRM_PROMPT", lang, name=safe_name),
             reply_markup=markup,
         )
         return
@@ -2613,7 +2862,11 @@ def register_bot_webhook_routes(app) -> None:
         if callback_query is not None:
             try:
                 cq_data = callback_query.get("data") if isinstance(callback_query, dict) else None
-                if isinstance(cq_data, str) and (
+                if isinstance(cq_data, str) and cq_data.startswith(_ACTIVATION_LANG_PAYLOAD_PREFIX):
+                    # H1F: distinct "actlang_" prefix — never touches the
+                    # "activate_"/"a4uconfirm_"/etc. dispatch below.
+                    await _handle_activation_language_callback(callback_query, db)
+                elif isinstance(cq_data, str) and (
                     cq_data.startswith(_A4U_CONFIRM_PAYLOAD_PREFIX)
                     or cq_data.startswith(_A4U_CHANGE_PAYLOAD_PREFIX)
                 ):

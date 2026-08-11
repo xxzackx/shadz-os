@@ -31,6 +31,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import activation_i18n
 import bot_runtime
 import models
 from database import Base, get_db
@@ -432,20 +433,27 @@ class HandleMessageActivationEntryTests(unittest.TestCase):
 
     # 9. Valid activation payload enters the Phase A2 flow — and must NOT
     # be placed into the ordinary Bot Client access-code login state.
-    def test_valid_activation_payload_shows_entry_message(self):
+    #
+    # Hotfix H1F: the very first thing shown is now the language selector,
+    # not the Phase A2 entry message/"Activate Now" button directly — see
+    # tests/test_activation_engine_h1f.py for the language-selection
+    # callback that reveals the (now localized) entry message afterward.
+    def test_valid_activation_payload_shows_language_selector(self):
         self._make_link_and_record("u1", "url", "tok-u1")
 
         self._run("/start activate_tok-u1")
 
         self.mock_send_message.assert_awaited_once()
         args, kwargs = self.mock_send_message.call_args
-        self.assertIn("activate", args[1].lower())
+        self.assertIn("language", args[1].lower())
         self.assertIn("reply_markup", kwargs)
-        button = kwargs["reply_markup"]["inline_keyboard"][0][0]
-        self.assertEqual(button["text"], "Activate Now")
-        # The button's callback_data must carry the token so the callback
-        # handler can re-validate it independently of session state.
-        self.assertEqual(button["callback_data"], "activate_tok-u1")
+        # One button per supported language; English's callback_data must
+        # carry the token so the callback handler can re-validate it
+        # independently of session state.
+        buttons = [b for row in kwargs["reply_markup"]["inline_keyboard"] for b in row]
+        self.assertEqual(len(buttons), len(activation_i18n.SUPPORTED_LANGUAGES))
+        english = next(b for b in buttons if b["text"] == "English")
+        self.assertEqual(english["callback_data"], "actlang_en_tok-u1")
 
     def test_valid_activation_payload_does_not_set_awaiting_code(self):
         self._make_link_and_record("u1", "url", "tok-u1")
@@ -461,7 +469,7 @@ class HandleMessageActivationEntryTests(unittest.TestCase):
 
         self.assertEqual(
             bot_runtime._SESSIONS[1],
-            {"state": "awaiting_activation_confirmation", "activation_token": "tok-u1"},
+            {"state": "awaiting_activation_language", "activation_token": "tok-u1"},
         )
 
     # 10. Every invalid activation payload shows the SAME generic
@@ -671,7 +679,7 @@ class ActivationConfirmationSessionFallthroughTests(unittest.TestCase):
 
         self.assertEqual(
             bot_runtime._SESSIONS[1],
-            {"state": "awaiting_activation_confirmation", "activation_token": "tok-u2"},
+            {"state": "awaiting_activation_language", "activation_token": "tok-u2"},
         )
 
     # 5. No A3+ database mutation occurs from any of the above.
