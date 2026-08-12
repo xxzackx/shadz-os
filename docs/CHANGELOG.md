@@ -2,6 +2,31 @@
 
 ---
 
+## Admin Panel UI v0.3 — Phase UI3B: Admin Shell & Navigation
+
+**Status:** Completed, deployed, and production-verified. **Phase UI3B is now complete and closed.**
+
+**Scope:** Frontend-only shell/navigation phase for `static/admin.html`. No backend, API, database, authentication, Activation Engine, Telegram Bot, Page Engine, or Media/R2 changes.
+
+**Commit:** `cce45a65cebe1c972dd991a144ac61a0244ba594` — Add Admin UI v0.3 shell and navigation
+
+**Files changed:** `static/admin.html`, `tests/test_admin_shell_ui3b.py`
+
+**Delivered:**
+- Persistent Admin navigation bar with five primary areas: Dashboard, Slugs, Media, Pages, Bot Clients.
+- Existing single-page Admin architecture preserved — module nav reuses the existing home/module groups instead of introducing new backend routes or pages.
+- Active parent navigation follows the currently open Admin section (`SECTION_MODULE` map wired into the existing `show()`/`goHome()` functions, no other change to their behavior).
+- Responsive navigation supports narrow/mobile layouts.
+- All existing Admin DOM hooks, forms, routes, APIs, and behavior preserved.
+
+**Test results:** Focused UI3B tests 8/8 passed. Full suite 457/457 passed (67 subtests). `git diff --check`: clean.
+
+**Production deployment:** VPS fast-forwarded to `cce45a6`; `HEAD`/`origin/master` confirmed matching; `shadz.service` active; `/health` returned HTTP 200; manual production live test passed — shell/navigation rendered correctly, all five nav areas present, Dashboard active by default, module scrolling correct, section → parent navigation mapping correct, Back/Dashboard navigation working, no regression in existing Admin functionality, desktop and narrow/mobile layouts both correct, no UI3B browser runtime errors.
+
+**Next: Admin Panel UI v0.3 Phase UI3C — Dashboard Home / System Overview (not yet started).**
+
+---
+
 ## Admin Panel UI v0.3 — Phase UI3A: Current Admin Audit & UI Foundation
 
 **Status:** Completed and deployed. **Phase UI3A is now complete and closed.**
