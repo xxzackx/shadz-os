@@ -18,6 +18,12 @@
       --border-2:   #2a2520;
       --text:       #d4d0c8;
       --text-muted: #4a4540;
+
+      /* ── UI3A foundation tokens (Admin UI v0.3) ── */
+      --radius-sm: 5px;
+      --radius-md: 6px;
+      --radius-lg: 8px;
+      --transition-fast: 0.15s;
     }
 
     body {
@@ -98,10 +104,10 @@
     .home-card {
       background: var(--surface);
       border: 1px solid var(--border-2);
-      border-radius: 8px;
+      border-radius: var(--radius-lg);
       padding: 1.4rem 1.5rem;
       cursor: pointer;
-      transition: border-color 0.15s, background 0.15s;
+      transition: border-color var(--transition-fast), background var(--transition-fast);
       text-align: left;
     }
 
@@ -147,13 +153,13 @@
       background: none;
       border: 1px solid var(--border-2);
       color: var(--text-muted);
-      border-radius: 5px;
+      border-radius: var(--radius-sm);
       padding: 0.3rem 0.65rem;
       font-size: 0.75rem;
       cursor: pointer;
       letter-spacing: 0.06em;
       text-transform: uppercase;
-      transition: border-color 0.15s, color 0.15s;
+      transition: border-color var(--transition-fast), color var(--transition-fast);
       flex-shrink: 0;
     }
 
@@ -184,12 +190,12 @@
       padding: 0.65rem 0.8rem;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       color: var(--text);
       font-size: 0.88rem;
       margin-bottom: 1rem;
       outline: none;
-      transition: border-color 0.15s;
+      transition: border-color var(--transition-fast);
     }
 
     input:focus { border-color: var(--gold-dim); }
@@ -201,14 +207,14 @@
       padding: 0.65rem 0.8rem;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       color: var(--text);
       font-size: 0.88rem;
       margin-bottom: 1rem;
       outline: none;
       appearance: none;
       cursor: pointer;
-      transition: border-color 0.15s;
+      transition: border-color var(--transition-fast);
     }
 
     select:focus { border-color: var(--gold-dim); }
@@ -217,7 +223,7 @@
     .result-box {
       margin-top: 1rem;
       border: 1px solid var(--gold-dim);
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       overflow: hidden;
       display: none;
       background: #120e00;
@@ -242,13 +248,13 @@
       background: var(--gold);
       color: #000;
       border: none;
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       font-size: 0.85rem;
       font-weight: 700;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: background var(--transition-fast);
       margin-top: 0.25rem;
     }
 
@@ -259,7 +265,7 @@
     .msg {
       margin-top: 1rem;
       padding: 0.65rem 0.8rem;
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       font-size: 0.82rem;
       display: none;
       letter-spacing: 0.01em;
@@ -272,7 +278,7 @@
     .stats-box {
       margin-top: 1rem;
       border: 1px solid var(--border-2);
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       overflow: hidden;
       display: none;
       background: var(--surface);
@@ -317,14 +323,14 @@
       background: none;
       border: 1px solid var(--border-2);
       color: var(--text-muted);
-      border-radius: 5px;
+      border-radius: var(--radius-sm);
       padding: 0.3rem 0.9rem;
       font-size: 0.72rem;
       font-weight: 600;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       cursor: pointer;
-      transition: border-color 0.15s, color 0.15s;
+      transition: border-color var(--transition-fast), color var(--transition-fast);
       width: 100%;
     }
 
@@ -414,7 +420,7 @@
       padding: 0.55rem 0.8rem;
       background: var(--surface);
       border: 1px solid var(--border-2);
-      border-radius: 6px;
+      border-radius: var(--radius-md);
     }
 
     .bulk-count {
