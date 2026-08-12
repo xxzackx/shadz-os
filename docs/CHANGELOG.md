@@ -2,6 +2,34 @@
 
 ---
 
+## Admin Panel UI v0.3 — Phase UI3C: Dashboard Home / System Overview
+
+**Status:** Completed, deployed, and production-verified. **Phase UI3C is now complete and closed.**
+
+**Scope:** Frontend-only Dashboard Home phase for `static/admin.html`. No backend, API, database, authentication, Activation Engine, Telegram Bot, Page Engine, or Media/R2 changes.
+
+**Commit:** `9e22dac97fd27935334397236133a91844ad75ee` — Implement Admin UI v0.3 UI3C dashboard overview
+
+**Files changed:** `static/admin.html`, `tests/test_admin_dashboard_ui3c.py`
+
+**Delivered:**
+- New "System Overview" card group at the top of Dashboard Home, above the existing module groups.
+- Link Engine shortcut card and Page Engine shortcut card — no live counts, since no list/count endpoint exists for slugs or pages; no backend capability was invented to populate them.
+- Media Engine card shows a live asset count and total stored size, sourced from the existing `GET /admin/media/assets`.
+- Bot Clients card shows a live total and active-client count, sourced from the existing `GET /admin/bot/clients`.
+- All four overview cards reuse the existing `navToModule()` function for navigation — no new routing.
+- Each live card fails gracefully to an "Unavailable" state on fetch error, without affecting navigation or any other Admin module.
+- Mobile layout: overview grid collapses to a single column at `<=480px`.
+- No backend/API/schema/business-logic changes.
+
+**Test results:** Focused UI3C tests 11/11 passed. UI3B shell regression 8/8 passed. Relevant Admin regression (`test_page_admin`, `test_link_admin_activation`, `test_link_admin_timezone_h1e`) 49/49 passed. `git diff --cached --check`: clean.
+
+**Production deployment:** VPS fast-forwarded to `9e22dac`; `shadz.service` active; the first localhost health check immediately after restart returned connection refused before the service finished starting, and a subsequent check returned HTTP 200; manual production live test passed — Dashboard Home System Overview cards render correctly, Media and Bot Clients cards show live values, Link/Page Engine cards navigate correctly, overview card navigation and mobile single-column layout both correct, no regression in existing Admin functionality.
+
+**Next: Admin Panel UI v0.3 Phase UI3D — Slug Management v0.3 (not yet started).**
+
+---
+
 ## Admin Panel UI v0.3 — Phase UI3B: Admin Shell & Navigation
 
 **Status:** Completed, deployed, and production-verified. **Phase UI3B is now complete and closed.**
