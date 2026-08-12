@@ -2,6 +2,31 @@
 
 ---
 
+## Admin Panel UI v0.3 — Phase UI3A: Current Admin Audit & UI Foundation
+
+**Status:** Completed and deployed. **Phase UI3A is now complete and closed.**
+
+**Scope:** Docs-and-frontend-only foundation phase for `static/admin.html`. No markup, JS behavior, API, database, backend, routing, authentication, Activation Engine, Telegram Bot, Page Engine, or Media/R2 changes.
+
+**Commit:** `f241c23386cbb5799104de4b3f9170d4c752b1b5` — Establish Admin UI v0.3 foundation
+
+**Files changed:** `static/admin.html`
+
+**Delivered:**
+- Audit confirmed Admin remains a single-file, no-build-step `static/admin.html`.
+- Added CSS custom-property tokens for existing values already reused across primitive rules: `--radius-sm` (5px), `--radius-md` (6px), `--radius-lg` (8px), `--transition-fast` (0.15s).
+- Substituted the tokens into the primitive rules that already used those exact literal values — `.home-card`, `.back-btn`, `input`, `select`, `.result-box`, `.action-btn`, `.msg`, `.stats-box`, `.ghost-btn`, `.bulk-bar`. No new visual design; existing values only.
+
+**Test results:** Full suite 449/449 passed (67 subtests). `git diff --check`: clean.
+
+**Production deployment:** VPS fast-forwarded to `f241c23`; `shadz.service` active; Uvicorn startup completed; port 8000 listening; `/health` returned HTTP 200; Admin endpoint returned HTTP 200; no backend/runtime regression observed.
+
+**Deferred to later UI v0.3 phases:** inline-style cleanup, typography redesign, a generic status badge system, and per-section redesigns.
+
+**Next: Admin Panel UI v0.3 Phase UI3B — Admin Shell & Navigation (not yet started).**
+
+---
+
 ## Activation Engine v1 — Production Hotfix H1G: Authenticated Session Identity Revalidation
 
 **Status:** Completed and deployed. Automated regression and production health verification passed; manual live identity-transfer testing was skipped by operator decision (see Production live test below). **Phase H1G is now complete and closed.**
