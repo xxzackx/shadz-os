@@ -66,6 +66,45 @@
       margin-top: 0.3rem;
     }
 
+    /* ── Admin shell primary navigation (UI3B) ── */
+    .admin-nav {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-bottom: 2rem;
+      padding-bottom: 1.25rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-link {
+      background: transparent;
+      border: 1px solid var(--border-2);
+      color: var(--text-muted);
+      font: inherit;
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      padding: 0.5rem 0.85rem;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: border-color var(--transition-fast), color var(--transition-fast);
+    }
+
+    .nav-link:hover { border-color: var(--gold-dim); color: var(--gold); }
+
+    .nav-link.active {
+      border-color: var(--gold);
+      color: var(--gold);
+      background: var(--surface);
+    }
+
+    @media (max-width: 480px) {
+      .admin-nav { gap: 0.4rem; }
+      .nav-link { flex: 1 1 auto; padding: 0.55rem 0.5rem; }
+    }
+
     /* ── Module group headers (home screen) ── */
     .module-header {
       display: flex;
@@ -448,11 +487,20 @@
       <div class="wordmark-sub">Control Panel</div>
     </div>
 
+    <!-- Admin shell primary navigation (UI3B) -->
+    <nav class="admin-nav" aria-label="Admin sections">
+      <button type="button" class="nav-link active" data-nav="dashboard" onclick="goHome()">Dashboard</button>
+      <button type="button" class="nav-link" data-nav="slugs" onclick="navToModule('slugs')">Slugs</button>
+      <button type="button" class="nav-link" data-nav="media" onclick="navToModule('media')">Media</button>
+      <button type="button" class="nav-link" data-nav="pages" onclick="navToModule('pages')">Pages</button>
+      <button type="button" class="nav-link" data-nav="bot" onclick="navToModule('bot')">Bot Clients</button>
+    </nav>
+
     <!-- Home screen -->
     <div id="home" class="home-grid">
 
       <!-- Module A: Link Engine -->
-      <div class="module-group">
+      <div class="module-group" id="module-slugs">
         <div class="module-header">
           <span class="module-header-label">Link Engine</span>
           <div class="module-header-line"></div>
@@ -477,7 +525,7 @@
       </div>
 
       <!-- Module B: Media Engine -->
-      <div class="module-group">
+      <div class="module-group" id="module-media">
         <div class="module-header">
           <span class="module-header-label">Media Engine</span>
           <div class="module-header-line"></div>
@@ -502,7 +550,7 @@
       </div>
 
       <!-- Module C: Page Engine -->
-      <div class="module-group">
+      <div class="module-group" id="module-pages">
         <div class="module-header">
           <span class="module-header-label">Page Engine</span>
           <div class="module-header-line"></div>
@@ -527,7 +575,7 @@
       </div>
 
       <!-- Module D: Telegram Bot Clients -->
-      <div class="module-group">
+      <div class="module-group" id="module-bot">
         <div class="module-header">
           <span class="module-header-label">Telegram Bot Clients</span>
           <div class="module-header-line"></div>
@@ -1002,16 +1050,40 @@
     const selectedSlugs = new Set();
     const selectedBotClients = new Set();
 
+    // Admin shell navigation (UI3B) — maps each section to its home-screen
+    // module group so the primary nav can reflect/reach the active area.
+    const SECTION_MODULE = {
+      createSection: 'slugs', updateSection: 'slugs', statsSection: 'slugs',
+      mediaUploadSection: 'media', attachSection: 'media', storageSection: 'media',
+      pageCreateSection: 'pages', pageEditSection: 'pages', pageAttachSection: 'pages',
+      botSection: 'bot'
+    };
+
+    function setActiveNav(navKey) {
+      document.querySelectorAll('.nav-link').forEach(el => {
+        el.classList.toggle('active', el.dataset.nav === navKey);
+      });
+    }
+
+    function navToModule(moduleKey) {
+      goHome();
+      setActiveNav(moduleKey);
+      const target = document.getElementById('module-' + moduleKey);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
     function show(sectionId) {
       document.getElementById('home').style.display = 'none';
       document.getElementById(sectionId).style.display = 'block';
       document.querySelector('.panel').classList.toggle('wide', GRID_SECTIONS.has(sectionId));
+      setActiveNav(SECTION_MODULE[sectionId] || 'dashboard');
     }
 
     function goHome() {
       document.querySelectorAll('.section').forEach(s => s.style.display = 'none');
       document.getElementById('home').style.display = 'flex';
       document.querySelector('.panel').classList.remove('wide');
+      setActiveNav('dashboard');
       document.getElementById('createResult').style.display = 'none';
       document.getElementById('searchResults').innerHTML = '';
       document.getElementById('selection-tools').style.display = 'none';
