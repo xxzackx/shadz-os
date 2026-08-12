@@ -133,6 +133,54 @@
       margin-top: 0.5rem;
     }
 
+    /* ── System overview cards (UI3C Dashboard Home) ── */
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.6rem;
+    }
+
+    .overview-card {
+      background: var(--surface);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius-lg);
+      padding: 0.85rem 0.9rem;
+      cursor: pointer;
+      transition: border-color var(--transition-fast), background var(--transition-fast);
+      text-align: left;
+    }
+
+    .overview-card:hover {
+      border-color: var(--gold-dim);
+      background: var(--surface-2);
+    }
+
+    .overview-card-label {
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .overview-card-value {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: var(--gold);
+      margin-top: 0.25rem;
+    }
+
+    .overview-card-hint {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      margin-top: 0.2rem;
+      letter-spacing: 0.02em;
+    }
+
+    @media (max-width: 480px) {
+      .overview-grid { grid-template-columns: 1fr; gap: 0.5rem; }
+    }
+
     /* ── Cards (home screen) ── */
     .home-grid {
       display: flex;
@@ -498,6 +546,36 @@
 
     <!-- Home screen -->
     <div id="home" class="home-grid">
+
+      <!-- System overview (UI3C) -->
+      <div class="module-group" id="module-overview">
+        <div class="module-header">
+          <span class="module-header-label">System Overview</span>
+          <div class="module-header-line"></div>
+        </div>
+        <div class="overview-grid">
+          <div class="overview-card" onclick="navToModule('slugs')">
+            <div class="overview-card-label">Link Engine</div>
+            <div class="overview-card-value">—</div>
+            <div class="overview-card-hint">Search by phone to view slugs</div>
+          </div>
+          <div class="overview-card" onclick="navToModule('media')">
+            <div class="overview-card-label">Media Engine</div>
+            <div class="overview-card-value" id="ov-media-value">…</div>
+            <div class="overview-card-hint" id="ov-media-hint">Loading…</div>
+          </div>
+          <div class="overview-card" onclick="navToModule('pages')">
+            <div class="overview-card-label">Page Engine</div>
+            <div class="overview-card-value">—</div>
+            <div class="overview-card-hint">Create or edit pages below</div>
+          </div>
+          <div class="overview-card" onclick="navToModule('bot')">
+            <div class="overview-card-label">Bot Clients</div>
+            <div class="overview-card-value" id="ov-bot-value">…</div>
+            <div class="overview-card-hint" id="ov-bot-hint">Loading…</div>
+          </div>
+        </div>
+      </div>
 
       <!-- Module A: Link Engine -->
       <div class="module-group" id="module-slugs">
@@ -1063,6 +1141,45 @@
       document.querySelectorAll('.nav-link').forEach(el => {
         el.classList.toggle('active', el.dataset.nav === navKey);
       });
+    }
+
+    // Dashboard Home system overview (UI3C) — reuses existing list endpoints
+    // and derives dashboard summaries client-side; no new backend capability added.
+    function loadDashboardOverview() {
+      loadMediaOverview();
+      loadBotOverview();
+    }
+
+    async function loadMediaOverview() {
+      const valueEl = document.getElementById('ov-media-value');
+      const hintEl  = document.getElementById('ov-media-hint');
+      try {
+        const res  = await fetch('/admin/media/assets', { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!res.ok) throw new Error();
+        const totalSize = data.reduce((sum, a) => sum + (a.file_size || 0), 0);
+        valueEl.textContent = data.length;
+        hintEl.textContent = data.length ? `${fmtSize(totalSize)} stored` : 'No assets yet';
+      } catch {
+        valueEl.textContent = '—';
+        hintEl.textContent = 'Unavailable';
+      }
+    }
+
+    async function loadBotOverview() {
+      const valueEl = document.getElementById('ov-bot-value');
+      const hintEl  = document.getElementById('ov-bot-hint');
+      try {
+        const res  = await fetch('/admin/bot/clients', { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!res.ok) throw new Error();
+        const activeCount = data.filter(c => c.is_active).length;
+        valueEl.textContent = data.length;
+        hintEl.textContent = data.length ? `${activeCount} active` : 'No clients yet';
+      } catch {
+        valueEl.textContent = '—';
+        hintEl.textContent = 'Unavailable';
+      }
     }
 
     function navToModule(moduleKey) {
@@ -2768,6 +2885,8 @@
         showMsg('bl-msg', 'error', 'Network error.');
       }
     }
+
+    document.addEventListener('DOMContentLoaded', loadDashboardOverview);
   </script>
 </body>
 </html>
