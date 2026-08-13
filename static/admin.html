@@ -1556,10 +1556,94 @@
       // slug means no ActivationRecord exists — this is a LEGACY slug that
       // predates the Activation Engine, never an "unactivated" one, and must
       // never be labeled as such. Page slugs never get this panel at all.
+      //
+      // UI3D-C1: r.assigned_client (BotClientSlug assignment identity) is
+      // used alongside r.activation to derive Old Client / Awaiting Telegram
+      // Login / Activated / Activation Sync Required / Ownership Conflict —
+      // every state is a real backend signal, never a frontend guess.
       let activationHtml = '';
       if (r.content_type === 'url' || r.content_type === 'media') {
-        if (r.activation) {
-          const a = r.activation;
+        const ac = r.assigned_client;
+        const a = r.activation;
+
+        if (ac && !ac.telegram_linked) {
+          // Assigned to a BotClient, but that client has never completed a
+          // successful access-code login yet — never label this Activated.
+          const clientParts = [esc(ac.client_name), `#${esc(ac.client_id)}`];
+          let clientDisplay = clientParts.join(' — ');
+          if (!ac.client_active) clientDisplay += ' (inactive)';
+          activationHtml = `
+            <div class="inset-panel">
+              <div class="panel-label">Activation</div>
+              <div class="compact-row">
+                <span class="stats-label">Status</span>
+                <span class="stats-value">Awaiting Telegram Login</span>
+              </div>
+              <div class="compact-row">
+                <span class="stats-label">Assigned Client</span>
+                <span class="stats-value value-overflow">${clientDisplay}</span>
+              </div>
+              <div class="compact-row">
+                <span class="stats-label">Telegram</span>
+                <span class="stats-value">Not linked yet</span>
+              </div>
+            </div>`;
+        } else if (ac && ac.telegram_linked && a && a.activation_status === 'activated' && a.owner_client_id === ac.client_id) {
+          // Fully consistent — reuse the existing UI3D-B Activated display.
+          const ownerParts = [];
+          if (a.owner_client_name) ownerParts.push(esc(a.owner_client_name));
+          if (a.owner_telegram_username) ownerParts.push(`@${esc(a.owner_telegram_username)}`);
+          if (a.owner_client_id != null) ownerParts.push(`#${esc(a.owner_client_id)}`);
+          let ownerDisplay = ownerParts.length ? ownerParts.join(' — ') : '—';
+          if (a.owner_client_id != null && a.owner_client_active === false) {
+            ownerDisplay += ' (inactive)';
+          }
+          activationHtml = `
+            <div class="inset-panel">
+              <div class="panel-label">Activation</div>
+              <div class="compact-row">
+                <span class="stats-label">Status</span>
+                <span class="stats-value">${esc(a.activation_status)}</span>
+              </div>
+              <div class="compact-row">
+                <span class="stats-label">Owner</span>
+                <span class="stats-value value-overflow">${ownerDisplay}</span>
+              </div>
+              <div class="compact-row">
+                <span class="stats-label">Activated At</span>
+                <span class="stats-value">${a.activated_at ? esc(new Date(a.activated_at).toLocaleString()) : '—'}</span>
+              </div>
+              <div class="compact-row">
+                <span class="stats-label">Activation Token</span>
+                <span class="stats-value">${a.has_activation_token ? 'Present' : 'Missing'}</span>
+              </div>
+            </div>`;
+        } else if (ac && ac.telegram_linked) {
+          // Telegram is linked but reconciliation hasn't (yet) produced a
+          // consistent activated+matching-owner state — fail closed rather
+          // than mislabeling this Old Client or Awaiting Telegram Login.
+          // Visibility only — no repair action in UI3D-C1.
+          const isOwnershipConflict = !!(a && a.owner_client_id != null && a.owner_client_id !== ac.client_id);
+          activationHtml = `
+            <div class="inset-panel">
+              <div class="panel-label">Activation</div>
+              <div class="compact-row">
+                <span class="stats-label">Status</span>
+                <span class="stats-value">${isOwnershipConflict ? 'Ownership Conflict' : 'Activation Sync Required'}</span>
+              </div>
+              <div class="compact-row">
+                <span class="stats-label">Assigned Client</span>
+                <span class="stats-value value-overflow">${esc(ac.client_name)} — #${esc(ac.client_id)}</span>
+              </div>
+              <div class="compact-row">
+                <span class="stats-label">Activation Record Owner</span>
+                <span class="stats-value">${a && a.owner_client_id != null ? esc(a.owner_client_id) : '—'}</span>
+              </div>
+            </div>`;
+        } else if (a) {
+          // No assignment (ac is null) — normal pre-assignment self-service
+          // state (e.g. unactivated, awaiting a customer NFC scan). Unchanged
+          // from UI3D-B: show the raw activation_status/owner/token as-is.
           const ownerParts = [];
           if (a.owner_client_name) ownerParts.push(esc(a.owner_client_name));
           if (a.owner_telegram_username) ownerParts.push(`@${esc(a.owner_telegram_username)}`);
@@ -1589,7 +1673,7 @@
               </div>
             </div>`;
         } else {
-          // No ActivationRecord for this url/media slug — legacy, not unactivated.
+          // No ActivationRecord and no BotClient assignment — legacy, not unactivated.
           activationHtml = `
             <div class="inset-panel">
               <div class="panel-label">Activation</div>

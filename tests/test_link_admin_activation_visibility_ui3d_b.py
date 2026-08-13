@@ -319,7 +319,7 @@ class AdminHtmlActivationPanelTests(unittest.TestCase):
         # rendered from a.activation_status (i.e. r.activation truthy) — the
         # else-branch (missing record) must not contain that literal string.
         else_branch_match = re.search(
-            r"// No ActivationRecord for this url/media slug.*?\n(.*?)\n\s*\}\n\s*\}",
+            r"// No ActivationRecord and no BotClient assignment.*?\n(.*?)</div>`;",
             body, re.DOTALL,
         )
         self.assertIsNotNone(else_branch_match, "legacy/no-record branch not found")

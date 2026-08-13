@@ -209,6 +209,19 @@ class ActivationInfo(BaseModel):
     _tag_utc = field_validator("activated_at", mode="before")(_as_utc)
 
 
+class AssignedClientInfo(BaseModel):
+    """BotClientSlug assignment identity for a slug — embedded in search
+    results so the Admin UI can derive Old Client / Awaiting Telegram Login /
+    Activated / Activation Sync Required without any frontend-only guessing
+    (UI3D-C1). Never includes access_code.
+    """
+    client_id: int
+    client_name: str
+    telegram_username: str | None = None
+    telegram_linked: bool          # BotClient.telegram_user_id is not None
+    client_active: bool
+
+
 class LinkSearchResult(BaseModel):
     """One item in the phone-number search response."""
     slug: str
@@ -227,6 +240,8 @@ class LinkSearchResult(BaseModel):
     # (predates the Activation Engine), not an unactivated one; for page
     # slugs it's simply out of scope. Never fabricated/backfilled here.
     activation: ActivationInfo | None = None
+    # None means "no BotClientSlug assignment" for url/media slugs.
+    assigned_client: AssignedClientInfo | None = None
 
     _tag_utc = field_validator("created_at", "updated_at", mode="before")(_as_utc)
 
@@ -705,19 +720,37 @@ def register_link_admin_routes(admin_router):
             )
             activation_by_slug = {ar.slug: ar for ar in activation_records}
 
+        # ── UI3D-C1 batch read-only enrichment — BotClientSlug assignment ───
+        # Exposes assignment identity (assigned client, whether their
+        # Telegram is linked) so the Admin UI can derive Old Client /
+        # Awaiting Telegram Login / Activated / Activation Sync Required
+        # without guessing. Read-only — never mutates BotClientSlug or
+        # ActivationRecord.
+        assignment_by_slug: dict[str, models.BotClientSlug] = {}
+        if activation_eligible_slugs:
+            assignments = (
+                db.query(models.BotClientSlug)
+                .filter(models.BotClientSlug.slug.in_(activation_eligible_slugs))
+                .all()
+            )
+            assignment_by_slug = {a.slug: a for a in assignments}
+
         owner_client_ids = {
             ar.owner_client_id
             for ar in activation_by_slug.values()
             if ar.owner_client_id is not None
         }
-        owner_by_id: dict[int, models.BotClient] = {}
-        if owner_client_ids:
-            owners = (
+        assigned_client_ids = {a.bot_client_id for a in assignment_by_slug.values()}
+        all_client_ids = owner_client_ids | assigned_client_ids
+        client_by_id: dict[int, models.BotClient] = {}
+        if all_client_ids:
+            clients = (
                 db.query(models.BotClient)
-                .filter(models.BotClient.id.in_(owner_client_ids))
+                .filter(models.BotClient.id.in_(all_client_ids))
                 .all()
             )
-            owner_by_id = {owner.id: owner for owner in owners}
+            client_by_id = {c.id: c for c in clients}
+        owner_by_id = client_by_id
 
         results = []
         for link in links:
@@ -756,6 +789,19 @@ def register_link_admin_routes(admin_router):
                     has_activation_token=bool(ar.activation_token),
                 )
 
+            assigned_client = None
+            assignment = assignment_by_slug.get(link.slug)
+            if assignment is not None:
+                bc = client_by_id.get(assignment.bot_client_id)
+                if bc is not None:
+                    assigned_client = AssignedClientInfo(
+                        client_id=bc.id,
+                        client_name=bc.client_name,
+                        telegram_username=bc.telegram_username,
+                        telegram_linked=bc.telegram_user_id is not None,
+                        client_active=bc.is_active,
+                    )
+
             results.append(LinkSearchResult(
                 slug=link.slug,
                 content_type=link.content_type,
@@ -770,6 +816,7 @@ def register_link_admin_routes(admin_router):
                 active_media=active_media,
                 is_archived=link.is_archived is True,
                 activation=activation,
+                assigned_client=assigned_client,
             ))
         return SearchResponse(results=results)
 

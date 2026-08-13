@@ -126,6 +126,11 @@ from database import get_db
 # Reuses the one existing access-code generator instead of adding a second —
 # bot_admin does not import this module, so this is not circular.
 from bot_admin import _generate_access_code
+# UI3D-C1 reuses the existing activation-token generator instead of adding a
+# second one — link_admin does not import this module, so this is not
+# circular. models.create_activation_record_for_slug (also reused below)
+# is already a plain module-level function, not tied to link_admin.
+from link_admin import _generate_activation_token
 # T1C intentionally reuses these existing media_admin storage helpers instead
 # of extracting a shared module — avoids a broad refactor for a single
 # consumer. Future cleanup: move into a shared media storage module if a
@@ -1791,6 +1796,95 @@ def _get_active_assigned_slugs(bot_client_id: int, db: Session) -> list[dict]:
     ]
 
 
+def _reconcile_assigned_slug_activation(client: "models.BotClient", db: Session) -> None:
+    """Idempotently reconcile this BotClient's assigned, non-archived
+    url/media slugs to Activated (UI3D-C1).
+
+    Called after every successful access-code authentication — not just the
+    client's first login — so it stays safely retryable: a slug assigned
+    after the client's first Telegram login, a slug that failed to
+    reconcile previously, or a slug that was archived and has since been
+    restored can all be picked up by a later login. Already-consistent
+    (activated, owned by this client) slugs are a no-op.
+
+    Reuses _get_active_assigned_slugs (already excludes archived and only
+    ever contains url/media, per assign_slug's own content-type gate).
+
+    Best-effort, per-slug: each slug is committed (or rolled back) on its
+    own. A failure or ownership conflict on one slug is logged and skipped
+    — it never rolls back another slug's already-committed reconciliation,
+    never undoes the caller's already-committed login, and never raises out
+    of this function (the caller must be able to proceed to the normal Bot
+    menu regardless of reconciliation outcome).
+
+    Never touches: activation_token on an existing record, destination_url,
+    SlugMedia/active media, or the BotClientSlug assignment row itself.
+    """
+    if not client.telegram_user_id:
+        return
+
+    for item in _get_active_assigned_slugs(client.id, db):
+        slug = item["slug"]
+        if item["content_type"] not in ("url", "media"):
+            continue  # defensive — assign_slug already guarantees this
+
+        try:
+            record = (
+                db.query(models.ActivationRecord)
+                .filter(models.ActivationRecord.slug == slug)
+                .first()
+            )
+
+            if record is None:
+                # Legacy slug with no ActivationRecord yet — create it and,
+                # within this same uncommitted transaction, immediately
+                # overwrite it to activated before the first commit. The
+                # public Activation Gateway (link_public.resolve_activation_
+                # redirect) only ever gates on a *committed* row with
+                # activation_status == "unactivated", so this legacy record
+                # is never externally observable in an unactivated state.
+                token = _generate_activation_token(db)
+                record = models.create_activation_record_for_slug(db, slug, token)
+                record.activation_status = "activated"
+                record.owner_client_id = client.id
+                record.activated_at = datetime.now(timezone.utc)
+                db.commit()
+                continue
+
+            if record.activation_status == "activated":
+                if record.owner_client_id == client.id:
+                    continue  # already consistent — no-op
+                logger.warning(
+                    "UI3D-C1 reconciliation conflict: slug=%s assigned to "
+                    "bot_client_id=%s but ActivationRecord.owner_client_id=%s "
+                    "(already activated) — leaving untouched",
+                    slug, client.id, record.owner_client_id,
+                )
+                continue
+
+            # unactivated
+            if record.owner_client_id is not None and record.owner_client_id != client.id:
+                logger.warning(
+                    "UI3D-C1 reconciliation conflict: slug=%s assigned to "
+                    "bot_client_id=%s but ActivationRecord.owner_client_id=%s "
+                    "(unactivated) — leaving untouched",
+                    slug, client.id, record.owner_client_id,
+                )
+                continue
+
+            record.activation_status = "activated"
+            record.owner_client_id = client.id
+            record.activated_at = datetime.now(timezone.utc)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "UI3D-C1 reconciliation failed for slug=%s bot_client_id=%s — "
+                "skipping; safe to retry on a later successful access-code login",
+                slug, client.id,
+            )
+
+
 def _format_slug_menu(slugs: list[dict]) -> str:
     lines = ["Your assigned slugs:"]
     for i, item in enumerate(slugs, start=1):
@@ -2511,6 +2605,24 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
             client.telegram_user_id = str(telegram_user_id)
         client.telegram_username = from_user.get("username")
         db.commit()
+
+        # UI3D-C1: reconcile assigned url/media slugs to Activated on every
+        # successful access-code login (not gated to "first login only" —
+        # see _reconcile_assigned_slug_activation for why retryability
+        # matters). Best-effort — never blocks the client from reaching
+        # their normal Bot menu below. The helper already guards each slug
+        # individually; this outer guard is defense-in-depth so even a
+        # totally unexpected failure (e.g. the assigned-slugs query itself)
+        # can never stop the login response below — safe to retry on the
+        # client's next access-code entry regardless.
+        try:
+            _reconcile_assigned_slug_activation(client, db)
+        except Exception:
+            logger.exception(
+                "UI3D-C1 reconciliation raised unexpectedly for bot_client_id=%s "
+                "— continuing login without blocking the client",
+                client.id,
+            )
 
         slugs = _get_active_assigned_slugs(client.id, db)
         if not slugs:
