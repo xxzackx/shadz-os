@@ -1551,6 +1551,68 @@
         }
       }
 
+      // ── Activation panel (url/media slugs only) — read-only display of
+      // Activation Engine v1 state. r.activation === null for a url/media
+      // slug means no ActivationRecord exists — this is a LEGACY slug that
+      // predates the Activation Engine, never an "unactivated" one, and must
+      // never be labeled as such. Page slugs never get this panel at all.
+      let activationHtml = '';
+      if (r.content_type === 'url' || r.content_type === 'media') {
+        if (r.activation) {
+          const a = r.activation;
+          const ownerParts = [];
+          if (a.owner_client_name) ownerParts.push(esc(a.owner_client_name));
+          if (a.owner_telegram_username) ownerParts.push(`@${esc(a.owner_telegram_username)}`);
+          if (a.owner_client_id != null) ownerParts.push(`#${esc(a.owner_client_id)}`);
+          let ownerDisplay = ownerParts.length ? ownerParts.join(' — ') : '—';
+          if (a.owner_client_id != null && a.owner_client_active === false) {
+            ownerDisplay += ' (inactive)';
+          }
+          activationHtml = `
+            <div class="inset-panel">
+              <div class="panel-label">Activation</div>
+              <div class="compact-row">
+                <span class="stats-label">Status</span>
+                <span class="stats-value">${esc(a.activation_status)}</span>
+              </div>
+              <div class="compact-row">
+                <span class="stats-label">Owner</span>
+                <span class="stats-value value-overflow">${ownerDisplay}</span>
+              </div>
+              <div class="compact-row">
+                <span class="stats-label">Activated At</span>
+                <span class="stats-value">${a.activated_at ? esc(new Date(a.activated_at).toLocaleString()) : '—'}</span>
+              </div>
+              <div class="compact-row">
+                <span class="stats-label">Activation Token</span>
+                <span class="stats-value">${a.has_activation_token ? 'Present' : 'Missing'}</span>
+              </div>
+            </div>`;
+        } else {
+          // No ActivationRecord for this url/media slug — legacy, not unactivated.
+          activationHtml = `
+            <div class="inset-panel">
+              <div class="panel-label">Activation</div>
+              <div class="compact-row">
+                <span class="stats-label">Status</span>
+                <span class="stats-value">Legacy / Activation Not Required</span>
+              </div>
+              <div class="compact-row">
+                <span class="stats-label">Owner</span>
+                <span class="stats-value">—</span>
+              </div>
+              <div class="compact-row">
+                <span class="stats-label">Activated At</span>
+                <span class="stats-value">—</span>
+              </div>
+              <div class="compact-row">
+                <span class="stats-label">Activation Token</span>
+                <span class="stats-value">—</span>
+              </div>
+            </div>`;
+        }
+      }
+
       const toggleRow = `
         <div class="edit-toggle-row">
           <button class="ghost-btn" onclick="toggleEdit(${index})">Edit Info</button>
@@ -1631,7 +1693,7 @@
           </div>`;
       }
 
-      return `<div class="stats-box"><div class="card-body">${selectRow}${rowsBeforeHtml}${r.content_type !== 'media' ? destinationRowHtml : ''}${rowsAfterHtml}</div>${activeMediaHtml}${toggleRow}${lifecycleRow}${convertRow}${botAssignRow}${pageAttachRow}${editForm}${pageAttachInlineHtml}</div>`;
+      return `<div class="stats-box"><div class="card-body">${selectRow}${rowsBeforeHtml}${r.content_type !== 'media' ? destinationRowHtml : ''}${rowsAfterHtml}</div>${activeMediaHtml}${activationHtml}${toggleRow}${lifecycleRow}${convertRow}${botAssignRow}${pageAttachRow}${editForm}${pageAttachInlineHtml}</div>`;
     }
 
     function toggleEdit(index) {

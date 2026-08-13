@@ -190,6 +190,25 @@ class ActiveMediaInfo(BaseModel):
     public_url:        str
 
 
+class ActivationInfo(BaseModel):
+    """Activation Engine state for a slug — embedded in search results.
+
+    Never includes the raw activation_token value — only has_activation_token
+    (a presence boolean). Only populated for url/media slugs that have an
+    ActivationRecord row; see search_links() for the legacy-slug distinction
+    (missing record != unactivated — UI3D-B).
+    """
+    activation_status: str
+    owner_client_id: int | None = None
+    owner_client_name: str | None = None
+    owner_telegram_username: str | None = None
+    owner_client_active: bool | None = None
+    activated_at: datetime | None = None
+    has_activation_token: bool
+
+    _tag_utc = field_validator("activated_at", mode="before")(_as_utc)
+
+
 class LinkSearchResult(BaseModel):
     """One item in the phone-number search response."""
     slug: str
@@ -204,6 +223,10 @@ class LinkSearchResult(BaseModel):
     updated_at: datetime
     active_media: ActiveMediaInfo | None = None   # populated for media slugs
     is_archived: bool = False
+    # None means "no ActivationRecord" — for url/media this is a legacy slug
+    # (predates the Activation Engine), not an unactivated one; for page
+    # slugs it's simply out of scope. Never fabricated/backfilled here.
+    activation: ActivationInfo | None = None
 
     _tag_utc = field_validator("created_at", "updated_at", mode="before")(_as_utc)
 
@@ -663,6 +686,39 @@ def register_link_admin_routes(admin_router):
                 models.RedirectLink.is_archived.is_(None),
             ))
         links = q.order_by(models.RedirectLink.created_at.desc()).all()
+
+        # ── Activation Engine v1 — UI3D-B batch read-only enrichment ────────
+        # A missing ActivationRecord is NOT equivalent to "unactivated" — many
+        # slugs were delivered to clients before the Activation Engine existed
+        # and must never be treated as needing activation. This block only
+        # SELECTs; it never creates/backfills an ActivationRecord for a slug
+        # that doesn't have one.
+        activation_eligible_slugs = [
+            link.slug for link in links if link.content_type in ("url", "media")
+        ]
+        activation_by_slug: dict[str, models.ActivationRecord] = {}
+        if activation_eligible_slugs:
+            activation_records = (
+                db.query(models.ActivationRecord)
+                .filter(models.ActivationRecord.slug.in_(activation_eligible_slugs))
+                .all()
+            )
+            activation_by_slug = {ar.slug: ar for ar in activation_records}
+
+        owner_client_ids = {
+            ar.owner_client_id
+            for ar in activation_by_slug.values()
+            if ar.owner_client_id is not None
+        }
+        owner_by_id: dict[int, models.BotClient] = {}
+        if owner_client_ids:
+            owners = (
+                db.query(models.BotClient)
+                .filter(models.BotClient.id.in_(owner_client_ids))
+                .all()
+            )
+            owner_by_id = {owner.id: owner for owner in owners}
+
         results = []
         for link in links:
             # For media slugs, embed the active media attachment so the UI can
@@ -685,6 +741,21 @@ def register_link_admin_routes(admin_router):
                             original_filename=asset.original_filename,
                             public_url=asset.public_url,
                         )
+
+            activation = None
+            ar = activation_by_slug.get(link.slug)
+            if ar is not None:
+                owner = owner_by_id.get(ar.owner_client_id) if ar.owner_client_id is not None else None
+                activation = ActivationInfo(
+                    activation_status=ar.activation_status,
+                    owner_client_id=ar.owner_client_id,
+                    owner_client_name=owner.client_name if owner else None,
+                    owner_telegram_username=owner.telegram_username if owner else None,
+                    owner_client_active=owner.is_active if owner else None,
+                    activated_at=ar.activated_at,
+                    has_activation_token=bool(ar.activation_token),
+                )
+
             results.append(LinkSearchResult(
                 slug=link.slug,
                 content_type=link.content_type,
@@ -698,6 +769,7 @@ def register_link_admin_routes(admin_router):
                 updated_at=link.updated_at,
                 active_media=active_media,
                 is_archived=link.is_archived is True,
+                activation=activation,
             ))
         return SearchResponse(results=results)
 
