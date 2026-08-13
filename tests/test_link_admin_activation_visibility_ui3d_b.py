@@ -20,7 +20,7 @@ Covers:
   10. phone search and exact-slug search return identical activation data
   11. token presence boolean exposed
   12. raw activation token never exposed
-  13. frontend shows "Legacy / Activation Not Required" for url/media when activation is null
+  13. frontend shows "Old Client" for url/media when activation is null
   14. frontend does NOT label a missing ActivationRecord as "Unactivated"
   15. Page cards do not show the Activation panel
 
@@ -306,10 +306,11 @@ class AdminHtmlActivationPanelTests(unittest.TestCase):
         self.assertIsNotNone(match, "buildResultCard() not found")
         return match.group(0)
 
-    # ── 13. frontend shows "Legacy / Activation Not Required" ──────────────
+    # ── 13. frontend shows "Old Client" ─────────────────────────────────────
     def test_legacy_activation_label_present(self):
         body = self._build_result_card_body()
-        self.assertIn("Legacy / Activation Not Required", body)
+        self.assertIn("Old Client", body)
+        self.assertNotIn("Legacy / Activation Not Required", body)
 
     # ── 14. frontend does NOT label missing ActivationRecord as "Unactivated" ─
     def test_missing_activation_record_never_labeled_unactivated(self):
