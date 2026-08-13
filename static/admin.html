@@ -745,12 +745,32 @@
       </div>
 
       <label for="u-slug">Slug</label>
-      <input type="text" id="u-slug" placeholder="a" autocomplete="off" />
+      <div style="display:flex;gap:0.5rem">
+        <input type="text" id="u-slug" placeholder="a" autocomplete="off" style="margin-bottom:0;flex:1" oninput="onUpdateSlugChanged()" />
+        <button class="ghost-btn sm" style="flex-shrink:0" onclick="loadUpdatePreview()">Look Up</button>
+      </div>
 
-      <label for="u-targetUrl">New Redirect URL</label>
-      <input type="url" id="u-targetUrl" placeholder="https://example.com" />
+      <!-- Preview of the current record — populated by loadUpdatePreview() before any write. -->
+      <div id="u-preview" class="result-box" style="display:none;margin-top:0.75rem">
+        <div class="result-row">
+          <span class="result-label">Slug</span>
+          <span class="result-value big" id="u-prevSlug">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Content Type</span>
+          <span class="result-value" id="u-prevType">—</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Current Destination</span>
+          <span class="result-value" id="u-prevDest">—</span>
+        </div>
+      </div>
+      <div id="u-lookup-msg" class="msg"></div>
 
-      <button class="action-btn" id="u-btn" onclick="updateRedirect()">Update Redirect Link</button>
+      <label for="u-targetUrl" style="margin-top:0.75rem">New Redirect URL</label>
+      <input type="url" id="u-targetUrl" placeholder="https://example.com" disabled />
+
+      <button class="action-btn" id="u-btn" onclick="updateRedirect()" disabled>Update Redirect Link</button>
       <div id="u-msg" class="msg"></div>
     </div>
 
@@ -760,6 +780,14 @@
         <button class="back-btn" onclick="goHome()">← Back</button>
         <span class="section-title">Slug Info</span>
       </div>
+
+      <label for="s-slug">Slug</label>
+      <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem">
+        <input type="text" id="s-slug" placeholder="url-a1b2c3" autocomplete="off" style="margin-bottom:0;flex:1" />
+        <button class="action-btn" style="width:auto;padding:0.65rem 1rem;margin-top:0;flex-shrink:0" onclick="lookupSlugDirect()">Find</button>
+      </div>
+
+      <div style="height:1px;background:var(--border-2);margin-bottom:1.25rem"></div>
 
       <label for="s-phone">Phone Number</label>
       <input type="tel" id="s-phone" placeholder="+85512345678" autocomplete="off" />
@@ -1204,6 +1232,7 @@
       document.getElementById('createResult').style.display = 'none';
       document.getElementById('searchResults').innerHTML = '';
       document.getElementById('selection-tools').style.display = 'none';
+      lastSlugLookupMode = 'phone';
       document.getElementById('storageList').innerHTML = '';
       document.getElementById('st-historyResults').innerHTML = '';
       document.getElementById('mu-result').style.display = 'none';
@@ -1219,6 +1248,12 @@
       document.getElementById('pa-msg').style.display = 'none';
       document.getElementById('pd-msg').textContent = '';
       document.getElementById('pd-msg').style.display = 'none';
+      // Reset Update Redirect preview/lock state so a prior lookup never
+      // lingers and destination edits always require a fresh lookup
+      document.getElementById('u-preview').style.display = 'none';
+      document.getElementById('u-targetUrl').disabled = true;
+      document.getElementById('u-targetUrl').value = '';
+      document.getElementById('u-btn').disabled = true;
       // Reset upload progress UI so it never shows stale state on re-entry
       document.getElementById('mu-progress-wrap').style.display = 'none';
       document.getElementById('mu-progress-bar').style.width = '0%';
@@ -1303,6 +1338,59 @@
       }
     }
 
+    // Fetches the current record for the slug typed in the Update Redirect
+    // section (existing GET /admin/link/{slug}) and shows a preview before
+    // any write is allowed. Destination edit + submit stay disabled until
+    // this succeeds, and re-lock whenever the slug field changes.
+    async function loadUpdatePreview() {
+      const slug        = document.getElementById('u-slug').value.trim();
+      const preview      = document.getElementById('u-preview');
+      const targetUrlEl  = document.getElementById('u-targetUrl');
+      const btn          = document.getElementById('u-btn');
+
+      preview.style.display = 'none';
+      targetUrlEl.disabled = true;
+      btn.disabled = true;
+
+      if (!slug) {
+        showMsg('u-lookup-msg', 'error', 'Enter a slug to look up.');
+        return;
+      }
+
+      const msgEl = document.getElementById('u-lookup-msg');
+      msgEl.style.display = 'none';
+
+      try {
+        const res  = await fetch(`/admin/link/${encodeURIComponent(slug)}`, {
+          credentials: 'same-origin',
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          document.getElementById('u-prevSlug').textContent = data.slug;
+          document.getElementById('u-prevType').textContent = data.content_type || '—';
+          document.getElementById('u-prevDest').textContent = data.destination_url || '—';
+          preview.style.display = 'block';
+          targetUrlEl.disabled = false;
+          targetUrlEl.value = data.destination_url || '';
+          btn.disabled = false;
+        } else {
+          showMsg('u-lookup-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('u-lookup-msg', 'error', 'Network error — is the server running?');
+      }
+    }
+
+    // Re-locks the update controls whenever the slug field changes, so a
+    // stale preview from a previous slug can never be submitted against a
+    // newly typed slug without a fresh lookup.
+    function onUpdateSlugChanged() {
+      document.getElementById('u-preview').style.display = 'none';
+      document.getElementById('u-targetUrl').disabled = true;
+      document.getElementById('u-btn').disabled = true;
+    }
+
     async function updateRedirect() {
       const slug      = document.getElementById('u-slug').value.trim();
       const targetUrl = document.getElementById('u-targetUrl').value.trim();
@@ -1328,6 +1416,11 @@
         const data = await res.json();
         if (res.ok) {
           showMsg('u-msg', 'success', `Updated: /${data.slug} → ${data.destination_url}`);
+          // Refresh the preview so it reflects the value just written
+          document.getElementById('u-prevSlug').textContent = data.slug;
+          document.getElementById('u-prevType').textContent = data.content_type || '—';
+          document.getElementById('u-prevDest').textContent = data.destination_url || '—';
+          document.getElementById('u-preview').style.display = 'block';
         } else {
           showMsg('u-msg', 'error', data.detail || `Error ${res.status}`);
         }
@@ -1441,11 +1534,19 @@
                 onclick="detachMedia('${escVal(r.slug)}', ${index})">Detach Media</button>
               <div id="detach-msg-${index}" class="msg"></div>
             </div>`;
-        } else {
+        } else if (r.active_media === null) {
           activeMediaHtml = `
             <div class="inset-panel" style="padding:0.55rem 1rem">
               <span style="font-size:0.72rem;color:var(--text-muted)">No active media attached.</span><br>
               <span style="font-size:0.68rem;color:var(--text-muted);opacity:0.7">Media destination is controlled by attached media asset.</span>
+            </div>`;
+        } else {
+          // active_media is undefined (not null) — the direct slug lookup
+          // endpoint (GET /admin/link/{slug}) does not report media
+          // attachment, so the state is unknown rather than "none".
+          activeMediaHtml = `
+            <div class="inset-panel" style="padding:0.55rem 1rem">
+              <span style="font-size:0.72rem;color:var(--text-muted)">Active media not shown for a direct slug lookup — use phone search for full detail.</span>
             </div>`;
         }
       }
@@ -1455,13 +1556,22 @@
           <button class="ghost-btn" onclick="toggleEdit(${index})">Edit Info</button>
         </div>`;
 
+      // GET /admin/link/{slug} (used by direct slug lookup) does not report
+      // is_archived, so r.is_archived is undefined there — archive status is
+      // unknown rather than "active", and the lifecycle action is hidden
+      // rather than showing a control that could be wrong.
+      const archivedKnown = typeof r.is_archived === 'boolean';
       const isArchived = r.is_archived === true;
-      const statusBadge = isArchived
-        ? `<span style="font-size:.65rem;color:#e07070;text-transform:uppercase;letter-spacing:.06em">Archived</span>`
-        : `<span style="font-size:.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em">Active</span>`;
-      const lifecycleBtn = isArchived
-        ? `<button class="ghost-btn sm" onclick="restoreSlug('${escVal(r.slug)}')">Restore</button>`
-        : `<button class="ghost-btn sm danger" onclick="archiveSlug('${escVal(r.slug)}')">Archive</button>`;
+      const statusBadge = !archivedKnown
+        ? `<span style="font-size:.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em">Status Unknown</span>`
+        : isArchived
+          ? `<span style="font-size:.65rem;color:#e07070;text-transform:uppercase;letter-spacing:.06em">Archived</span>`
+          : `<span style="font-size:.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em">Active</span>`;
+      const lifecycleBtn = !archivedKnown
+        ? `<span style="font-size:0.68rem;color:var(--text-muted)">Use phone search for archive controls</span>`
+        : isArchived
+          ? `<button class="ghost-btn sm" onclick="restoreSlug('${escVal(r.slug)}')">Restore</button>`
+          : `<button class="ghost-btn sm danger" onclick="archiveSlug('${escVal(r.slug)}')">Archive</button>`;
       const lifecycleRow = `
         <div class="edit-toggle-row" style="justify-content:space-between">
           ${statusBadge}${lifecycleBtn}
@@ -1480,12 +1590,14 @@
           </div>`;
       }
 
-      const selectRow = `
+      // Archive status unknown (direct slug lookup) — keep the record out of
+      // bulk archive/restore, same as the hidden single-card control above.
+      const selectRow = archivedKnown ? `
         <div class="stats-row">
           <span class="stats-label">Select</span>
           <input type="checkbox" class="bulk-check" data-slug="${escVal(r.slug)}"
                  onchange="toggleCardSelect(this)" />
-        </div>`;
+        </div>` : '';
 
       const botAssignRow = `
         <div class="edit-toggle-row" style="flex-direction:column;align-items:stretch;gap:0.4rem">
@@ -1568,7 +1680,7 @@
           msgEl.className     = 'msg success';
           msgEl.style.display = 'block';
           // Refresh the card list after a short pause so the user can see the message
-          setTimeout(() => searchSlugInfo(), 900);
+          setTimeout(() => refreshSlugResults(), 900);
         } else {
           msgEl.textContent   = data.detail || `Error ${res.status}`;
           msgEl.className     = 'msg error';
@@ -1586,6 +1698,8 @@
     }
 
     async function detachMedia(slug, index) {
+      if (!confirm(`Detach media from /${slug}? The slug will have no active media until a new one is attached.`)) return;
+
       const msgEl = document.getElementById(`detach-msg-${index}`);
       msgEl.style.display = 'none';
 
@@ -1602,7 +1716,7 @@
           msgEl.className     = 'msg success';
           msgEl.style.display = 'block';
           // Refresh search results so the card reflects the new state
-          setTimeout(() => searchSlugInfo(), 900);
+          setTimeout(() => refreshSlugResults(), 900);
         } else {
           msgEl.textContent   = data.detail || `Error ${res.status}`;
           msgEl.className     = 'msg error';
@@ -1625,7 +1739,7 @@
         const data = await res.json();
         if (res.ok) {
           showMsg('s-msg', 'success', data.message || 'Link archived.');
-          searchSlugInfo();
+          refreshSlugResults();
         } else {
           showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
         }
@@ -1643,7 +1757,7 @@
         const data = await res.json();
         if (res.ok) {
           showMsg('s-msg', 'success', data.message || 'Link restored.');
-          searchSlugInfo();
+          refreshSlugResults();
         } else {
           showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
         }
@@ -1652,11 +1766,17 @@
       }
     }
 
+    // Tracks which lookup last populated #searchResults ('phone' or 'slug')
+    // so actions taken on a card (archive/restore/convert/etc.) can refresh
+    // the results using the same lookup instead of assuming phone search.
+    let lastSlugLookupMode = 'phone';
+
     async function searchSlugInfo() {
       const phone = document.getElementById('s-phone').value.trim();
       const btn   = document.getElementById('s-btn');
       const container = document.getElementById('searchResults');
 
+      lastSlugLookupMode = 'phone';
       container.innerHTML = '';
       clearSelection();
       document.getElementById('selection-tools').style.display = 'none';
@@ -1694,6 +1814,58 @@
       } finally {
         btn.disabled = false;
         btn.textContent = 'Search Slug Info';
+      }
+    }
+
+    // Direct slug lookup — uses the existing GET /admin/link/{slug} endpoint
+    // and renders through the same buildResultCard() used by phone search.
+    // LinkInfo (the response model for this endpoint) does not include
+    // nfc_url, is_archived, or active_media, so those are synthesized/left
+    // undefined here; buildResultCard() treats undefined is_archived /
+    // active_media as "unknown" rather than guessing a value.
+    async function lookupSlugDirect() {
+      const slug = document.getElementById('s-slug').value.trim();
+      const container = document.getElementById('searchResults');
+
+      lastSlugLookupMode = 'slug';
+      container.innerHTML = '';
+      clearSelection();
+      document.getElementById('selection-tools').style.display = 'none';
+      const msgEl = document.getElementById('s-msg');
+      msgEl.style.display = 'none';
+
+      if (!slug) {
+        showMsg('s-msg', 'error', 'Slug is required.');
+        return;
+      }
+
+      try {
+        const res  = await fetch(`/admin/link/${encodeURIComponent(slug)}`, {
+          credentials: 'same-origin',
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          const result = {
+            ...data,
+            nfc_url: `https://shadz.io/${data.slug}`,
+          };
+          container.innerHTML = buildResultCard(result, 0);
+          document.getElementById('selection-tools').style.display = 'flex';
+        } else {
+          showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('s-msg', 'error', 'Network error — is the server running?');
+      }
+    }
+
+    // Refreshes #searchResults using whichever lookup last populated it.
+    async function refreshSlugResults() {
+      if (lastSlugLookupMode === 'slug') {
+        await lookupSlugDirect();
+      } else {
+        await searchSlugInfo();
       }
     }
 
@@ -2035,7 +2207,7 @@
         if (res.ok) {
           const skippedNote = data.skipped > 0 ? ` (${data.skipped} skipped)` : '';
           clearSelection();
-          await searchSlugInfo();
+          await refreshSlugResults();
           showMsg('s-msg', 'success', `Archived ${data.updated} slug${data.updated !== 1 ? 's' : ''}${skippedNote}.`);
         } else {
           showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
@@ -2069,7 +2241,7 @@
         if (res.ok) {
           const skippedNote = data.skipped > 0 ? ` (${data.skipped} skipped)` : '';
           clearSelection();
-          await searchSlugInfo();
+          await refreshSlugResults();
           showMsg('s-msg', 'success', `Restored ${data.updated} slug${data.updated !== 1 ? 's' : ''}${skippedNote}.`);
         } else {
           showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
@@ -2119,7 +2291,7 @@
         const data = await res.json();
         if (res.ok) {
           showMsg('s-msg', 'success', data.message || `Converted /${slug} to ${targetType}.`);
-          await searchSlugInfo();
+          await refreshSlugResults();
         } else {
           showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
         }
