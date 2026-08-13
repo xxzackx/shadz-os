@@ -632,21 +632,31 @@ def register_link_admin_routes(admin_router):
 
     @admin_router.get("/links/search", response_model=SearchResponse)
     def search_links(
-        phone_number: str = Query(..., description="Phone number to search (partial match)"),
+        phone_number: str | None = Query(None, description="Phone number to search (partial match)"),
+        slug: str | None = Query(None, description="Exact slug to look up"),
         include_archived: bool = Query(False, description="Include archived slugs in results"),
         db: Session = Depends(get_db),
     ):
-        """Search redirect links by phone number.
-        Uses a partial LIKE match so '+855123' matches '+85512345678'.
+        """Search redirect links by phone number, or look up one exact slug.
+        Uses a partial LIKE match on phone_number so '+855123' matches '+85512345678'.
+        slug, when provided, is an exact match — takes precedence over phone_number.
         Returns all matching records sorted newest-first.
         Returns {"results": []} if nothing found — never 404.
         By default only active slugs are returned. Pass include_archived=true to include archived.
         NULL is_archived is treated as active (legacy rows).
+        Exactly one of phone_number or slug must be provided — 400 otherwise.
         """
-        q = (
-            db.query(models.RedirectLink)
-            .filter(models.RedirectLink.phone_number.like(f"%{phone_number}%"))
-        )
+        if not slug and not phone_number:
+            raise HTTPException(
+                status_code=400,
+                detail="Either phone_number or slug is required",
+            )
+
+        q = db.query(models.RedirectLink)
+        if slug:
+            q = q.filter(models.RedirectLink.slug == slug)
+        else:
+            q = q.filter(models.RedirectLink.phone_number.like(f"%{phone_number}%"))
         if not include_archived:
             q = q.filter(or_(
                 models.RedirectLink.is_archived == False,

@@ -1817,12 +1817,11 @@
       }
     }
 
-    // Direct slug lookup — uses the existing GET /admin/link/{slug} endpoint
-    // and renders through the same buildResultCard() used by phone search.
-    // LinkInfo (the response model for this endpoint) does not include
-    // nfc_url, is_archived, or active_media, so those are synthesized/left
-    // undefined here; buildResultCard() treats undefined is_archived /
-    // active_media as "unknown" rather than guessing a value.
+    // Direct slug lookup — uses the existing GET /admin/links/search endpoint
+    // (exact slug=, same as phone search's shape) and renders through the
+    // same buildResultCard() used by phone search, so is_archived, active_media,
+    // and nfc_url are all real values instead of "unknown". include_archived=true
+    // is always sent so an archived slug can still be found and restored.
     async function lookupSlugDirect() {
       const slug = document.getElementById('s-slug').value.trim();
       const container = document.getElementById('searchResults');
@@ -1840,18 +1839,19 @@
       }
 
       try {
-        const res  = await fetch(`/admin/link/${encodeURIComponent(slug)}`, {
-          credentials: 'same-origin',
-        });
+        const res  = await fetch(
+          `/admin/links/search?slug=${encodeURIComponent(slug)}&include_archived=true`,
+          { credentials: 'same-origin' }
+        );
         const data = await res.json();
 
         if (res.ok) {
-          const result = {
-            ...data,
-            nfc_url: `https://shadz.io/${data.slug}`,
-          };
-          container.innerHTML = buildResultCard(result, 0);
-          document.getElementById('selection-tools').style.display = 'flex';
+          if (data.results.length === 0) {
+            showMsg('s-msg', 'error', 'No record found for that slug.');
+          } else {
+            container.innerHTML = data.results.map((r, i) => buildResultCard(r, i)).join('');
+            document.getElementById('selection-tools').style.display = 'flex';
+          }
         } else {
           showMsg('s-msg', 'error', data.detail || `Error ${res.status}`);
         }
