@@ -126,11 +126,12 @@ from database import get_db
 # Reuses the one existing access-code generator instead of adding a second —
 # bot_admin does not import this module, so this is not circular.
 from bot_admin import _generate_access_code
-# UI3D-C1 reuses the existing activation-token generator instead of adding a
-# second one — link_admin does not import this module, so this is not
-# circular. models.create_activation_record_for_slug (also reused below)
-# is already a plain module-level function, not tied to link_admin.
-from link_admin import _generate_activation_token
+# UI3D-C1 / UI3D-C1 Polish reuses the shared single-slug activation
+# reconciliation core instead of duplicating its state matrix — link_admin
+# does not import this module, so this is not circular. bot_admin.assign_slug
+# imports the same function directly from link_admin (not from here) so
+# bot_admin and bot_runtime's existing import relationship is unaffected.
+from link_admin import _reconcile_one_assigned_slug
 # T1C intentionally reuses these existing media_admin storage helpers instead
 # of extracting a shared module — avoids a broad refactor for a single
 # consumer. Future cleanup: move into a shared media storage module if a
@@ -902,6 +903,19 @@ def _default_bot_client_name(
     return f"Telegram user {telegram_user_id}"
 
 
+def _build_telegram_display_name(first_name: str | None, last_name: str | None) -> str | None:
+    """Build BotClient.telegram_display_name from Telegram's first_name/
+    last_name only (UI3D-C1 Polish) — display metadata, never identity.
+
+    first + last when both exist, first-only or last-only when only one
+    exists, None when neither exists. Never falls back to username or
+    telegram_user_id (unlike _default_bot_client_name, which is a distinct
+    concept: a one-time client_name default at creation, never refreshed).
+    """
+    parts = [p.strip() for p in (first_name, last_name) if p and p.strip()]
+    return " ".join(parts) if parts else None
+
+
 def _resolve_or_create_bot_client_for_telegram(
     db: Session,
     telegram_user_id: str,
@@ -944,6 +958,11 @@ def _resolve_or_create_bot_client_for_telegram(
             return "inactive", None
         if existing.telegram_username != telegram_username:
             existing.telegram_username = telegram_username
+        # UI3D-C1 Polish: refresh telegram_display_name alongside
+        # telegram_username — same metadata-only refresh, never identity.
+        display_name = _build_telegram_display_name(first_name, last_name)
+        if existing.telegram_display_name != display_name:
+            existing.telegram_display_name = display_name
         return "reused", existing
 
     client = models.BotClient(
@@ -951,6 +970,7 @@ def _resolve_or_create_bot_client_for_telegram(
         access_code=_generate_access_code(db),
         telegram_user_id=telegram_user_id,
         telegram_username=telegram_username,
+        telegram_display_name=_build_telegram_display_name(first_name, last_name),
         is_active=True,
     )
     db.add(client)
@@ -1808,7 +1828,10 @@ def _reconcile_assigned_slug_activation(client: "models.BotClient", db: Session)
     (activated, owned by this client) slugs are a no-op.
 
     Reuses _get_active_assigned_slugs (already excludes archived and only
-    ever contains url/media, per assign_slug's own content-type gate).
+    ever contains url/media, per assign_slug's own content-type gate) and
+    link_admin._reconcile_one_assigned_slug (UI3D-C1 Polish) for the actual
+    per-slug state-transition matrix, so it is defined exactly once and
+    shared with bot_admin.assign_slug's immediate-reconcile path.
 
     Best-effort, per-slug: each slug is committed (or rolled back) on its
     own. A failure or ownership conflict on one slug is logged and skipped
@@ -1825,57 +1848,23 @@ def _reconcile_assigned_slug_activation(client: "models.BotClient", db: Session)
 
     for item in _get_active_assigned_slugs(client.id, db):
         slug = item["slug"]
-        if item["content_type"] not in ("url", "media"):
-            continue  # defensive — assign_slug already guarantees this
-
         try:
-            record = (
-                db.query(models.ActivationRecord)
-                .filter(models.ActivationRecord.slug == slug)
-                .first()
-            )
-
-            if record is None:
-                # Legacy slug with no ActivationRecord yet — create it and,
-                # within this same uncommitted transaction, immediately
-                # overwrite it to activated before the first commit. The
-                # public Activation Gateway (link_public.resolve_activation_
-                # redirect) only ever gates on a *committed* row with
-                # activation_status == "unactivated", so this legacy record
-                # is never externally observable in an unactivated state.
-                token = _generate_activation_token(db)
-                record = models.create_activation_record_for_slug(db, slug, token)
-                record.activation_status = "activated"
-                record.owner_client_id = client.id
-                record.activated_at = datetime.now(timezone.utc)
+            outcome, record = _reconcile_one_assigned_slug(client, slug, item["content_type"], db)
+            if outcome == "conflict":
+                logger.warning(
+                    "UI3D-C1 reconciliation conflict: slug=%s assigned to "
+                    "bot_client_id=%s but ActivationRecord.owner_client_id=%s "
+                    "(status=%s) — leaving untouched",
+                    slug, client.id,
+                    record.owner_client_id if record else None,
+                    record.activation_status if record else None,
+                )
+                continue
+            if outcome == "activated":
                 db.commit()
-                continue
-
-            if record.activation_status == "activated":
-                if record.owner_client_id == client.id:
-                    continue  # already consistent — no-op
-                logger.warning(
-                    "UI3D-C1 reconciliation conflict: slug=%s assigned to "
-                    "bot_client_id=%s but ActivationRecord.owner_client_id=%s "
-                    "(already activated) — leaving untouched",
-                    slug, client.id, record.owner_client_id,
-                )
-                continue
-
-            # unactivated
-            if record.owner_client_id is not None and record.owner_client_id != client.id:
-                logger.warning(
-                    "UI3D-C1 reconciliation conflict: slug=%s assigned to "
-                    "bot_client_id=%s but ActivationRecord.owner_client_id=%s "
-                    "(unactivated) — leaving untouched",
-                    slug, client.id, record.owner_client_id,
-                )
-                continue
-
-            record.activation_status = "activated"
-            record.owner_client_id = client.id
-            record.activated_at = datetime.now(timezone.utc)
-            db.commit()
+            # "noop" (already consistent) / "ineligible" (defensive — assign_
+            # slug already guarantees url/media): nothing staged, nothing to
+            # commit.
         except Exception:
             db.rollback()
             logger.exception(
@@ -2604,6 +2593,11 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
         if telegram_user_id is not None:
             client.telegram_user_id = str(telegram_user_id)
         client.telegram_username = from_user.get("username")
+        # UI3D-C1 Polish: refresh telegram_display_name alongside
+        # telegram_username on every successful access-code login.
+        client.telegram_display_name = _build_telegram_display_name(
+            from_user.get("first_name"), from_user.get("last_name")
+        )
         db.commit()
 
         # UI3D-C1: reconcile assigned url/media slugs to Activated on every

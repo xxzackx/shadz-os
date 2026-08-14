@@ -1447,6 +1447,22 @@
         .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
+    // UI3D-C1 Polish: the Activation OWNER line always uses Telegram
+    // first_name/last_name display metadata, never BotClient.client_name —
+    // those are separate concepts (client_name is the admin-owned slug/
+    // client label, never overwritten by Telegram data). #BotClient.id stays
+    // the trailing identifier — never replaced with the numeric Telegram id.
+    // Each of the three slots renders '—' when its value is missing, so the
+    // compact single-line layout stays structurally stable either way.
+    function buildActivationOwnerLine(a) {
+      if (!a || a.owner_client_id == null) return '—';
+      const namePart = a.owner_telegram_display_name ? esc(a.owner_telegram_display_name) : '—';
+      const usernamePart = a.owner_telegram_username ? `@${esc(a.owner_telegram_username)}` : '—';
+      let line = `${namePart} — ${usernamePart} — #${esc(a.owner_client_id)}`;
+      if (a.owner_client_active === false) line += ' (inactive)';
+      return line;
+    }
+
     function buildResultCard(r, index) {
       const rowMapFn = ([label, val]) => `
         <div class="stats-row">
@@ -1590,14 +1606,7 @@
             </div>`;
         } else if (ac && ac.telegram_linked && a && a.activation_status === 'activated' && a.owner_client_id === ac.client_id) {
           // Fully consistent — reuse the existing UI3D-B Activated display.
-          const ownerParts = [];
-          if (a.owner_client_name) ownerParts.push(esc(a.owner_client_name));
-          if (a.owner_telegram_username) ownerParts.push(`@${esc(a.owner_telegram_username)}`);
-          if (a.owner_client_id != null) ownerParts.push(`#${esc(a.owner_client_id)}`);
-          let ownerDisplay = ownerParts.length ? ownerParts.join(' — ') : '—';
-          if (a.owner_client_id != null && a.owner_client_active === false) {
-            ownerDisplay += ' (inactive)';
-          }
+          const ownerDisplay = buildActivationOwnerLine(a);
           activationHtml = `
             <div class="inset-panel">
               <div class="panel-label">Activation</div>
@@ -1637,21 +1646,14 @@
               </div>
               <div class="compact-row">
                 <span class="stats-label">Activation Record Owner</span>
-                <span class="stats-value">${a && a.owner_client_id != null ? esc(a.owner_client_id) : '—'}</span>
+                <span class="stats-value value-overflow">${buildActivationOwnerLine(a)}</span>
               </div>
             </div>`;
         } else if (a) {
           // No assignment (ac is null) — normal pre-assignment self-service
           // state (e.g. unactivated, awaiting a customer NFC scan). Unchanged
           // from UI3D-B: show the raw activation_status/owner/token as-is.
-          const ownerParts = [];
-          if (a.owner_client_name) ownerParts.push(esc(a.owner_client_name));
-          if (a.owner_telegram_username) ownerParts.push(`@${esc(a.owner_telegram_username)}`);
-          if (a.owner_client_id != null) ownerParts.push(`#${esc(a.owner_client_id)}`);
-          let ownerDisplay = ownerParts.length ? ownerParts.join(' — ') : '—';
-          if (a.owner_client_id != null && a.owner_client_active === false) {
-            ownerDisplay += ' (inactive)';
-          }
+          const ownerDisplay = buildActivationOwnerLine(a);
           activationHtml = `
             <div class="inset-panel">
               <div class="panel-label">Activation</div>

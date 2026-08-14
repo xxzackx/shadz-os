@@ -105,6 +105,21 @@ def _run_migrations() -> None:
                         f"ALTER TABLE page_slug_attachments ADD COLUMN {col} {col_type}"
                     ))
 
+        # ── UI3D-C1 Polish — bot_clients.telegram_display_name ──────────────
+        # Nullable additive column, same safe pattern as above. Display
+        # metadata only — never used for identity/matching.
+        bot_clients_cols = {
+            "telegram_display_name": "VARCHAR",
+        }
+        rows = conn.execute(text("PRAGMA table_info(bot_clients)")).fetchall()
+        if rows:
+            existing = {row[1] for row in rows}
+            for col, col_type in bot_clients_cols.items():
+                if col not in existing:
+                    conn.execute(text(
+                        f"ALTER TABLE bot_clients ADD COLUMN {col} {col_type}"
+                    ))
+
         # Normal indexes are declared via index=True on the model columns and
         # created by create_all.  Only the partial unique index is explicit here
         # because SQLAlchemy cannot express WHERE-clause indexes in mapped_column.

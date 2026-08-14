@@ -115,6 +115,78 @@ def _generate_activation_token(db: Session) -> str:
 
 
 # ---------------------------------------------------------------------------
+# UI3D-C1 / UI3D-C1 Polish — shared single-slug activation reconciliation core
+#
+# Defines the ActivationRecord state-transition matrix exactly once so it is
+# never duplicated between bot_runtime's post-login reconciliation loop and
+# bot_admin's assign_slug immediate-reconcile path. Lives here (not in
+# bot_runtime.py or bot_admin.py) because both of those modules already
+# import shared helpers from this module (bot_runtime already imports
+# _generate_activation_token from here) and this module imports neither of
+# them — placing it here cannot introduce a circular import.
+# ---------------------------------------------------------------------------
+
+def _reconcile_one_assigned_slug(
+    client: "models.BotClient", slug: str, content_type: str, db: Session
+) -> tuple[str, "models.ActivationRecord | None"]:
+    """Stage the activation-state transition for one assigned url/media slug
+    against `client`. Uses add()/flush() only for a freshly-created record;
+    never calls commit() or rollback() — the caller owns the transaction
+    boundary so assignment + reconciliation can be committed together
+    atomically when needed (UI3D-C1 Polish), or committed per-slug on a
+    login-triggered retry loop (UI3D-C1).
+
+    Returns (outcome, record):
+      - ("ineligible", None) — content_type is not url/media (e.g. page).
+      - ("activated", record) — record is now activated & owned by this
+        client (freshly created legacy record, or flipped from unactivated/
+        no-owner or unactivated/same-owner).
+      - ("noop", record) — already activated & owned by this client.
+      - ("conflict", record) — an ActivationRecord already exists owned by a
+        different client (activated or unactivated) — never overwritten.
+
+    Never touches activation_token on an existing record, destination_url,
+    SlugMedia, or the BotClientSlug assignment row.
+    """
+    if content_type not in ("url", "media"):
+        return "ineligible", None
+
+    record = (
+        db.query(models.ActivationRecord)
+        .filter(models.ActivationRecord.slug == slug)
+        .first()
+    )
+
+    if record is None:
+        # Legacy slug with no ActivationRecord yet — create it and, within
+        # this same uncommitted transaction, immediately overwrite it to
+        # activated before the caller's first commit. The public Activation
+        # Gateway (link_public.resolve_activation_redirect) only ever gates
+        # on a *committed* row with activation_status == "unactivated", so
+        # this legacy record is never externally observable as unactivated.
+        token = _generate_activation_token(db)
+        record = models.create_activation_record_for_slug(db, slug, token)
+        record.activation_status = "activated"
+        record.owner_client_id = client.id
+        record.activated_at = datetime.now(timezone.utc)
+        return "activated", record
+
+    if record.activation_status == "activated":
+        if record.owner_client_id == client.id:
+            return "noop", record
+        return "conflict", record
+
+    # unactivated
+    if record.owner_client_id is not None and record.owner_client_id != client.id:
+        return "conflict", record
+
+    record.activation_status = "activated"
+    record.owner_client_id = client.id
+    record.activated_at = datetime.now(timezone.utc)
+    return "activated", record
+
+
+# ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
 
@@ -202,6 +274,10 @@ class ActivationInfo(BaseModel):
     owner_client_id: int | None = None
     owner_client_name: str | None = None
     owner_telegram_username: str | None = None
+    # UI3D-C1 Polish: Telegram first_name/last_name display metadata — the
+    # correct field for the Admin Activation OWNER line. Never falls back to
+    # owner_client_name (a separate, admin-owned label — never conflated).
+    owner_telegram_display_name: str | None = None
     owner_client_active: bool | None = None
     activated_at: datetime | None = None
     has_activation_token: bool
@@ -218,6 +294,7 @@ class AssignedClientInfo(BaseModel):
     client_id: int
     client_name: str
     telegram_username: str | None = None
+    telegram_display_name: str | None = None  # UI3D-C1 Polish
     telegram_linked: bool          # BotClient.telegram_user_id is not None
     client_active: bool
 
@@ -784,6 +861,7 @@ def register_link_admin_routes(admin_router):
                     owner_client_id=ar.owner_client_id,
                     owner_client_name=owner.client_name if owner else None,
                     owner_telegram_username=owner.telegram_username if owner else None,
+                    owner_telegram_display_name=owner.telegram_display_name if owner else None,
                     owner_client_active=owner.is_active if owner else None,
                     activated_at=ar.activated_at,
                     has_activation_token=bool(ar.activation_token),
@@ -798,6 +876,7 @@ def register_link_admin_routes(admin_router):
                         client_id=bc.id,
                         client_name=bc.client_name,
                         telegram_username=bc.telegram_username,
+                        telegram_display_name=bc.telegram_display_name,
                         telegram_linked=bc.telegram_user_id is not None,
                         client_active=bc.is_active,
                     )

@@ -182,6 +182,11 @@ class BotClient(Base):
     access_code: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     telegram_user_id: Mapped[str | None] = mapped_column(String, nullable=True)
     telegram_username: Mapped[str | None] = mapped_column(String, nullable=True)
+    # UI3D-C1 Polish: display metadata only (built from Telegram first_name/
+    # last_name) — never used for identity/matching. Refreshed alongside
+    # telegram_username wherever that already refreshes. Never substitutes
+    # for client_name, which is a separate, admin-owned label.
+    telegram_display_name: Mapped[str | None] = mapped_column(String, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

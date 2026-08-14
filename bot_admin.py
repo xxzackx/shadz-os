@@ -18,6 +18,10 @@ from sqlalchemy.orm import Session
 
 import models
 from database import get_db
+# UI3D-C1 Polish: reuses the shared single-slug activation reconciliation
+# core instead of duplicating its state matrix here. link_admin does not
+# import this module, so this is not circular.
+from link_admin import _reconcile_one_assigned_slug
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +222,22 @@ def register_bot_admin_routes(admin_router) -> None:
 
         Rejects page slugs, archived slugs, and slugs already assigned to any
         bot client.  Only active bot clients may receive new assignments.
+
+        UI3D-C1 Polish: if the target BotClient already has a verified
+        numeric telegram_user_id, the newly assigned slug's ActivationRecord
+        is reconciled to Activated in the SAME transaction as the assignment
+        (reusing link_admin._reconcile_one_assigned_slug — the same
+        state-transition core the post-login reconciliation loop uses, so
+        the client never needs to log in again just to pick up a slug
+        assigned after their first login). If the target BotClient has no
+        telegram_user_id yet, only the assignment is created — the slug
+        stays "Awaiting Telegram Login" until their first successful
+        access-code login triggers the existing retry/recovery reconciliation.
+
+        If reconciliation detects a genuine ownership conflict, the entire
+        transaction (assignment + any partial reconciliation work) is rolled
+        back and a 409 is returned — the slug is never left assigned with an
+        inconsistent activation state.
         """
         slug = payload.slug.strip()
         if not slug:
@@ -258,7 +278,28 @@ def register_bot_admin_routes(admin_router) -> None:
 
         assignment = models.BotClientSlug(bot_client_id=client_id, slug=slug)
         db.add(assignment)
+
+        reconcile_outcome = None
         try:
+            # Flush (not commit) first so a duplicate-assignment race is
+            # caught before any activation-state mutation is attempted.
+            db.flush()
+
+            if client.telegram_user_id:
+                reconcile_outcome, _record = _reconcile_one_assigned_slug(
+                    client, slug, link.content_type, db
+                )
+                if reconcile_outcome == "conflict":
+                    db.rollback()
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Slug '{slug}' cannot be assigned: its ActivationRecord is "
+                            f"already owned by a different bot client. Resolve the "
+                            f"ownership conflict before assigning it to bot client {client_id}."
+                        ),
+                    )
+
             db.commit()
         except IntegrityError:
             db.rollback()
@@ -266,12 +307,24 @@ def register_bot_admin_routes(admin_router) -> None:
                 status_code=409,
                 detail=f"Slug '{slug}' is already assigned to a bot client",
             )
+        except HTTPException:
+            raise
+        except Exception:
+            db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to assign slug '{slug}' due to an unexpected error — please retry",
+            )
+
+        message = f"Slug '{slug}' assigned to bot client {client_id}"
+        if reconcile_outcome in ("activated", "noop"):
+            message += " and activated"
 
         return {
             "success": True,
             "bot_client_id": client_id,
             "slug": slug,
-            "message": f"Slug '{slug}' assigned to bot client {client_id}",
+            "message": message,
         }
 
     @admin_router.delete("/bot/clients/{client_id}/slugs/{slug}")
