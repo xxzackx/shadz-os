@@ -768,26 +768,32 @@ class BotClientCardDisplayNameRenderingTests(unittest.TestCase):
         self.assertIsNotNone(match, "buildBotClientCard() not found")
         return match.group(0)
 
-    # ── 3. Bot Clients card contains TELEGRAM NAME row ──────────────────────
-    def test_card_has_telegram_name_row(self):
+    # ── 3. no separate Telegram Name row ────────────────────────────────────
+    def test_card_no_longer_has_separate_telegram_name_row(self):
         body = self._build_bot_client_card_body()
-        self.assertIn("Telegram Name", body)
+        self.assertNotIn("Telegram Name", body)
 
-    # ── 4. renders from telegram_display_name ───────────────────────────────
-    def test_telegram_name_row_uses_correct_field(self):
+    # ── 4. CLIENT row prefers telegram_display_name when present ───────────
+    # ── 5. CLIENT row falls back to client_name when missing ───────────────
+    def test_client_row_uses_fallback_expression(self):
         body = self._build_bot_client_card_body()
+        self.assertIn(
+            "const displayClientName = c.telegram_display_name || c.client_name;", body
+        )
         match = re.search(
-            r"<span class=\"stats-label\">Telegram Name</span>\s*"
-            r"<span class=\"stats-value value-overflow\">\$\{esc\(c\.telegram_display_name\)\}</span>",
+            r"<span class=\"stats-label\">Client</span>\s*"
+            r"<span class=\"stats-value value-overflow\">\$\{esc\(displayClientName\)\}</span>",
             body,
         )
-        self.assertIsNotNone(match, "Telegram Name row does not render c.telegram_display_name")
+        self.assertIsNotNone(match, "Client row does not render the displayClientName fallback")
+        # Only one human-readable name is ever shown — never both raw fields
+        # side by side in the same row set.
+        self.assertNotIn("${esc(c.client_name)}", body)
+        self.assertNotIn("${esc(c.telegram_display_name)}", body)
 
-    # ── existing Client row / Telegram (username) row untouched ────────────
-    def test_client_and_telegram_username_rows_unchanged(self):
+    # ── 6. Telegram (username) row remains unchanged ───────────────────────
+    def test_telegram_username_row_unchanged(self):
         body = self._build_bot_client_card_body()
-        self.assertIn('<span class="stats-label">Client</span>', body)
-        self.assertIn('${esc(c.client_name)}', body)
         self.assertIn('<span class="stats-label">Telegram</span>', body)
         self.assertIn('${telegramStatus}', body)
         self.assertIn("c.telegram_username", body)  # telegramStatus still keys off username

@@ -3084,6 +3084,12 @@
     }
 
     function buildBotClientCard(c) {
+      // Show one human-readable name: Telegram display name once known,
+      // falling back to the admin-assigned client_name until the client's
+      // first Telegram login/refresh sets it. Never shown side-by-side —
+      // avoids two different names appearing for the same client.
+      const displayClientName = c.telegram_display_name || c.client_name;
+
       const statusBadge = c.is_active
         ? '<span style="color:var(--gold-light)">Active</span>'
         : '<span style="color:var(--text-muted)">Inactive</span>';
@@ -3120,11 +3126,7 @@
           </div>
           <div class="stats-row">
             <span class="stats-label">Client</span>
-            <span class="stats-value value-overflow">${esc(c.client_name)}</span>
-          </div>
-          <div class="stats-row">
-            <span class="stats-label">Telegram Name</span>
-            <span class="stats-value value-overflow">${esc(c.telegram_display_name)}</span>
+            <span class="stats-value value-overflow">${esc(displayClientName)}</span>
           </div>
           <div class="stats-row">
             <span class="stats-label">Access Code</span>
