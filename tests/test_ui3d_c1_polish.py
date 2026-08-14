@@ -669,5 +669,160 @@ class RegressionGuardTests(unittest.TestCase):
         self.assertEqual(link.destination_url, "")  # existing H1A reset behavior
 
 
+# ---------------------------------------------------------------------------
+# Bot Clients card: telegram_display_name (final UI3D-C1 polish)
+# ---------------------------------------------------------------------------
+
+class BotClientsApiDisplayNameTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(bind=self.engine)
+        self.SessionLocal = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
+
+        app = FastAPI()
+        router = APIRouter(prefix="/admin")
+        bot_admin.register_bot_admin_routes(router)
+        app.include_router(router)
+
+        def _override_get_db():
+            db = self.SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = _override_get_db
+        self.client = TestClient(app)
+        self.db = self.SessionLocal()
+
+    def tearDown(self):
+        self.db.close()
+
+    def _make_bot_client(self, client_name="Testing", telegram_display_name=None,
+                          telegram_username=None, access_code="CARD1"):
+        client = models.BotClient(
+            client_name=client_name, access_code=access_code,
+            telegram_username=telegram_username,
+            telegram_display_name=telegram_display_name,
+        )
+        self.db.add(client)
+        self.db.commit()
+        self.db.refresh(client)
+        return client
+
+    # ── 1. Bot Clients API exposes telegram_display_name ───────────────────
+    def test_list_bot_clients_exposes_telegram_display_name(self):
+        self._make_bot_client(telegram_display_name="John Chan", telegram_username="ttbet666")
+        res = self.client.get("/admin/bot/clients")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()[0]["telegram_display_name"], "John Chan")
+
+    # ── 2. existing client_name remains unchanged ───────────────────────────
+    def test_client_name_unchanged_in_response(self):
+        self._make_bot_client(client_name="Testing", telegram_display_name="John Chan")
+        res = self.client.get("/admin/bot/clients")
+        self.assertEqual(res.json()[0]["client_name"], "Testing")
+
+    # ── 5. missing telegram_display_name renders safely (API level) ────────
+    def test_missing_display_name_is_null_not_error(self):
+        self._make_bot_client(telegram_display_name=None)
+        res = self.client.get("/admin/bot/clients")
+        self.assertEqual(res.status_code, 200)
+        self.assertIsNone(res.json()[0]["telegram_display_name"])
+
+    # ── 6. existing Telegram username rendering data unchanged ─────────────
+    def test_telegram_username_field_unchanged(self):
+        self._make_bot_client(telegram_username="ttbet666", telegram_display_name="John Chan")
+        res = self.client.get("/admin/bot/clients")
+        self.assertEqual(res.json()[0]["telegram_username"], "ttbet666")
+
+    # ── 8. no access_code exposure changes ──────────────────────────────────
+    def test_access_code_still_present_unchanged_shape(self):
+        self._make_bot_client(access_code="CARD1")
+        res = self.client.get("/admin/bot/clients")
+        self.assertEqual(res.json()[0]["access_code"], "CARD1")
+        # Response shape gained exactly one new field vs. the pre-existing
+        # contract — access_code visibility/behavior is unchanged.
+        self.assertIn("access_code", res.json()[0])
+
+
+ADMIN_HTML_PATH_C1 = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static", "admin.html"
+)
+
+
+class BotClientCardDisplayNameRenderingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with open(ADMIN_HTML_PATH_C1, "r", encoding="utf-8") as f:
+            cls.html = f.read()
+
+    def _build_bot_client_card_body(self):
+        match = re.search(
+            r"function buildBotClientCard\(c\) \{.*?\n    \}\n", self.html, re.DOTALL
+        )
+        self.assertIsNotNone(match, "buildBotClientCard() not found")
+        return match.group(0)
+
+    # ── 3. Bot Clients card contains TELEGRAM NAME row ──────────────────────
+    def test_card_has_telegram_name_row(self):
+        body = self._build_bot_client_card_body()
+        self.assertIn("Telegram Name", body)
+
+    # ── 4. renders from telegram_display_name ───────────────────────────────
+    def test_telegram_name_row_uses_correct_field(self):
+        body = self._build_bot_client_card_body()
+        match = re.search(
+            r"<span class=\"stats-label\">Telegram Name</span>\s*"
+            r"<span class=\"stats-value value-overflow\">\$\{esc\(c\.telegram_display_name\)\}</span>",
+            body,
+        )
+        self.assertIsNotNone(match, "Telegram Name row does not render c.telegram_display_name")
+
+    # ── existing Client row / Telegram (username) row untouched ────────────
+    def test_client_and_telegram_username_rows_unchanged(self):
+        body = self._build_bot_client_card_body()
+        self.assertIn('<span class="stats-label">Client</span>', body)
+        self.assertIn('${esc(c.client_name)}', body)
+        self.assertIn('<span class="stats-label">Telegram</span>', body)
+        self.assertIn('${telegramStatus}', body)
+        self.assertIn("c.telegram_username", body)  # telegramStatus still keys off username
+
+
+# ---------------------------------------------------------------------------
+# 7. Activation panel OWNER rendering remains unchanged
+# ---------------------------------------------------------------------------
+
+class ActivationOwnerRenderingUnchangedTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with open(ADMIN_HTML_PATH_C1, "r", encoding="utf-8") as f:
+            cls.html = f.read()
+
+    def test_build_activation_owner_line_untouched(self):
+        match = re.search(
+            r"function buildActivationOwnerLine\(a\) \{.*?\n    \}\n", self.html, re.DOTALL
+        )
+        self.assertIsNotNone(match)
+        body = match.group(0)
+        self.assertIn(
+            "const namePart = a.owner_telegram_display_name ? esc(a.owner_telegram_display_name) : '—';",
+            body,
+        )
+        self.assertIn(
+            "const usernamePart = a.owner_telegram_username ? `@${esc(a.owner_telegram_username)}` : '—';",
+            body,
+        )
+        self.assertIn(
+            "let line = `${namePart} — ${usernamePart} — #${esc(a.owner_client_id)}`;",
+            body,
+        )
+        self.assertNotIn("owner_client_name", body)
+
+
 if __name__ == "__main__":
     unittest.main()

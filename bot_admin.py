@@ -96,6 +96,7 @@ class BotClientOut(BaseModel):
     access_code: str
     telegram_user_id: str | None = None
     telegram_username: str | None = None
+    telegram_display_name: str | None = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -147,6 +148,7 @@ def _client_out(client: models.BotClient, db: Session) -> BotClientOut:
         access_code=client.access_code,
         telegram_user_id=client.telegram_user_id,
         telegram_username=client.telegram_username,
+        telegram_display_name=client.telegram_display_name,
         is_active=client.is_active,
         created_at=client.created_at,
         updated_at=client.updated_at,
