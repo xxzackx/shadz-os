@@ -299,6 +299,16 @@ class AssignedClientInfo(BaseModel):
     client_active: bool
 
 
+class PageAttachmentInfo(BaseModel):
+    """Active Page attachment identity for a page slug — embedded in search
+    results so the Admin UI can identify the attached Page without a
+    separate lookup (UI3D-C2). Only populated for content_type == "page"
+    slugs that have an active PageSlugAttachment.
+    """
+    page_id: int
+    template_type: str
+
+
 class LinkSearchResult(BaseModel):
     """One item in the phone-number search response."""
     slug: str
@@ -319,6 +329,8 @@ class LinkSearchResult(BaseModel):
     activation: ActivationInfo | None = None
     # None means "no BotClientSlug assignment" for url/media slugs.
     assigned_client: AssignedClientInfo | None = None
+    # None means "no active PageSlugAttachment" — only relevant for page slugs.
+    page_attachment: PageAttachmentInfo | None = None
 
     _tag_utc = field_validator("created_at", "updated_at", mode="before")(_as_utc)
 
@@ -812,6 +824,28 @@ def register_link_admin_routes(admin_router):
             )
             assignment_by_slug = {a.slug: a for a in assignments}
 
+        # ── UI3D-C2 batch read-only enrichment — active Page attachment ─────
+        # Exposes the attached Page's id/template_type so the Admin UI can
+        # identify the Page without a separate call. Read-only — never
+        # creates/backfills a PageSlugAttachment.
+        page_eligible_slugs = [link.slug for link in links if link.content_type == "page"]
+        page_attachment_by_slug: dict[str, models.PageSlugAttachment] = {}
+        if page_eligible_slugs:
+            page_attachments = (
+                db.query(models.PageSlugAttachment)
+                .filter(
+                    models.PageSlugAttachment.slug.in_(page_eligible_slugs),
+                    models.PageSlugAttachment.is_active == True,
+                )
+                .all()
+            )
+            page_attachment_by_slug = {pa.slug: pa for pa in page_attachments}
+        page_ids = {pa.page_id for pa in page_attachment_by_slug.values()}
+        page_by_id: dict[int, models.Page] = {}
+        if page_ids:
+            pages = db.query(models.Page).filter(models.Page.id.in_(page_ids)).all()
+            page_by_id = {p.id: p for p in pages}
+
         owner_client_ids = {
             ar.owner_client_id
             for ar in activation_by_slug.values()
@@ -881,6 +915,16 @@ def register_link_admin_routes(admin_router):
                         client_active=bc.is_active,
                     )
 
+            page_attachment = None
+            pa = page_attachment_by_slug.get(link.slug)
+            if pa is not None:
+                page = page_by_id.get(pa.page_id)
+                if page is not None:
+                    page_attachment = PageAttachmentInfo(
+                        page_id=page.id,
+                        template_type=page.template_type,
+                    )
+
             results.append(LinkSearchResult(
                 slug=link.slug,
                 content_type=link.content_type,
@@ -896,6 +940,7 @@ def register_link_admin_routes(admin_router):
                 is_archived=link.is_archived is True,
                 activation=activation,
                 assigned_client=assigned_client,
+                page_attachment=page_attachment,
             ))
         return SearchResponse(results=results)
 

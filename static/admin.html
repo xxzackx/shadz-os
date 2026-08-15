@@ -1757,6 +1757,32 @@
           <div id="card-bot-msg-${index}" class="msg"></div>
         </div>`;
 
+      // ── Attached Page panel (page slugs only) — read-only display of the
+      // active PageSlugAttachment's Page ID and Page Type (UI3D-C2).
+      let pageAttachmentInfoHtml = '';
+      if (r.content_type === 'page') {
+        if (r.page_attachment) {
+          const pa = r.page_attachment;
+          pageAttachmentInfoHtml = `
+            <div class="inset-panel">
+              <div class="panel-label">Attached Page</div>
+              <div class="compact-row">
+                <span class="stats-label">Page ID</span>
+                <span class="stats-value">${esc(pa.page_id)}</span>
+              </div>
+              <div class="compact-row">
+                <span class="stats-label">Page Type</span>
+                <span class="stats-value">${esc(pa.template_type)}</span>
+              </div>
+            </div>`;
+        } else {
+          pageAttachmentInfoHtml = `
+            <div class="inset-panel" style="padding:0.55rem 1rem">
+              <span style="font-size:0.72rem;color:var(--text-muted)">No page attached.</span>
+            </div>`;
+        }
+      }
+
       let pageAttachRow = '';
       let pageAttachInlineHtml = '';
       if (r.content_type === 'page') {
@@ -1779,7 +1805,7 @@
           </div>`;
       }
 
-      return `<div class="stats-box"><div class="card-body">${selectRow}${rowsBeforeHtml}${r.content_type !== 'media' ? destinationRowHtml : ''}${rowsAfterHtml}</div>${activeMediaHtml}${activationHtml}${toggleRow}${lifecycleRow}${convertRow}${botAssignRow}${pageAttachRow}${editForm}${pageAttachInlineHtml}</div>`;
+      return `<div class="stats-box"><div class="card-body">${selectRow}${rowsBeforeHtml}${r.content_type !== 'media' ? destinationRowHtml : ''}${rowsAfterHtml}</div>${activeMediaHtml}${activationHtml}${toggleRow}${lifecycleRow}${convertRow}${botAssignRow}${pageAttachmentInfoHtml}${pageAttachRow}${editForm}${pageAttachInlineHtml}</div>`;
     }
 
     function toggleEdit(index) {
