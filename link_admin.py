@@ -237,6 +237,31 @@ def _as_utc(value):
     return value
 
 
+def _normalize_admin_destination_url(raw: str | None) -> str:
+    """Normalize an Admin destination_url the same way as Telegram Bot
+    destination-URL input (UI3D-C3): a bare domain gets "https://" prepended,
+    an explicit http(s):// is preserved, and any other explicit scheme (e.g.
+    ftp://) is rejected. Blank input is preserved as "" — destination_url is
+    optional for all content types (Hotfix H1C).
+
+    Reuses bot_runtime._normalize_telegram_destination_url (Hotfix H1D)
+    instead of duplicating the logic. Imported locally: bot_runtime already
+    imports from link_admin (UI3D-C1's _reconcile_one_assigned_slug), so a
+    module-level import here would be circular.
+    """
+    trimmed = (raw or "").strip()
+    if not trimmed:
+        return ""
+    from bot_runtime import _normalize_telegram_destination_url
+    normalized = _normalize_telegram_destination_url(trimmed)
+    if normalized is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid destination URL: '{raw}'",
+        )
+    return normalized
+
+
 class LinkInfo(BaseModel):
     """Full detail response for a single redirect link."""
     slug: str
@@ -387,7 +412,7 @@ def register_link_admin_routes(admin_router):
 
         link = models.RedirectLink(
             slug=slug,
-            destination_url=payload.destination_url,
+            destination_url=_normalize_admin_destination_url(payload.destination_url),
             content_type=payload.content_type,
             client_name=payload.client_name,
             phone_number=phone,
@@ -456,7 +481,7 @@ def register_link_admin_routes(admin_router):
         if link:
             # Update existing record — only touch fields that were explicitly provided
             if payload.destination_url is not None:
-                link.destination_url = payload.destination_url
+                link.destination_url = _normalize_admin_destination_url(payload.destination_url)
             if payload.content_type is not None:
                 link.content_type = payload.content_type
             if payload.client_name is not None:
@@ -509,7 +534,7 @@ def register_link_admin_routes(admin_router):
 
         link = models.RedirectLink(
             slug=slug,
-            destination_url=payload.destination_url or "",
+            destination_url=_normalize_admin_destination_url(payload.destination_url),
             content_type=resolved_content_type,
             client_name=payload.client_name,
             phone_number=phone,

@@ -746,7 +746,7 @@
 
       <label for="u-slug">Slug</label>
       <div style="display:flex;gap:0.5rem">
-        <input type="text" id="u-slug" placeholder="a" autocomplete="off" style="margin-bottom:0;flex:1" oninput="onUpdateSlugChanged()" />
+        <input type="text" id="u-slug" placeholder="a" autocomplete="off" style="margin-bottom:0;flex:1" oninput="onUpdateSlugChanged()" onkeydown="onEnterTrigger(event, loadUpdatePreview)" />
         <button class="ghost-btn sm" style="flex-shrink:0" onclick="loadUpdatePreview()">Look Up</button>
       </div>
 
@@ -768,7 +768,7 @@
       <div id="u-lookup-msg" class="msg"></div>
 
       <label for="u-targetUrl" style="margin-top:0.75rem">New Redirect URL</label>
-      <input type="url" id="u-targetUrl" placeholder="https://example.com" disabled />
+      <input type="url" id="u-targetUrl" placeholder="https://example.com" disabled onkeydown="onEnterTrigger(event, updateRedirect)" />
 
       <button class="action-btn" id="u-btn" onclick="updateRedirect()" disabled>Update Redirect Link</button>
       <div id="u-msg" class="msg"></div>
@@ -783,14 +783,14 @@
 
       <label for="s-slug">Slug</label>
       <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem">
-        <input type="text" id="s-slug" placeholder="url-a1b2c3" autocomplete="off" style="margin-bottom:0;flex:1" />
+        <input type="text" id="s-slug" placeholder="url-a1b2c3" autocomplete="off" style="margin-bottom:0;flex:1" onkeydown="onEnterTrigger(event, lookupSlugDirect)" />
         <button class="action-btn" style="width:auto;padding:0.65rem 1rem;margin-top:0;flex-shrink:0" onclick="lookupSlugDirect()">Find</button>
       </div>
 
       <div style="height:1px;background:var(--border-2);margin-bottom:1.25rem"></div>
 
       <label for="s-phone">Phone Number</label>
-      <input type="tel" id="s-phone" placeholder="+85512345678" autocomplete="off" />
+      <input type="tel" id="s-phone" placeholder="+85512345678" autocomplete="off" onkeydown="onEnterTrigger(event, searchSlugInfo)" />
 
       <button class="action-btn" id="s-btn" onclick="searchSlugInfo()">Search Slug Info</button>
 
@@ -883,10 +883,10 @@
       </div>
 
       <label for="at-slug">Slug (must be media content type)</label>
-      <input type="text" id="at-slug" placeholder="media-abc123" autocomplete="off" />
+      <input type="text" id="at-slug" placeholder="media-abc123" autocomplete="off" onkeydown="onEnterTrigger(event, attachMedia)" />
 
       <label for="at-assetId">Media Asset ID</label>
-      <input type="number" id="at-assetId" placeholder="1" autocomplete="off" />
+      <input type="number" id="at-assetId" placeholder="1" autocomplete="off" onkeydown="onEnterTrigger(event, attachMedia)" />
 
       <button class="action-btn" id="at-btn" onclick="attachMedia()">Attach Media</button>
       <div id="at-msg" class="msg"></div>
@@ -902,7 +902,7 @@
       <!-- Slug history lookup -->
       <label for="st-slug">Check Media History by Slug</label>
       <div style="display:flex;gap:0.5rem;margin-bottom:1rem">
-        <input type="text" id="st-slug" placeholder="media-abc123" autocomplete="off" style="margin-bottom:0;flex:1" />
+        <input type="text" id="st-slug" placeholder="media-abc123" autocomplete="off" style="margin-bottom:0;flex:1" onkeydown="onEnterTrigger(event, loadSlugHistory)" />
         <button class="action-btn" style="width:auto;padding:0.65rem 1rem;margin-top:0;flex-shrink:0" onclick="loadSlugHistory()">Check</button>
       </div>
       <div id="st-historyResults" style="margin-bottom:1.25rem"></div>
@@ -1051,10 +1051,10 @@
         <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:0.75rem">Attach Page to Slug</div>
 
         <label for="pa-pageId">Page ID</label>
-        <input type="number" id="pa-pageId" placeholder="1" autocomplete="off" />
+        <input type="number" id="pa-pageId" placeholder="1" autocomplete="off" onkeydown="onEnterTrigger(event, attachPage)" />
 
         <label for="pa-slug">Slug <span style="color:var(--text-muted);font-size:0.7em">(must be a page-type slug)</span></label>
-        <input type="text" id="pa-slug" placeholder="page-abc123" autocomplete="off" />
+        <input type="text" id="pa-slug" placeholder="page-abc123" autocomplete="off" onkeydown="onEnterTrigger(event, attachPage)" />
 
         <button class="action-btn" id="pa-btn" onclick="attachPage()">Attach Page</button>
         <div id="pa-msg" class="msg"></div>
@@ -1086,7 +1086,7 @@
       <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:0.75rem">Create Bot Client</div>
 
       <label for="bc-name">Client Name</label>
-      <input type="text" id="bc-name" placeholder="e.g. Jane's Keychain" autocomplete="off" />
+      <input type="text" id="bc-name" placeholder="e.g. Jane's Keychain" autocomplete="off" onkeydown="onEnterTrigger(event, createBotClient)" />
 
       <button class="action-btn" id="bc-btn" onclick="createBotClient()">Create Bot Client</button>
 
@@ -1110,10 +1110,10 @@
       <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:var(--gold-dim);margin-bottom:0.75rem">Assign Slug to Bot Client</div>
 
       <label for="bs-clientId">Bot Client ID</label>
-      <input type="number" id="bs-clientId" placeholder="e.g. 3" autocomplete="off" />
+      <input type="number" id="bs-clientId" placeholder="e.g. 3" autocomplete="off" onkeydown="onEnterTrigger(event, assignBotSlug)" />
 
       <label for="bs-slug">Slug <span style="color:var(--text-muted);font-size:0.7em">(url or media slug only)</span></label>
-      <input type="text" id="bs-slug" placeholder="url-a1b2c3" autocomplete="off" />
+      <input type="text" id="bs-slug" placeholder="url-a1b2c3" autocomplete="off" onkeydown="onEnterTrigger(event, assignBotSlug)" />
 
       <button class="action-btn" id="bs-btn" onclick="assignBotSlug()">Assign Slug</button>
       <div id="bs-msg" class="msg"></div>
@@ -1447,6 +1447,20 @@
         .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
+    // UI3D-C3 Part B: pressing Enter inside a single-line input triggers the
+    // same primary-action function as clicking that input area's button —
+    // never duplicated logic, just a scoped keydown->click equivalent.
+    // preventDefault stops any native form-submit-like behavior, so the
+    // wrapped function is called exactly once per Enter press. Disabled
+    // inputs/buttons never receive keydown events, so this naturally
+    // no-ops wherever the primary action isn't ready yet (e.g. New Redirect
+    // URL before a successful Look Up).
+    function onEnterTrigger(event, fn) {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      fn();
+    }
+
     // UI3D-C1 Polish: the Activation OWNER line always uses Telegram
     // first_name/last_name display metadata, never BotClient.client_name —
     // those are separate concepts (client_name is the admin-owned slug/
@@ -1751,7 +1765,7 @@
         <div class="edit-toggle-row" style="flex-direction:column;align-items:stretch;gap:0.4rem">
           <label for="card-bot-clientId-${index}" style="font-size:0.62rem;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:var(--gold-dim)">Assign to Bot Client</label>
           <div style="display:flex;gap:0.4rem">
-            <input type="number" id="card-bot-clientId-${index}" placeholder="Bot Client ID" autocomplete="off" inputmode="numeric" step="1" style="flex:1" />
+            <input type="number" id="card-bot-clientId-${index}" placeholder="Bot Client ID" autocomplete="off" inputmode="numeric" step="1" style="flex:1" onkeydown="onEnterTrigger(event, () => assignSlugFromCard('${escVal(r.slug)}', ${index}))" />
             <button class="ghost-btn sm" onclick="assignSlugFromCard('${escVal(r.slug)}', ${index})">Assign</button>
           </div>
           <div id="card-bot-msg-${index}" class="msg"></div>
@@ -1794,7 +1808,7 @@
           <div id="pageAttachInline-${index}" class="inset-panel" style="display:none">
             <div class="panel-label">Attach / Detach Page</div>
             <label for="pai-pageId-${index}">Page ID</label>
-            <input type="number" id="pai-pageId-${index}" placeholder="1" autocomplete="off" />
+            <input type="number" id="pai-pageId-${index}" placeholder="1" autocomplete="off" onkeydown="onEnterTrigger(event, () => attachPageInline('${escVal(r.slug)}', ${index}))" />
             <button class="action-btn" id="pai-attach-btn-${index}" style="margin-top:0.5rem"
               onclick="attachPageInline('${escVal(r.slug)}', ${index})">Attach Page</button>
             <div id="pai-attach-msg-${index}" class="msg"></div>
