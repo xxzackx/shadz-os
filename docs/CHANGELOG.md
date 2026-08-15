@@ -2,6 +2,33 @@
 
 ---
 
+## Admin Panel UI v0.3 — Phase UI3D: Slug Management v0.3
+
+**Status:** Completed and production-verified on desktop. **Phase UI3D is now complete and closed.** Mobile validation is deferred to later testing and was not part of this closure's acceptance criteria.
+
+**Scope:** Slug Management improvements to `static/admin.html` and its supporting `link_admin.py` read/normalization logic across five subphases (UI3D-A, UI3D-B, UI3D-C1, UI3D-C2, UI3D-C3). No database schema changes, no migrations, no Activation Engine ownership-rule changes, no Bot Client lifecycle changes, no Page/Media engine redesign across the phase.
+
+**Runtime commit:** `a53b6471086af07a55e1d9ca5ff0f40335a06866` — feat(admin): normalize urls and support enter actions (UI3D-C3, final commit in the phase)
+
+**Subphases delivered:**
+- **UI3D-A — Slug Management foundation / exact lookup / archive-restore improvements** (`622d5d9`, `16d8332`) — Admin's direct slug lookup now reuses the same `GET /admin/links/search` enrichment path as phone search (exact `slug` query param), giving full card parity (`is_archived`, `active_media`, `nfc_url`) instead of the older, thinner `GET /admin/link/{slug}` response.
+- **UI3D-B — Old Client labeling / client identity polish** (`94f6c21`, `c0ce02e`) — read-only Activation Engine v1 state (`ActivationInfo`) embedded in search results; a url/media slug with no `ActivationRecord` is correctly labeled a legacy "Old Client" rather than "Unactivated" — no ActivationRecord is ever fabricated or backfilled by this read path.
+- **UI3D-C1 — assigned-client activation lifecycle/admin controls** (`a9a9c29`, `494cdf3`, `c2bff9b`, `4a33d20`) — `AssignedClientInfo` (BotClientSlug assignment identity) embedded alongside `activation`, letting the Admin UI derive Old Client / Awaiting Telegram Login / Activated / Activation Sync Required from real backend signals; Telegram first/last-name display metadata surfaced on bot client cards, preferred over the admin-owned `client_name` label where present.
+- **UI3D-C2 — Page Slug Detail** (`4d420ea`) — `page_attachment` (`page_id`, `template_type`) embedded in search results for `page`-type slugs from the active `PageSlugAttachment`; Admin card shows the attached Page's ID and template type read-only, alongside the existing Attach/Detach controls.
+- **UI3D-C3 — Admin URL normalization + Enter-key support** (`a53b647`) — `POST /admin/link` and `POST /admin/link/{slug}` now normalize `destination_url` the same way as the existing Telegram Bot destination-URL input (reuses `bot_runtime._normalize_telegram_destination_url` via a local import, no forked logic): bare domain gets `https://` prepended, `http://`/`https://` preserved, unsupported schemes rejected. Enter-key support added to 14 single-line inputs across 11 clearly-scoped primary actions (search/lookup/update/attach/assign), calling the same existing JS functions their buttons call — no global keydown listener, no destructive-action or multi-field-form wiring.
+
+**Files changed across the phase:** `link_admin.py`, `static/admin.html`, plus focused regression tests (`tests/test_link_admin_search_exact_slug_ui3d_a.py`, `tests/test_link_admin_activation_visibility_ui3d_b.py`, `tests/test_ui3d_c1_activation_lifecycle.py`, `tests/test_ui3d_c1_polish.py`, `tests/test_ui3d_c2_page_attachment_detail.py`, `tests/test_ui3d_c3_url_normalization.py`, `tests/test_ui3d_c3_enter_key_support.py`).
+
+**Final desktop regression:** focused UI3D-A/B/C1/C2/C3 + adjacent Admin shell/dashboard/activation/page/bot-client regression (`test_admin_shell_ui3b`, `test_admin_dashboard_ui3c`, `test_link_admin_activation`, `test_link_admin_timezone_h1e`, `test_page_admin`, `test_activation_engine*`, `test_bot_runtime*`) — 529/529 passed (67 subtests). Full suite: 589/589 passed (67 subtests). `git diff --check`: clean.
+
+**Production live test:** UI3D-C1, UI3D-C2, and UI3D-C3 each passed manual production live testing at their respective closures (desktop). Mobile validation was not available during this phase and is explicitly deferred — not claimed as passed, not blocking this closure.
+
+**Final production runtime commit: `a53b647` (`a53b6471086af07a55e1d9ca5ff0f40335a06866`). Admin Panel UI v0.3 Phase UI3D is now complete and closed.**
+
+**Next: Admin Panel UI v0.3 Phase UI3E (not yet started).**
+
+---
+
 ## Admin Panel UI v0.3 — Phase UI3C: Dashboard Home / System Overview
 
 **Status:** Completed, deployed, and production-verified. **Phase UI3C is now complete and closed.**
