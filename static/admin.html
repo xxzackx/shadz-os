@@ -361,6 +361,40 @@
     .msg.success { background: #120e00; border: 1px solid var(--gold-dim); color: var(--gold-light); }
     .msg.error   { background: #1a0000; border: 1px solid #5a1e1e;         color: #e07070; }
 
+    /* ── Toast notifications (Storage Manager card Attach shortcut only) ── */
+    .toast-container {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      max-width: 320px;
+    }
+    .toast {
+      padding: 0.65rem 0.8rem;
+      border-radius: var(--radius-md);
+      font-size: 0.82rem;
+      letter-spacing: 0.01em;
+    }
+    .toast.success { background: #120e00;    border: 1px solid var(--gold-dim); color: var(--gold-light); }
+    .toast.error   { background: #1a0000;    border: 1px solid #5a1e1e;         color: #e07070; }
+    .toast.info    { background: var(--surface-2); border: 1px solid var(--border-2); color: var(--text); }
+
+    /* ── Replace-media confirmation modal (Storage Manager card Attach shortcut only) ── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1001;
+    }
+    .modal-box { width: 100%; max-width: 380px; padding: 1.2rem; }
+    .modal-box h3 { margin: 0 0 0.8rem; font-size: 0.95rem; color: var(--gold-light); }
+
     /* ── Stats box ── */
     .stats-box {
       margin-top: 1rem;
@@ -1144,6 +1178,28 @@
       <div id="bl-msg" class="msg"></div>
     </div>
 
+  </div>
+
+  <!-- Toast notifications (Storage Manager card Attach shortcut only) -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Replace-media confirmation modal (Storage Manager card Attach shortcut only) -->
+  <div id="replaceConfirmModal" class="modal-overlay" style="display:none">
+    <div class="modal-box stats-box" style="display:block">
+      <h3>Replace Attached Media?</h3>
+      <div class="stats-row">
+        <span class="stats-label">Slug</span>
+        <span class="stats-value" id="rc-slug"></span>
+      </div>
+      <div class="stats-row">
+        <span class="stats-label">Current → New</span>
+        <span class="stats-value" id="rc-change"></span>
+      </div>
+      <div>
+        <button class="ghost-btn" onclick="closeReplaceConfirm()">Cancel</button>
+        <button class="action-btn" onclick="confirmReplace()">Replace Media</button>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -2219,23 +2275,87 @@
       }
     }
 
+    // Toast notifications — used only by the Storage Manager card Attach
+    // shortcut (attachAssetToSlug / performCardAttach / confirmReplace).
+    function showToast(type, text) {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.textContent = text;
+      container.appendChild(toast);
+      setTimeout(() => toast.remove(), 4000);
+    }
+
+    // Replace-media confirmation modal — used only by the card Attach shortcut
+    // when the target slug already has a different active media asset.
+    let _pendingReplace = null;
+
+    function openReplaceConfirm(slug, currentAssetId, newAssetId) {
+      _pendingReplace = { slug, newAssetId };
+      document.getElementById('rc-slug').textContent = slug;
+      document.getElementById('rc-change').textContent = `${currentAssetId} → ${newAssetId}`;
+      document.getElementById('replaceConfirmModal').style.display = 'flex';
+    }
+
+    function closeReplaceConfirm() {
+      _pendingReplace = null;
+      document.getElementById('replaceConfirmModal').style.display = 'none';
+    }
+
+    async function confirmReplace() {
+      if (!_pendingReplace) return;
+      const { slug, newAssetId } = _pendingReplace;
+      closeReplaceConfirm();
+      await performCardAttach(slug, newAssetId);
+    }
+
+    // Shared attach + feedback for the card Attach shortcut (direct attach
+    // and confirmed replacement both funnel through here).
+    async function performCardAttach(slug, assetId) {
+      try {
+        const { ok, status, data } = await postMediaAttach(slug, assetId);
+        if (ok) {
+          showToast('success', `Asset ${data.media_asset_id} attached to /${data.slug}`);
+          loadStorage();
+        } else {
+          showToast('error', data.detail || `Error ${status}`);
+        }
+      } catch {
+        showToast('error', 'Network error — is the server running?');
+      }
+    }
+
     async function attachAssetToSlug(assetId) {
       const slug = prompt(`Attach asset ${assetId} to which slug?`);
       if (slug === null) return;
       const trimmed = slug.trim();
       if (!trimmed) return;
 
+      let history;
       try {
-        const { ok, status, data } = await postMediaAttach(trimmed, assetId);
-        if (ok) {
-          showMsg('st-msg', 'success', `Asset ${data.media_asset_id} attached to /${data.slug}`);
-          loadStorage();
-        } else {
-          showMsg('st-msg', 'error', data.detail || `Error ${status}`);
+        const res = await fetch(`/admin/media/slug/${encodeURIComponent(trimmed)}`,
+          { credentials: 'same-origin' });
+        history = await res.json();
+        if (!res.ok) {
+          showToast('error', history.detail || `Error ${res.status}`);
+          return;
         }
       } catch {
-        showMsg('st-msg', 'error', 'Network error — is the server running?');
+        showToast('error', 'Network error — is the server running?');
+        return;
       }
+
+      const active = history.find(sm => sm.is_active);
+      if (active && active.media_asset_id === assetId) {
+        showToast('info', `Slug /${trimmed} is already attached to this asset.`);
+        return;
+      }
+      if (active) {
+        openReplaceConfirm(trimmed, active.media_asset_id, assetId);
+        return;
+      }
+
+      await performCardAttach(trimmed, assetId);
     }
 
     async function loadStorage() {
