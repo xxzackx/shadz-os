@@ -946,6 +946,16 @@
         <span style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em">All Assets</span>
         <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadStorage()">Refresh</button>
       </div>
+      <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem">
+        <input type="text" id="st-search" placeholder="Search ID, name, or filename…" autocomplete="off" style="margin-bottom:0;flex:1" oninput="filterStorageList()" />
+        <select id="st-typeFilter" style="margin-bottom:0;width:auto;flex-shrink:0" onchange="filterStorageList()">
+          <option value="all">All</option>
+          <option value="image">Image</option>
+          <option value="gif">GIF</option>
+          <option value="video">Video</option>
+          <option value="audio">Audio</option>
+        </select>
+      </div>
       <div id="storageList" class="card-grid"></div>
 
       <div id="st-msg" class="msg"></div>
@@ -1209,6 +1219,9 @@
     // renameAsset() reads current display_name from here — avoids passing any
     // string data through inline onclick attributes (XSS-safe).
     let _assetMap = {};
+    // Full asset list from the last loadStorage() fetch — search/filter (UI3E-C)
+    // re-renders from this without another API request.
+    let _allAssets = [];
     const selectedSlugs = new Set();
     const selectedBotClients = new Set();
 
@@ -2367,21 +2380,50 @@
         const data = await res.json();
 
         if (!res.ok) {
+          _allAssets = [];
           container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
           return;
         }
 
         if (data.length === 0) {
+          _allAssets = [];
           container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No assets yet.</div>';
           return;
         }
 
         _assetMap = {};
         data.forEach(a => { _assetMap[a.id] = a; });
-        container.innerHTML = data.map(a => buildAssetCard(a)).join('');
+        _allAssets = data;
+        renderStorageList();
       } catch {
         container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
       }
+    }
+
+    // Renders the currently loaded assets (_allAssets) filtered by the
+    // search box + type dropdown. No API request — client-side only (UI3E-C).
+    function renderStorageList() {
+      const container = document.getElementById('storageList');
+      const query = document.getElementById('st-search').value.trim().toLowerCase();
+      const type  = document.getElementById('st-typeFilter').value;
+
+      const filtered = _allAssets.filter(a => {
+        if (type !== 'all' && a.media_type !== type) return false;
+        if (!query) return true;
+        return String(a.id).toLowerCase().includes(query)
+          || (a.display_name || '').toLowerCase().includes(query)
+          || (a.original_filename || '').toLowerCase().includes(query);
+      });
+
+      if (filtered.length === 0) {
+        container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No matching assets.</div>';
+        return;
+      }
+      container.innerHTML = filtered.map(a => buildAssetCard(a)).join('');
+    }
+
+    function filterStorageList() {
+      renderStorageList();
     }
 
     function buildAssetCard(a) {
