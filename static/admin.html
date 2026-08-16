@@ -2178,6 +2178,19 @@
       }
     }
 
+    // Shared POST /admin/media/attach request, used by attachMedia() and
+    // attachAssetToSlug() so both reuse the same payload shape.
+    async function postMediaAttach(slug, mediaAssetId) {
+      const res  = await fetch('/admin/media/attach', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ slug: slug, media_asset_id: mediaAssetId }),
+      });
+      const data = await res.json();
+      return { ok: res.ok, status: res.status, data };
+    }
+
     async function attachMedia() {
       const slug    = document.getElementById('at-slug').value.trim();
       const assetId = document.getElementById('at-assetId').value.trim();
@@ -2192,23 +2205,36 @@
       btn.textContent = 'Attaching…';
 
       try {
-        const res  = await fetch('/admin/media/attach', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ slug: slug, media_asset_id: parseInt(assetId, 10) }),
-        });
-        const data = await res.json();
-        if (res.ok) {
+        const { ok, status, data } = await postMediaAttach(slug, parseInt(assetId, 10));
+        if (ok) {
           showMsg('at-msg', 'success', `Asset ${data.media_asset_id} attached to /${data.slug}`);
         } else {
-          showMsg('at-msg', 'error', data.detail || `Error ${res.status}`);
+          showMsg('at-msg', 'error', data.detail || `Error ${status}`);
         }
       } catch {
         showMsg('at-msg', 'error', 'Network error — is the server running?');
       } finally {
         btn.disabled = false;
         btn.textContent = 'Attach Media';
+      }
+    }
+
+    async function attachAssetToSlug(assetId) {
+      const slug = prompt(`Attach asset ${assetId} to which slug?`);
+      if (slug === null) return;
+      const trimmed = slug.trim();
+      if (!trimmed) return;
+
+      try {
+        const { ok, status, data } = await postMediaAttach(trimmed, assetId);
+        if (ok) {
+          showMsg('st-msg', 'success', `Asset ${data.media_asset_id} attached to /${data.slug}`);
+          loadStorage();
+        } else {
+          showMsg('st-msg', 'error', data.detail || `Error ${status}`);
+        }
+      } catch {
+        showMsg('st-msg', 'error', 'Network error — is the server running?');
       }
     }
 
@@ -2242,6 +2268,9 @@
       const deleted = a.is_deleted
         ? '<span class="badge-deleted">Deleted</span>'
         : `<button class="ghost-btn sm danger" onclick="softDeleteAsset(${a.id})">Delete</button>`;
+      const attach = a.is_deleted
+        ? ''
+        : `<button class="ghost-btn sm" onclick="attachAssetToSlug(${a.id})">Attach</button>`;
       const renameLabel = a.display_name ? 'Edit Name' : 'Add Name';
       return `
         <div class="stats-box" style="display:block">
@@ -2281,7 +2310,7 @@
           </div>
           <div class="stats-row" style="justify-content:space-between;align-items:center">
             <button class="ghost-btn sm" onclick="renameAsset(${a.id})">${renameLabel}</button>
-            ${deleted}
+            <span>${attach}${deleted}</span>
           </div>
         </div>`;
     }
