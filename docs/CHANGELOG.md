@@ -2,6 +2,39 @@
 
 ---
 
+## Admin Panel UI v0.3 — Phase UI3E: Media Manager v0.3
+
+**Status:** Completed, deployed, and production-verified (desktop). **Phase UI3E is now complete and closed.** Phone/mobile regression is intentionally deferred to the later Admin UI v0.3 phone-regression stage — desktop production live testing passed; mobile was not attempted and is not claimed as passed.
+
+**Scope:** Media Manager improvements to `static/admin.html` and its supporting `media_admin.py` routes across five subphases (UI3E-A, UI3E-B, UI3E-C, UI3E-D1–D3, UI3E-E). No database schema changes, no migrations, no Restore capability, no permanent R2 object deletion.
+
+**Runtime commit:** `9442e6273f8d3c6cca7c086ee89289e35313ccae` — test(admin): cover media admin endpoints (UI3E-E, final commit in the phase)
+
+**Subphases delivered:**
+- **UI3E-A — Media asset card preview experiment** (`e88861c` add, `2984e21` revert) — added Storage Manager asset-card previews, then reverted them in the same session after evaluation; net no persistent preview feature — the two commits cancel out in the current codebase.
+- **UI3E-B — Media attach / replacement UX** (`cba68a4`, `3728fcd`) — attach a `MediaAsset` directly from its Storage Manager card via a slug prompt; toast feedback for attach outcomes; a replace-confirmation modal when the target slug already has a different active asset, so replacement is never silent.
+- **UI3E-C — Media Asset Search / Filter** (`f51f7cc`) — client-side search (Asset ID, Display Name, Original Filename) and media-type filter (All/Image/GIF/Video/Audio) over the already-loaded Storage Manager asset list; combined search+filter; zero extra `/admin/media/assets` fetches during filtering.
+- **UI3E-D1 — Media delete / lifecycle audit** — read-only architecture audit, no implementation commit. Confirmed: soft-delete only (`MediaAsset.is_deleted` / `deleted_at`); R2 object retained on delete; exact R2 lookup key is `storage_key` (not `original_filename`); `GET /admin/media/assets?include_deleted=true` already existed; Restore does not exist; permanent R2 deletion is not part of Admin delete behavior.
+- **UI3E-D2 — Delete Dependency Warning** (`ef9a690`) — new read-only `GET /admin/media/assets/{id}/usage` (deterministic, deduplicated active-slug list); Admin UI preflights delete with this endpoint and shows a dependency modal listing every active slug instead of attempting delete — no force-delete, no override, no auto-detach; existing backend delete refusal (HTTP 400 when actively attached) is unchanged; preflight failure fails closed (delete never proceeds on error); slug names rendered through the existing `esc()` helper.
+- **UI3E-D3 — Removed Assets Page** (`c71a6a8`) — Storage Manager / Removed Assets sub-tabs (`.subtab-link`, isolated from the global `.nav-link` active-state sweep after a sub-tab/top-nav collision fix); reuses the existing `include_deleted=true` listing (no new backend endpoint); shows only `is_deleted === true` records with Asset ID, Display Name, Media Type, Original Filename, File Size, R2 Object Key (`storage_key`), and Removed At (`deleted_at`); UI3E-C-style client-side search (ID/Display Name/Original Filename/`storage_key`) + type filter; no Attach/Rename/Restore/permanent-delete controls; a successful soft-delete invalidates the Removed Assets cache so the next visit reloads naturally.
+- **UI3E-E — Media Admin Endpoint Test Coverage** (`9442e62`) — production-code-zero: new consolidated `tests/test_media_admin_endpoints_ui3e_e.py` locking listing/`include_deleted`/usage-count, upload-URL presign + filename sanitization, upload completion, attach/replace/detach (including deleted-asset-attach rejection), soft-delete safety (zero-usage success, active-usage refusal, missing/already-deleted), and display-name update. R2 is stubbed at the existing `_get_r2_client` boundary — no live Cloudflare dependency. Did not duplicate the UI3E-D2 usage-endpoint tests.
+
+**Files changed across the phase:** `static/admin.html`, `media_admin.py`, plus focused regression tests (`tests/test_admin_media_search_filter_ui3e_c.py`, `tests/test_media_asset_usage_ui3e_d2.py`, `tests/test_admin_media_delete_warning_ui3e_d2.py`, `tests/test_admin_removed_assets_ui3e_d3.py`, `tests/test_media_admin_endpoints_ui3e_e.py`).
+
+**Final regression:** UI3E-C/D2(backend+frontend)/D3/E + Admin shell/dashboard + `test_page_admin` — **100/100 passed**. `git diff --check`: clean.
+
+**Production live test:** Desktop production live testing passed for UI3E-C, UI3E-D2, and UI3E-D3 at their respective closures. Phone/mobile regression was intentionally deferred to the later Admin UI v0.3 phone-regression stage — not attempted, not claimed as passed, not blocking this closure.
+
+**Production sync:** VPS confirmed synchronized to `9442e62` — `HEAD == origin/master == 9442e62`, working tree clean, `shadz.service` active and enabled, `/health` 200, `127.0.0.1:8000` listening, no startup traceback.
+
+**Deferred (not implemented in UI3E):** Restore of a soft-deleted `MediaAsset`; permanent R2 object deletion. Removed Assets exists to make soft-deleted records and their exact `storage_key` visible for **manual** Cloudflare R2 cleanup — SHADZ does not delete R2 objects itself.
+
+**Final production runtime commit: `9442e62` (`9442e6273f8d3c6cca7c086ee89289e35313ccae`). Admin Panel UI v0.3 Phase UI3E is now complete and closed.**
+
+**Roadmap update:** The next active milestone is **SHADZ Safety Engine v1** — not UI3F. Admin Panel UI v0.3's remaining phases (UI3F — Page Manager, UI3G — Bot Client Control Center, UI3H — UX / Safety Polish, UI3I — Regression & Production Closure) are **ON HOLD**, not cancelled or abandoned, and remain part of the roadmap to resume later.
+
+---
+
 ## Admin Panel UI v0.3 — Phase UI3D: Slug Management v0.3
 
 **Status:** Completed and production-verified on desktop. **Phase UI3D is now complete and closed.** Mobile validation is deferred to later testing and was not part of this closure's acceptance criteria.
