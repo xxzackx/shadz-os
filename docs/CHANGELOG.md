@@ -2,6 +2,38 @@
 
 ---
 
+## SHADZ Safety Engine v1 — Phase S2: NFC Safety Identity / Public Entry
+
+**Status:** Complete, deployed, and production-verified. **Phase S2 is now complete and closed.** No later Safety Engine phase (check-in UI, mandatory browser GPS, SOS UI, secure check-in/SOS submission, reminders/escalation, resolution, admin UI) has started or is claimed complete.
+
+**Scope:** One new column (`SafetyUser.secure_token`) and one new public route (`GET /safety/c/{secure_token}`), plus a focused regression test file. Render-only public identity entry — no check-in UI, no GPS capture, no I'M SAFE/SOS controls, no Telegram workflow, no Admin UI. S2 did not modify any existing Redirect Engine, Page Engine, Activation Engine, or Media Engine runtime logic, and did not touch `BotClient`. It did add `"safety"` to `main.py`'s `RESERVED_SLUGS`, changing the generic `RedirectLink` slug surface so a bare `/safety` slug is now rejected as reserved — no other existing route's behavior changed.
+
+**Runtime commit:** `c752308cf3d9a9e273c56a11cacbc0fd0da194cf` (`c752308`) — `feat(safety): add secure public entry`
+
+**Locked design facts:**
+- `SafetyUser.secure_token` is a dedicated, long random (`secrets.token_urlsafe(32)`), non-discoverable browser-facing key, intentionally distinct from and never derived from the physical `nfc_token`. Every new `SafetyUser` receives one automatically via an ORM column default — generated automatically when omitted; normal creation callers are not required to supply it.
+- Public flow: `permanent SHADZ redirect slug → GET /safety/c/{secure_token}`. The NFC chip itself still uses the normal permanent SHADZ redirect URL/slug architecture — no parallel NFC routing system was created.
+- `GET /safety/c/{secure_token}` is render-only: an active token returns a minimal SHADZ dark/gold HTML identity shell (`display_name`, HTML-escaped via `html.escape()`); an unknown token and an inactive-user token return an **identical** 404 (same status and body), so token validity is never distinguishable from the outside; the GET creates zero `SafetyCheckIn`/`SafetyAlert`/`SafetyEmergency` rows.
+- `"safety"` was added to `main.py`'s `RESERVED_SLUGS` as defense-in-depth for the generic `RedirectLink` slug surface. The dedicated route is registered before the `/{slug}` catch-all, alongside the other pre-catch-all route registrations.
+
+**Migration:** `_run_migrations()` gained a `safety_users.secure_token` block: additive `ALTER TABLE ... ADD COLUMN` (nullable at the DB level, matching the repo's existing migration convention), an unconditional backfill of any row with a NULL/empty `secure_token` (fresh `secrets.token_urlsafe(32)` per row), and an index-presence check (`PRAGMA index_list`/`PRAGMA index_info`) that creates `idx_safety_users_secure_token` only if no unique index already covers `secure_token` alone — avoiding a duplicate of the ORM's own auto-created `ix_safety_users_secure_token` index on a brand-new table built by `create_all()`. All three steps run independently on every startup, so the migration recovers cleanly from a partially-completed prior run and remains idempotent on repeat runs.
+
+**Files changed:** `models.py` (`SafetyUser.secure_token`), `main.py` (`_run_migrations()` block, `RESERVED_SLUGS` entry, route registration), `safety_public.py` (new), `tests/test_safety_public_entry_s2.py` (new, 16 tests).
+
+**Focused test result:** `tests/test_safety_public_entry_s2.py` — 16/16 passed (automatic `secure_token` generation and length, distinctness from `nfc_token`, DB-level uniqueness enforcement, active-token 200 HTML with `display_name`, HTML-escaping of a malicious `display_name`, unknown-token 404, inactive-token identical 404, zero `SafetyCheckIn`/`SafetyAlert`/`SafetyEmergency` writes on GET, migration backfill from a genuine pre-S2 table, migration idempotency, partial-migration recovery, missing-index-only recovery, and a behavioral proof that a bare `safety` slug is rejected as reserved via the real `/{slug}` catch-all).
+
+**Full regression:** 700/700 passed. `git diff --check`: clean.
+
+**Production verification:** `HEAD == origin/master == c752308`; `shadz.service` active and enabled; local `/health` returned 200; port 8000 listening; migration completed successfully with the `secure_token` column present, zero NULL/empty secure tokens, zero duplicate secure tokens, and exactly one effective unique index on `secure_token`.
+
+**Production infrastructure change (VPS-only, not part of commit `c752308`):** Nginx site `/etc/nginx/sites-available/shadz.io` was updated to add a dedicated `location ^~ /safety/ { proxy_pass http://127.0.0.1:8000; ... }` route — the prior config only proxied selected paths and single-segment redirect slugs, which did not cover the multi-segment public `/safety/c/{secure_token}` path.
+
+**Live production test:** an active valid secure token returned public HTTPS 200 HTML end-to-end (Nginx → FastAPI); an unknown secure token returned a 404 through the same public HTTPS path to FastAPI; the identical-404 behavior for an inactive token versus an unknown token was verified directly against the production FastAPI runtime locally (not separately re-verified through external HTTPS); the Safety entry GET caused zero runtime writes; temporary test `SafetyUser`s created for verification were explicitly deleted afterward, returning production Safety tables to a clean state; final public `/health` check returned 200.
+
+**Deferred (not implemented in S2):** check-in UI, mandatory browser GPS capture, SOS UI (Phase S3); secure check-in/SOS submission (Phase S4); reminders, deadlines, escalation, resolution, and admin UI (later phases). Next active phase: **S3 — Check-in UI + mandatory browser location + SOS UI** (not started).
+
+---
+
 ## SHADZ Safety Engine v1 — Phase S1: Foundation & Data Model
 
 **Status:** Complete, deployed, and production-verified. **Phase S1 is now complete and closed.** No later Safety Engine phase (browser-location capture, check-in runtime, alerts/reminders, SOS/escalation, Telegram workflows, admin UI) has started or is claimed complete.
