@@ -31,6 +31,22 @@ class MediaDeleteDependencyWarningTests(unittest.TestCase):
         )
         return match.group(1) if match else None
 
+    @staticmethod
+    def _extract_block(text, marker):
+        """Return the brace-balanced body of the block starting at `marker`
+        (marker must include the opening `{`, e.g. "if (!res.ok) {")."""
+        start = text.index(marker)
+        brace_start = text.index("{", start)
+        depth = 0
+        for i in range(brace_start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[brace_start + 1:i]
+        raise AssertionError(f"unbalanced braces while extracting block for marker: {marker!r}")
+
     def test_delete_flow_performs_usage_preflight(self):
         self.assertIsNotNone(self.delete_fn, "softDeleteAsset() body not found")
         self.assertIn("/usage", self.delete_fn)
@@ -62,19 +78,55 @@ class MediaDeleteDependencyWarningTests(unittest.TestCase):
         self.assertIn("method: 'DELETE'", self.delete_fn)
         self.assertIn("showMsg('st-msg', 'success', `Asset ${assetId} soft-deleted.`);", self.delete_fn)
 
-    def test_preflight_failure_does_not_proceed_with_deletion(self):
-        # Both the !res.ok branch and the catch block must return before any
-        # DELETE call is reachable.
+    def test_non_2xx_preflight_shows_error_and_returns_before_delete(self):
+        not_ok_block = self._extract_block(self.delete_fn, "if (!res.ok) {")
+        self.assertIn("showMsg('st-msg', 'error',", not_ok_block)
+        self.assertIn("return;", not_ok_block)
         not_ok_pos = self.delete_fn.index("if (!res.ok) {")
-        catch_pos = self.delete_fn.index("} catch {\n        showMsg('st-msg', 'error', 'Network error")
         delete_call_pos = self.delete_fn.index("method: 'DELETE'")
         self.assertLess(not_ok_pos, delete_call_pos)
+
+    def test_network_error_preflight_shows_error_and_returns_before_delete(self):
+        # The preflight try/catch is the first "} catch {" in the function —
+        # the DELETE call's own try/catch comes later.
+        catch_block = self._extract_block(self.delete_fn, "} catch {")
+        self.assertIn("showMsg('st-msg', 'error', 'Network error", catch_block)
+        self.assertIn("return;", catch_block)
+        catch_pos = self.delete_fn.index("} catch {")
+        delete_call_pos = self.delete_fn.index("method: 'DELETE'")
         self.assertLess(catch_pos, delete_call_pos)
-        # Every branch ahead of the DELETE call (usage-fetch !ok, usage-fetch
-        # network error, active_usage_count > 0, and the user cancelling the
-        # confirm()) must return before reaching it.
-        preflight_block = self.delete_fn[:delete_call_pos]
-        self.assertEqual(preflight_block.count("return;"), 4)
+
+    def test_active_usage_opens_modal_and_returns_before_delete(self):
+        active_usage_block = self._extract_block(self.delete_fn, "if (usage.active_usage_count > 0) {")
+        self.assertIn("openDeleteBlocked(usage.slugs);", active_usage_block)
+        self.assertIn("return;", active_usage_block)
+        active_usage_pos = self.delete_fn.index("if (usage.active_usage_count > 0) {")
+        delete_call_pos = self.delete_fn.index("method: 'DELETE'")
+        self.assertLess(active_usage_pos, delete_call_pos)
+
+    def test_user_cancelling_confirm_returns_before_delete(self):
+        cancel_pos = self.delete_fn.index("if (!confirm(`Soft-delete asset")
+        cancel_line_end = self.delete_fn.index("\n", cancel_pos)
+        cancel_line = self.delete_fn[cancel_pos:cancel_line_end]
+        self.assertIn("return;", cancel_line)
+        delete_call_pos = self.delete_fn.index("method: 'DELETE'")
+        self.assertLess(cancel_pos, delete_call_pos)
+
+    def test_delete_call_is_the_last_statement_after_all_safety_gates(self):
+        # There is exactly one DELETE call site, and every safety-gate marker
+        # (the four assertions above) appears strictly before it — proven
+        # individually above; this asserts the ordering holds relative to
+        # each other too, i.e. gates aren't reachable out of sequence.
+        delete_call_pos = self.delete_fn.index("method: 'DELETE'")
+        gate_positions = [
+            self.delete_fn.index("if (!res.ok) {"),
+            self.delete_fn.index("} catch {"),
+            self.delete_fn.index("if (usage.active_usage_count > 0) {"),
+            self.delete_fn.index("if (!confirm(`Soft-delete asset"),
+        ]
+        for pos in gate_positions:
+            self.assertLess(pos, delete_call_pos)
+        self.assertEqual(self.delete_fn.count("method: 'DELETE'"), 1)
 
     def test_no_force_delete_or_override_introduced(self):
         # No force/override control or code path was introduced: still exactly

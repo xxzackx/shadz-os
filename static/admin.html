@@ -2425,12 +2425,14 @@
 
         if (!res.ok) {
           _allAssets = [];
+          _assetMap = {};
           container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
           return;
         }
 
         if (data.length === 0) {
           _allAssets = [];
+          _assetMap = {};
           container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No assets yet.</div>';
           return;
         }
@@ -2440,6 +2442,8 @@
         _allAssets = data;
         renderStorageList();
       } catch {
+        _allAssets = [];
+        _assetMap = {};
         container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
       }
     }

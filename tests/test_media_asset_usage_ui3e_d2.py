@@ -96,7 +96,11 @@ class MediaAssetUsageTests(unittest.TestCase):
         self.assertEqual(body["active_usage_count"], 1)
         self.assertEqual(body["slugs"], ["client-a"])
 
-    def test_multiple_active_attachments_all_returned(self):
+    def test_multiple_active_attachments_returned_in_deterministic_order(self):
+        # Inserted out of alphabetical order — the endpoint's .order_by(slug.asc())
+        # is part of the contract, so assert the exact returned order directly
+        # rather than sorting in the assertion (which would hide an ordering
+        # regression if .order_by(...) were ever dropped).
         asset = self._make_asset()
         self._attach("client-b", asset.id)
         self._attach("client-a", asset.id)
@@ -104,7 +108,21 @@ class MediaAssetUsageTests(unittest.TestCase):
         res = self.client.get(f"/admin/media/assets/{asset.id}/usage")
         body = res.json()
         self.assertEqual(body["active_usage_count"], 3)
-        self.assertEqual(sorted(body["slugs"]), ["client-a", "client-b", "product-demo"])
+        self.assertEqual(body["slugs"], ["client-a", "client-b", "product-demo"])
+
+    def test_duplicate_active_rows_for_same_slug_deduplicated(self):
+        # SlugMedia carries no DB-level uniqueness constraint on
+        # (slug, media_asset_id, is_active), so two active rows for the same
+        # slug+asset are a state the schema permits (even though normal
+        # attach/replace flows never produce it) — the endpoint's .distinct()
+        # must still collapse them to one slug in the response.
+        asset = self._make_asset()
+        self._attach("client-a", asset.id, is_active=True)
+        self._attach("client-a", asset.id, is_active=True)
+        res = self.client.get(f"/admin/media/assets/{asset.id}/usage")
+        body = res.json()
+        self.assertEqual(body["active_usage_count"], 1)
+        self.assertEqual(body["slugs"], ["client-a"])
 
     def test_inactive_historical_attachments_excluded(self):
         asset = self._make_asset()
