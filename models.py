@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime, timezone, date, time
 from sqlalchemy import String, DateTime, Date, Time, Integer, BigInteger, Float, Text, Boolean, ForeignKey, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
@@ -348,6 +349,9 @@ class SafetyUser(Base):
 
     Separate identity from BotClient (Redirect Engine / Telegram self-service
     clients are unrelated). nfc_token is the physical-token lookup key.
+    secure_token is a distinct, non-discoverable browser-facing key used by
+    the Phase S2 public entry route (GET /safety/c/{secure_token}) — it must
+    never be conflated with or derived from nfc_token.
     """
     __tablename__ = "safety_users"
 
@@ -358,6 +362,13 @@ class SafetyUser(Base):
     early_reminder_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     nfc_token: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    secure_token: Mapped[str] = mapped_column(
+        String,
+        unique=True,
+        index=True,
+        nullable=False,
+        default=lambda: secrets.token_urlsafe(32),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

@@ -15,6 +15,7 @@ from media_admin import register_media_admin_routes
 from page_admin import register_page_admin_routes
 from page_public import serve_public_page
 from link_public import expired_page_response, resolve_activation_redirect, serve_public_media
+from safety_public import serve_safety_entry
 from nfc_legacy import register_nfc_routes, register_nfc_admin_routes
 from bot_admin import register_bot_admin_routes
 from bot_runtime import register_bot_webhook_routes
@@ -129,6 +130,51 @@ def _run_migrations() -> None:
             "ON page_slug_attachments(slug) WHERE is_active = 1"
         ))
 
+        # ── Safety Engine v1 Phase S2 — safety_users.secure_token ───────────
+        # Additive column, added nullable (SQLite ALTER TABLE cannot attach a
+        # UNIQUE constraint inline). Column-add, backfill, and index-creation
+        # are each independently checked and applied on every run — not
+        # gated behind "did we just add the column" — so the migration
+        # recovers cleanly no matter which step a prior run stopped after
+        # (e.g. process killed between ALTER TABLE and backfill).
+        rows = conn.execute(text("PRAGMA table_info(safety_users)")).fetchall()
+        if rows:
+            existing = {row[1] for row in rows}
+            if "secure_token" not in existing:
+                conn.execute(text(
+                    "ALTER TABLE safety_users ADD COLUMN secure_token VARCHAR"
+                ))
+
+            unbackfilled = conn.execute(text(
+                "SELECT id FROM safety_users WHERE secure_token IS NULL OR secure_token = ''"
+            )).fetchall()
+            for row in unbackfilled:
+                conn.execute(
+                    text("UPDATE safety_users SET secure_token = :token WHERE id = :id"),
+                    {"token": secrets.token_urlsafe(32), "id": row[0]},
+                )
+
+            # Only create the explicit index if no unique index already
+            # covers secure_token alone — create_all() may already have
+            # built one via the ORM column's unique=True/index=True on a
+            # brand-new table (auto-named ix_safety_users_secure_token);
+            # creating a second one here would just duplicate it.
+            index_rows = conn.execute(text("PRAGMA index_list(safety_users)")).fetchall()
+            has_unique_secure_token_index = False
+            for idx_row in index_rows:
+                idx_name, is_unique = idx_row[1], idx_row[2]
+                if not is_unique:
+                    continue
+                idx_cols = conn.execute(text(f"PRAGMA index_info({idx_name})")).fetchall()
+                if [c[2] for c in idx_cols] == ["secure_token"]:
+                    has_unique_secure_token_index = True
+                    break
+            if not has_unique_secure_token_index:
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_safety_users_secure_token "
+                    "ON safety_users(secure_token)"
+                ))
+
         conn.commit()
 
 
@@ -205,6 +251,7 @@ RESERVED_SLUGS: frozenset[str] = frozenset({
     "run-command",
     "nfc",
     "r",
+    "safety",
     "docs",         # FastAPI auto-generated OpenAPI UI
     "redoc",        # FastAPI auto-generated ReDoc UI
     "openapi.json",
@@ -233,6 +280,17 @@ register_nfc_routes(app)
 # Telegram Bot webhook route lives in bot_runtime.py — registered here.
 # Must be registered before the /{slug} catch-all.
 register_bot_webhook_routes(app)
+
+
+@app.get("/safety/c/{secure_token}")
+def safety_entry(secure_token: str, db: Session = Depends(get_db)):
+    """Safety Engine v1 Phase S2 — public NFC-originated entry point.
+
+    Render-only: resolves an active SafetyUser by secure_token and shows the
+    minimal identity shell. No check-in/GPS/SOS behaviour — those are later
+    phases. Unknown token and inactive-user token return an identical 404.
+    """
+    return serve_safety_entry(secure_token, db)
 
 
 # ---------------------------------------------------------------------------
