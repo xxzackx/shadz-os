@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Integer, BigInteger, Text, Boolean, ForeignKey, CheckConstraint
+from datetime import datetime, timezone, date, time
+from sqlalchemy import String, DateTime, Date, Time, Integer, BigInteger, Float, Text, Boolean, ForeignKey, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from database import Base
 
@@ -328,3 +328,144 @@ class SlugMedia(Base):
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+
+
+# ── Safety Engine v1 — Phase S1 (Foundation & Data Model) ──────────────────
+#
+# Independent of BotClient/RedirectLink — SafetyUser is its own identity, not
+# another BotClient. This phase is data foundation only: no routes, no
+# check-in/alert/emergency runtime, no browser-location capture, no Telegram
+# wiring. All Safety Engine users will require browser location once the
+# relevant runtime phase is implemented; these tables just hold the shape.
+
+SAFETY_ALERT_TYPES = {"early_reminder", "missed_checkin"}
+SAFETY_ALERT_STATUSES = {"open", "resolved"}
+SAFETY_EMERGENCY_STATUSES = {"open", "acknowledged", "resolved"}
+
+
+class SafetyUser(Base):
+    """One row per Safety Engine participant.
+
+    Separate identity from BotClient (Redirect Engine / Telegram self-service
+    clients are unrelated). nfc_token is the physical-token lookup key.
+    """
+    __tablename__ = "safety_users"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    display_name: Mapped[str] = mapped_column(String, nullable=False)
+    timezone: Mapped[str] = mapped_column(String, nullable=False)
+    daily_deadline: Mapped[time] = mapped_column(Time, nullable=False)
+    early_reminder_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    nfc_token: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class SafetyCheckIn(Base):
+    """One row per recorded check-in for a SafetyUser.
+
+    Location fields are nullable — this phase defines the shape only; no
+    capture workflow exists yet.
+    """
+    __tablename__ = "safety_check_ins"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("safety_users.id"), index=True, nullable=False
+    )
+    checked_in_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    accuracy_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class SafetyAlert(Base):
+    """One row per early-reminder or missed-checkin alert for a SafetyUser.
+
+    See SAFETY_ALERT_TYPES / SAFETY_ALERT_STATUSES for allowed values.
+    """
+    __tablename__ = "safety_alerts"
+    __table_args__ = (
+        CheckConstraint(
+            "alert_type IN ('early_reminder', 'missed_checkin')",
+            name="ck_safety_alerts_alert_type",
+        ),
+        CheckConstraint(
+            "status IN ('open', 'resolved')",
+            name="ck_safety_alerts_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("safety_users.id"), index=True, nullable=False
+    )
+    safety_date: Mapped[date] = mapped_column(Date, nullable=False)
+    alert_type: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="open", nullable=False)
+    triggered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    telegram_message_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_checkin_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("safety_check_ins.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class SafetyEmergency(Base):
+    """One row per emergency (SOS) event for a SafetyUser.
+
+    See SAFETY_EMERGENCY_STATUSES for allowed values.
+    """
+    __tablename__ = "safety_emergencies"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('open', 'acknowledged', 'resolved')",
+            name="ck_safety_emergencies_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("safety_users.id"), index=True, nullable=False
+    )
+    triggered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    accuracy_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String, default="open", nullable=False)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    telegram_message_id: Mapped[str | None] = mapped_column(String, nullable=True)
