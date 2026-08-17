@@ -152,6 +152,12 @@ class SlugMediaOut(BaseModel):
     media_type:        str
 
 
+class MediaAssetUsageOut(BaseModel):
+    media_asset_id:     int
+    active_usage_count: int
+    slugs:              list[str]
+
+
 class MediaAssetUpdateRequest(BaseModel):
     """Body for PATCH /admin/media/assets/{asset_id} — update display_name only."""
     display_name: str | None = None
@@ -401,6 +407,36 @@ def register_media_admin_routes(admin_router) -> None:
             "display_name": asset.display_name,
             "original_filename": asset.original_filename,
         }
+
+    @admin_router.get("/media/assets/{media_asset_id}/usage", response_model=MediaAssetUsageOut)
+    def get_asset_usage(media_asset_id: int, db: Session = Depends(get_db)):
+        """Return the currently active slug attachments for one MediaAsset.
+
+        Read-only — used by the Admin UI to preflight a delete attempt and show
+        exactly which slugs are blocking it. Only active SlugMedia rows are
+        considered; historical (inactive) attachments are not included.
+        """
+        asset = db.query(models.MediaAsset).filter(models.MediaAsset.id == media_asset_id).first()
+        if not asset:
+            raise HTTPException(status_code=404, detail=f"MediaAsset {media_asset_id} not found")
+
+        slugs = [
+            row[0] for row in (
+                db.query(models.SlugMedia.slug)
+                  .filter(
+                      models.SlugMedia.media_asset_id == media_asset_id,
+                      models.SlugMedia.is_active == True,
+                  )
+                  .distinct()
+                  .order_by(models.SlugMedia.slug.asc())
+                  .all()
+            )
+        ]
+        return MediaAssetUsageOut(
+            media_asset_id=media_asset_id,
+            active_usage_count=len(slugs),
+            slugs=slugs,
+        )
 
     @admin_router.delete("/media/assets/{media_asset_id}")
     def soft_delete_asset(media_asset_id: int, db: Session = Depends(get_db)):
