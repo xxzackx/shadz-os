@@ -77,7 +77,7 @@
       border-bottom: 1px solid var(--border);
     }
 
-    .nav-link {
+    .nav-link, .subtab-link {
       background: transparent;
       border: 1px solid var(--border-2);
       color: var(--text-muted);
@@ -92,9 +92,9 @@
       transition: border-color var(--transition-fast), color var(--transition-fast);
     }
 
-    .nav-link:hover { border-color: var(--gold-dim); color: var(--gold); }
+    .nav-link:hover, .subtab-link:hover { border-color: var(--gold-dim); color: var(--gold); }
 
-    .nav-link.active {
+    .nav-link.active, .subtab-link.active {
       border-color: var(--gold);
       color: var(--gold);
       background: var(--surface);
@@ -933,32 +933,61 @@
         <span class="section-title">Storage Manager</span>
       </div>
 
-      <!-- Slug history lookup -->
-      <label for="st-slug">Check Media History by Slug</label>
-      <div style="display:flex;gap:0.5rem;margin-bottom:1rem">
-        <input type="text" id="st-slug" placeholder="media-abc123" autocomplete="off" style="margin-bottom:0;flex:1" onkeydown="onEnterTrigger(event, loadSlugHistory)" />
-        <button class="action-btn" style="width:auto;padding:0.65rem 1rem;margin-top:0;flex-shrink:0" onclick="loadSlugHistory()">Check</button>
+      <!-- Storage Manager / Removed Assets sub-view toggle (UI3E-D3) -->
+      <div style="display:flex;gap:0.5rem;margin-bottom:1.25rem">
+        <button class="subtab-link active" id="st-tab-active" onclick="showStorageView('active')">Storage Manager</button>
+        <button class="subtab-link" id="st-tab-removed" onclick="showStorageView('removed')">Removed Assets</button>
       </div>
-      <div id="st-historyResults" style="margin-bottom:1.25rem"></div>
 
-      <!-- Asset list -->
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem">
-        <span style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em">All Assets</span>
-        <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadStorage()">Refresh</button>
-      </div>
-      <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem">
-        <input type="text" id="st-search" placeholder="Search ID, name, or filename…" autocomplete="off" style="margin-bottom:0;flex:1" oninput="filterStorageList()" />
-        <select id="st-typeFilter" style="margin-bottom:0;width:auto;flex-shrink:0" onchange="filterStorageList()">
-          <option value="all">All</option>
-          <option value="image">Image</option>
-          <option value="gif">GIF</option>
-          <option value="video">Video</option>
-          <option value="audio">Audio</option>
-        </select>
-      </div>
-      <div id="storageList" class="card-grid"></div>
+      <div id="st-activeView">
+        <!-- Slug history lookup -->
+        <label for="st-slug">Check Media History by Slug</label>
+        <div style="display:flex;gap:0.5rem;margin-bottom:1rem">
+          <input type="text" id="st-slug" placeholder="media-abc123" autocomplete="off" style="margin-bottom:0;flex:1" onkeydown="onEnterTrigger(event, loadSlugHistory)" />
+          <button class="action-btn" style="width:auto;padding:0.65rem 1rem;margin-top:0;flex-shrink:0" onclick="loadSlugHistory()">Check</button>
+        </div>
+        <div id="st-historyResults" style="margin-bottom:1.25rem"></div>
 
-      <div id="st-msg" class="msg"></div>
+        <!-- Asset list -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem">
+          <span style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em">All Assets</span>
+          <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadStorage()">Refresh</button>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem">
+          <input type="text" id="st-search" placeholder="Search ID, name, or filename…" autocomplete="off" style="margin-bottom:0;flex:1" oninput="filterStorageList()" />
+          <select id="st-typeFilter" style="margin-bottom:0;width:auto;flex-shrink:0" onchange="filterStorageList()">
+            <option value="all">All</option>
+            <option value="image">Image</option>
+            <option value="gif">GIF</option>
+            <option value="video">Video</option>
+            <option value="audio">Audio</option>
+          </select>
+        </div>
+        <div id="storageList" class="card-grid"></div>
+
+        <div id="st-msg" class="msg"></div>
+      </div>
+
+      <div id="st-removedView" style="display:none">
+        <!-- Removed Assets list (UI3E-D3) — read-only soft-deleted asset review -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem">
+          <span style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em">Removed Assets</span>
+          <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadRemovedAssets()">Refresh</button>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem">
+          <input type="text" id="rm-search" placeholder="Search ID, name, filename, or R2 key…" autocomplete="off" style="margin-bottom:0;flex:1" oninput="filterRemovedList()" />
+          <select id="rm-typeFilter" style="margin-bottom:0;width:auto;flex-shrink:0" onchange="filterRemovedList()">
+            <option value="all">All</option>
+            <option value="image">Image</option>
+            <option value="gif">GIF</option>
+            <option value="video">Video</option>
+            <option value="audio">Audio</option>
+          </select>
+        </div>
+        <div id="removedList" class="card-grid"></div>
+
+        <div id="rm-msg" class="msg"></div>
+      </div>
     </div>
 
     <!-- Create Page section -->
@@ -2492,6 +2521,118 @@
         </div>`;
     }
 
+    // Storage Manager / Removed Assets sub-view toggle (UI3E-D3). Loads the
+    // removed-assets cache lazily on first switch to that view; a manual
+    // Refresh button covers re-loading after that.
+    let _removedAssetsLoaded = false;
+
+    function showStorageView(view) {
+      const showActive = view === 'active';
+      document.getElementById('st-activeView').style.display = showActive ? 'block' : 'none';
+      document.getElementById('st-removedView').style.display = showActive ? 'none' : 'block';
+      document.getElementById('st-tab-active').classList.toggle('active', showActive);
+      document.getElementById('st-tab-removed').classList.toggle('active', !showActive);
+      if (!showActive && !_removedAssetsLoaded) loadRemovedAssets();
+    }
+
+    // Full removed-asset list from the last loadRemovedAssets() fetch —
+    // search/filter (UI3E-D3) re-renders from this without another request.
+    let _removedAssets = [];
+
+    async function loadRemovedAssets() {
+      const container = document.getElementById('removedList');
+      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+
+      try {
+        const res  = await fetch('/admin/media/assets?include_deleted=true', { credentials: 'same-origin' });
+        const data = await res.json();
+
+        if (!res.ok) {
+          _removedAssets = [];
+          _removedAssetsLoaded = false;
+          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          return;
+        }
+
+        _removedAssets = data.filter(a => a.is_deleted === true);
+        _removedAssetsLoaded = true;
+
+        if (_removedAssets.length === 0) {
+          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No removed assets.</div>';
+          return;
+        }
+        renderRemovedList();
+      } catch {
+        _removedAssets = [];
+        _removedAssetsLoaded = false;
+        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+      }
+    }
+
+    // Renders the currently loaded removed assets (_removedAssets) filtered
+    // by the search box + type dropdown. No API request — client-side only.
+    function renderRemovedList() {
+      const container = document.getElementById('removedList');
+      const query = document.getElementById('rm-search').value.trim().toLowerCase();
+      const type  = document.getElementById('rm-typeFilter').value;
+
+      const filtered = _removedAssets.filter(a => {
+        if (type !== 'all' && a.media_type !== type) return false;
+        if (!query) return true;
+        return String(a.id).toLowerCase().includes(query)
+          || (a.display_name || '').toLowerCase().includes(query)
+          || (a.original_filename || '').toLowerCase().includes(query)
+          || (a.storage_key || '').toLowerCase().includes(query);
+      });
+
+      if (filtered.length === 0) {
+        container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No matching removed assets.</div>';
+        return;
+      }
+      container.innerHTML = filtered.map(a => buildRemovedAssetCard(a)).join('');
+    }
+
+    function filterRemovedList() {
+      renderRemovedList();
+    }
+
+    // Removed-asset card (UI3E-D3) — read-only. No Attach, Restore, or
+    // permanent-delete actions; this view exists only to review soft-deleted
+    // records and locate the exact R2 object key for manual R2 cleanup.
+    function buildRemovedAssetCard(a) {
+      return `
+        <div class="stats-box" style="display:block">
+          <div class="stats-row">
+            <span class="stats-label">ID</span>
+            <span class="stats-value gold">${esc(a.id)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Type</span>
+            <span class="stats-value">${esc(a.media_type)}</span>
+          </div>
+          ${a.display_name ? `<div class="stats-row">
+            <span class="stats-label">Name</span>
+            <span class="stats-value value-overflow" style="color:var(--gold-light)">${esc(a.display_name)}</span>
+          </div>` : ''}
+          <div class="stats-row">
+            <span class="stats-label">File</span>
+            <span class="stats-value value-overflow">${esc(a.original_filename)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Size</span>
+            <span class="stats-value">${esc(fmtSize(a.file_size))}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">R2 Object Key</span>
+            <span class="stats-value value-overflow" style="user-select:text">${esc(a.storage_key)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Removed At</span>
+            <span class="stats-value">${a.deleted_at ? esc(new Date(a.deleted_at).toLocaleString()) : '—'}</span>
+          </div>
+        </div>`;
+    }
+
     // Delete dependency warning modal (UI3E-D2) — read-only; closing it is the
     // only action available. No force-delete / override path exists here.
     function openDeleteBlocked(slugs) {
@@ -2536,6 +2677,9 @@
         if (res.ok) {
           showMsg('st-msg', 'success', `Asset ${assetId} soft-deleted.`);
           loadStorage();
+          // Invalidate the Removed Assets cache (UI3E-D3) so the next switch
+          // to that view naturally reloads and picks up this asset.
+          _removedAssetsLoaded = false;
         } else {
           showMsg('st-msg', 'error', data.detail || `Error ${res.status}`);
         }
