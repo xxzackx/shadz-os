@@ -2,6 +2,38 @@
 
 ---
 
+## SHADZ Safety Engine v1 — Phase S1: Foundation & Data Model
+
+**Status:** Complete, deployed, and production-verified. **Phase S1 is now complete and closed.** No later Safety Engine phase (browser-location capture, check-in runtime, alerts/reminders, SOS/escalation, Telegram workflows, admin UI) has started or is claimed complete.
+
+**Scope:** Data foundation only for a new, independent Safety Engine — four new tables added to `models.py` under one Safety Engine section, plus a focused regression test file. No routes, no Admin UI, no Telegram runtime, no browser-location capture, no check-in/alert/reminder/SOS runtime. No changes to Redirect Engine, Page Engine, Activation Engine, `BotClient`, or any existing table/route.
+
+**Runtime commit:** `3f35c4019e454970d1e8dbefd2fc2477af4529ea` (`3f35c40`) — `feat(safety): add S1 foundation data model`
+
+**Locked schema — four new tables:**
+- **`SafetyUser`** (`safety_users`) — `id`, `display_name`, `timezone`, `daily_deadline` (TIME), `early_reminder_minutes` (required, no default), `is_active` (default `True`), `nfc_token` (unique, indexed — physical-token lookup key), `created_at`, `updated_at`.
+- **`SafetyCheckIn`** (`safety_check_ins`) — `id`, `user_id` (FK → `safety_users.id`), `checked_in_at`, `latitude`/`longitude`/`accuracy_m` (all nullable), `source`, `created_at`.
+- **`SafetyAlert`** (`safety_alerts`) — `id`, `user_id` (FK → `safety_users.id`), `safety_date` (DATE), `alert_type` (`early_reminder`/`missed_checkin`, DB `CHECK` constraint `ck_safety_alerts_alert_type`), `status` (`open`/`resolved`, default `open`, DB `CHECK` constraint `ck_safety_alerts_status`), `triggered_at`, `telegram_message_id`, `resolved_at`, `resolved_checkin_id` (FK → `safety_check_ins.id`), `created_at`.
+- **`SafetyEmergency`** (`safety_emergencies`) — `id`, `user_id` (FK → `safety_users.id`), `triggered_at`, `latitude`/`longitude`/`accuracy_m` (all nullable), `status` (`open`/`acknowledged`/`resolved`, default `open`, DB `CHECK` constraint `ck_safety_emergencies_status`), `acknowledged_at`, `resolved_at`, `telegram_message_id`.
+
+**Locked design facts:**
+- `SafetyUser` is a fully independent identity — **not** another `BotClient`, and has no relationship to `BotClient`/`RedirectLink` in this phase. Normal Redirect Engine clients remain entirely unrelated to Safety Engine.
+- Browser location will be required for every Safety Engine participant once the relevant runtime phase is implemented — S1 does **not** implement browser-location capture. The nullable `latitude`/`longitude`/`accuracy_m` columns on `safety_check_ins`/`safety_emergencies` exist now purely as foundation shape for that future phase.
+- No ORM `relationship()` declarations were added, consistent with the rest of the codebase (`ActivationRecord`, `PageSlugAttachment`, `BotClientSlug`, `SlugMedia`) — all cross-table access is explicit `db.query(...)`.
+- No `_run_migrations()`/`main.py` change was required — four net-new tables, handled entirely by `Base.metadata.create_all()`.
+
+**Files changed:** `models.py` (new Safety Engine section: 4 models + 3 value-set constants), `tests/test_safety_engine_foundation.py` (new, 23 tests).
+
+**Focused test result:** `tests/test_safety_engine_foundation.py` — 23/23 passed (table/column existence, FK definitions, `is_active`/`status` defaults, `nfc_token` uniqueness, allowed/rejected `alert_type` and `status` values for both `SafetyAlert` and `SafetyEmergency`, nullable location fields, `daily_deadline` time handling, required `early_reminder_minutes`).
+
+**Full regression:** 684/684 passed. `git diff --check`: clean.
+
+**Production verification:** `HEAD == origin/master == 3f35c40`; `shadz.service` active and enabled; `/health` returned 200; port 8000 listening; all four Safety Engine tables (`safety_users`, `safety_check_ins`, `safety_alerts`, `safety_emergencies`) confirmed present in production with 0 rows; no startup/runtime errors observed.
+
+**Deferred (not implemented in S1):** browser-location capture/workflow, check-in runtime, I'M SAFE workflow, SOS/emergency workflow, reminder/escalation runtime, monitoring, frontend UI, Telegram workflows, admin routes/UI for Safety Engine. All later Safety Engine phases remain unscheduled beyond this data foundation.
+
+---
+
 ## Admin Panel UI v0.3 — Phase UI3E: Media Manager v0.3
 
 **Status:** Implementation and post-closure repair are complete. Final re-closure is pending documentation commit and VPS synchronization — do not treat UI3E as fully closed until that sync happens. Phone/mobile regression is intentionally deferred to the later Admin UI v0.3 phone-regression stage — desktop production live testing passed (pre-repair state, `9442e62`); mobile was not attempted and is not claimed as passed.

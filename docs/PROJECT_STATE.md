@@ -117,7 +117,7 @@ NFC chip → shadz.io/{slug} → Nginx → FastAPI → DB lookup → destination
 
 **Admin UI version:** Phase UI3E final runtime code `d744ee5` — Media Manager v0.3 (pushed to `origin/master` 2026-08-17; VPS not yet synced — still running pre-repair `9442e62`). Previous UI3E state: `9442e62` — first closed via docs commit `9e35df4` (deployed 2026-08-17), superseded by the `d744ee5` repair. Previous: Phase UI3D `a53b647` — Slug Management v0.3 (deployed 2026-08-15). Previous: Phase UI3C `9e22dac` — Dashboard Home / System Overview (deployed 2026-08-13). Previous: Phase UI3B `cce45a6` — Admin Shell & Navigation (deployed 2026-08-13). Previous: Phase UI3A `f241c23` — Admin UI v0.3 foundation (deployed 2026-08-13). Previous: Phase T1K `6523079` — Bot test data cleanup controls (deployed 2026-07-08). Previous: Phase T1J `9b13c23` — Regenerate Access Code UI (deployed 2026-07-08). Previous: Phase T1I `57b2229` — Check Slug → Bot Client assign shortcut (deployed 2026-07-06). Previous: Phase T1G `df4d384` — Bot Client deactivate/reactivate/delete controls (deployed 2026-07-05). Previous: Phase T1E `23d9934` Telegram Bot Clients admin UI polish. Phase T1D `67fad4e` Telegram Bot Clients admin UI. Phase 3D `357a85e` Page Engine JSON helper guidance. Bot Engine Phase T1 (`28559a3`) added backend routes only. Phase 3B `a57fff7` Page Engine admin UI. Phase 3C (`165c0d3`) added public page rendering — no admin UI change. Phase 1B `1d11005` media asset rename. Phase C `45d2656` CSV export.
 
-**Admin UI v0.3 phase status:** UI3A ✅, UI3B ✅, UI3C ✅, UI3D ✅ — completed and closed. UI3E implementation ✅ complete, including the post-closure raw-diff repair (`d744ee5`) — **re-closure pending** final documentation commit and VPS synchronization. UI3E completion (once re-closed) does **not** mean Admin Panel UI v0.3 is fully finished: UI3F (Page Manager), UI3G (Bot Client Control Center), UI3H (UX / Safety Polish), and UI3I (Regression & Production Closure) remain **ON HOLD** — planned but intentionally paused, not cancelled or abandoned. **Next active milestone once UI3E is fully re-closed: SHADZ Safety Engine v1.**
+**Admin UI v0.3 phase status:** UI3A ✅, UI3B ✅, UI3C ✅, UI3D ✅, UI3E ✅ — completed and closed. UI3E is now fully re-closed (re-closure commit `a60bd05`). UI3E closure does **not** mean Admin Panel UI v0.3 is fully finished: UI3F (Page Manager), UI3G (Bot Client Control Center), UI3H (UX / Safety Polish), and UI3I (Regression & Production Closure) remain **ON HOLD** — planned but intentionally paused, not cancelled or abandoned. **SHADZ Safety Engine v1 has started: Phase S1 (Foundation & Data Model) is complete, deployed, and production-verified (`3f35c40`); next Safety Engine work is Phase S2.**
 
 ---
 
@@ -283,6 +283,75 @@ Tables created by `Base.metadata.create_all(bind=engine)` on first startup after
 - In-memory `_SESSIONS` state (all pre-finalization activation progress, including a confirmed-but-not-yet-finalized URL/media choice) is lost on a `shadz.service` restart — the customer must restart from the Telegram deep link. Same accepted tradeoff as the rest of the bot runtime since Phase T1B.
 - Legacy `RedirectLink` rows predating the Phase A2 provisioning fix have no `ActivationRecord` and are not backfilled — they remain on pre-activation legacy behavior indefinitely unless a future phase backfills them.
 
+### Safety Engine v1 — Phase S1 _(added Safety Engine v1 Phase S1, `3f35c40`, deployed 2026-08-18)_
+
+Data foundation only — no routes, no admin UI, no Telegram runtime, no browser-location capture, no check-in/alert/reminder/SOS runtime yet. `SafetyUser` is a fully independent identity, separate from `BotClient` and unrelated to normal Redirect Engine clients — it is not another `BotClient` and has no relationship to `BotClient`/`RedirectLink` in this phase. All Safety Engine users will require browser location once the relevant runtime phase implements capture; the location columns below exist now purely as schema shape for that future phase.
+
+#### `safety_users`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER | PK |
+| `display_name` | VARCHAR | not null |
+| `timezone` | VARCHAR | not null |
+| `daily_deadline` | TIME | not null |
+| `early_reminder_minutes` | INTEGER | not null, no default — must be supplied |
+| `is_active` | BOOLEAN | not null; default `True` |
+| `nfc_token` | VARCHAR | not null; unique; indexed — physical-token lookup key |
+| `created_at` | DATETIME | |
+| `updated_at` | DATETIME | |
+
+#### `safety_check_ins`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER | PK |
+| `user_id` | INTEGER | not null; indexed; FK → `safety_users.id` (ORM metadata only) |
+| `checked_in_at` | DATETIME | not null |
+| `latitude` | FLOAT | nullable |
+| `longitude` | FLOAT | nullable |
+| `accuracy_m` | FLOAT | nullable |
+| `source` | VARCHAR | not null |
+| `created_at` | DATETIME | |
+
+#### `safety_alerts`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER | PK |
+| `user_id` | INTEGER | not null; indexed; FK → `safety_users.id` (ORM metadata only) |
+| `safety_date` | DATE | not null |
+| `alert_type` | VARCHAR | not null; one of `early_reminder`, `missed_checkin` — enforced by DB `CHECK` constraint `ck_safety_alerts_alert_type` |
+| `status` | VARCHAR | not null; default `open`; one of `open`, `resolved` — enforced by DB `CHECK` constraint `ck_safety_alerts_status` |
+| `triggered_at` | DATETIME | not null |
+| `telegram_message_id` | VARCHAR | nullable |
+| `resolved_at` | DATETIME | nullable |
+| `resolved_checkin_id` | INTEGER | nullable; FK → `safety_check_ins.id` (ORM metadata only) |
+| `created_at` | DATETIME | |
+
+#### `safety_emergencies`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER | PK |
+| `user_id` | INTEGER | not null; indexed; FK → `safety_users.id` (ORM metadata only) |
+| `triggered_at` | DATETIME | not null |
+| `latitude` | FLOAT | nullable |
+| `longitude` | FLOAT | nullable |
+| `accuracy_m` | FLOAT | nullable |
+| `status` | VARCHAR | not null; default `open`; one of `open`, `acknowledged`, `resolved` — enforced by DB `CHECK` constraint `ck_safety_emergencies_status` |
+| `acknowledged_at` | DATETIME | nullable |
+| `resolved_at` | DATETIME | nullable |
+| `telegram_message_id` | VARCHAR | nullable |
+
+**FK note:** same as every other table in this schema — `PRAGMA foreign_keys=ON` is not enabled, so all FK declarations above are ORM/SQLite schema metadata only, not runtime-enforced.
+
+**No ORM `relationship()` declarations** — consistent with the rest of the codebase (`ActivationRecord`, `PageSlugAttachment`, `BotClientSlug`, `SlugMedia`), all cross-table access is explicit `db.query(...)`.
+
+Tables created by `Base.metadata.create_all(bind=engine)` on first startup after deploy — no `_run_migrations()` change needed (four net-new tables, no columns added to an existing table).
+
+**Production verification (2026-08-18):** `HEAD == origin/master == 3f35c40`; `shadz.service` active and enabled; `/health` 200; port 8000 listening; all four tables present with 0 rows; no startup/runtime errors observed.
+
 ### `nfc_records` / `scan_logs`
 
 Legacy NFC system. Unchanged since v0.1.
@@ -307,6 +376,18 @@ Legacy NFC system. Unchanged since v0.1.
 - Permanent R2 object deletion from the Admin UI is **not implemented** (deferred)
 - Media Admin endpoint contract (listing, upload URL/presign, upload completion, attach/replace/detach, soft-delete, rename) locked by regression tests with R2 stubbed locally — no live Cloudflare dependency in tests (Phase UI3E-E)
 - `_run_migrations()` covers both `redirect_links` and `media_assets` tables (Phase 1)
+
+---
+
+## Safety Engine v1
+
+**Status:** Phase S1 — Foundation & Data Model — complete, deployed, and production-verified (`3f35c40`). No later Safety Engine phase has started or is claimed complete.
+
+- New, independent engine — coexists with Redirect Engine, Page Engine, Activation Engine, Telegram Bot/BotClient system, and Admin system without modifying any of them.
+- `SafetyUser` is its own identity model, **not** another `BotClient` — normal Redirect Engine / Telegram self-service clients (`BotClient`) remain entirely unrelated to Safety Engine users.
+- Browser location is a hard requirement for a user to participate in Safety Engine, but **no browser-location capture or workflow exists yet** — S1 only defines the nullable `latitude`/`longitude`/`accuracy_m` columns on `safety_check_ins` and `safety_emergencies` as foundation shape for a future runtime phase.
+- S1 implements **no** routes, admin UI, Telegram runtime, check-in runtime, alert/reminder runtime, or SOS/emergency runtime — data model only. See `safety_users`, `safety_check_ins`, `safety_alerts`, `safety_emergencies` under Database Schema — Live State for the full schema.
+- No relationship/FK exists in S1 between Safety Engine tables and `BotClient` or `RedirectLink`.
 
 ---
 
@@ -587,7 +668,15 @@ This section exists to give Claude Code a compressed snapshot of current project
   - **Runtime stale-cache smoke test (local, post-repair):** successful load populated both caches; the next asset fetch was forced to fail; Storage Manager correctly showed the network-error state with both caches confirmed empty; a subsequent search/filter interaction rendered no stale cards; a following successful load repopulated both caches normally. Local smoke test only — `d744ee5` has not yet been production live-tested.
   - **Production live test:** UI3E-C, UI3E-D2, and UI3E-D3 each passed manual production live testing (desktop) at their respective pre-repair closures. `d744ee5` has not been production live-tested yet. Phone/mobile testing remains intentionally deferred to the later Admin UI v0.3 phone-regression stage — not attempted, not claimed as passed.
   - **Production sync:** VPS was previously confirmed synchronized to `9442e62` (`HEAD == origin/master == 9442e62`, `shadz.service` active and enabled, `/health` 200, `127.0.0.1:8000` listening, no startup traceback) before the independent diff audit. `d744ee5` is now on `origin/master` but **VPS synchronization to the eventual re-closure commit is still pending.**
-  - **Final runtime code commit: `d744ee5` (`d744ee524976e3a83ebabd139d26368a49380bf8`). Admin Panel UI v0.3 Phase UI3E implementation and post-closure repair are complete. Final re-closure is pending the re-closure documentation commit and final VPS synchronization to that re-closure commit. Admin Panel UI v0.3 itself is not fully finished — UI3F (Page Manager), UI3G (Bot Client Control Center), UI3H (UX / Safety Polish), and UI3I (Regression & Production Closure) remain ON HOLD, not cancelled. Next active milestone once UI3E is fully re-closed: SHADZ Safety Engine v1.**
+  - **Final runtime code commit: `d744ee5` (`d744ee524976e3a83ebabd139d26368a49380bf8`). Admin Panel UI v0.3 Phase UI3E implementation and post-closure repair are complete. UI3E is now fully re-closed (re-closure commit `a60bd05`). Admin Panel UI v0.3 itself is not fully finished — UI3F (Page Manager), UI3G (Bot Client Control Center), UI3H (UX / Safety Polish), and UI3I (Regression & Production Closure) remain ON HOLD, not cancelled. SHADZ Safety Engine v1 has started: Phase S1 (Foundation & Data Model) is complete, deployed, and production-verified (`3f35c40`); next Safety Engine work is Phase S2.**
+- **SHADZ Safety Engine v1 — Phase S1: Foundation & Data Model — complete, deployed, and production-verified.**
+  - **Runtime commit:** `3f35c4019e454970d1e8dbefd2fc2477af4529ea` (`3f35c40`) — `feat(safety): add S1 foundation data model`.
+  - **Scope:** four new tables added to `models.py` under a single Safety Engine section — `SafetyUser` (`safety_users`), `SafetyCheckIn` (`safety_check_ins`), `SafetyAlert` (`safety_alerts`), `SafetyEmergency` (`safety_emergencies`). See the `Safety Engine v1 — Phase S1` entry under Database Schema — Live State for exact columns/types/constraints.
+  - **Locked design facts:** `SafetyUser` is independent of `BotClient` and the Redirect Engine — not another `BotClient`, no relationship to `BotClient`/`RedirectLink` in this phase; normal Redirect Engine clients remain entirely unrelated to Safety Engine. Browser location will be required for every Safety Engine participant once the relevant runtime phase is implemented, but S1 does not implement browser-location capture — the nullable `latitude`/`longitude`/`accuracy_m` columns are foundation-only. `alert_type` (`early_reminder`/`missed_checkin`) and `SafetyAlert.status`/`SafetyEmergency.status` (`open`/`resolved`/`open`/`acknowledged`/`resolved`) are enforced by DB `CHECK` constraints, not just application code. No ORM `relationship()` declarations, consistent with the rest of the codebase.
+  - **Explicitly not implemented in S1:** routes, Admin UI, Telegram runtime, browser-location capture, I'M SAFE workflow, SOS workflow, reminder/escalation runtime, or check-in runtime. No `main.py`/`_run_migrations()` change was needed — four net-new tables, handled by `Base.metadata.create_all()`.
+  - **Tests:** new `tests/test_safety_engine_foundation.py` — 23 focused tests (table/column existence, FK definitions, `is_active`/`status` defaults, `nfc_token` uniqueness, allowed/rejected `alert_type` and `status` values for both `SafetyAlert` and `SafetyEmergency`, nullable location fields, `daily_deadline` time handling, required `early_reminder_minutes`). Full regression suite: 684/684 passed. `git diff --check` clean.
+  - **Production verification:** `HEAD == origin/master == 3f35c40`; `shadz.service` active and enabled; `/health` returned 200; port 8000 listening; all four Safety Engine tables confirmed present with 0 rows; no startup/runtime errors observed.
+  - **Not claimed complete:** any later Safety Engine phase (browser-location capture, check-in runtime, alerts/reminders, SOS/escalation, Telegram workflows, admin UI) — S1 is data foundation only.
 
 ### Active slug type policy
 
