@@ -2,9 +2,38 @@
 
 ---
 
+## SHADZ Safety Engine v1 — Phase S3: Safety Check-in UI + Mandatory GPS + SOS UI
+
+**Status:** Complete, deployed, and production-verified. **Phase S3 is now complete and closed.** No later Safety Engine phase (secure check-in/SOS submission, reminders/escalation, resolution, admin UI) has started or is claimed complete.
+
+**Scope:** Upgrades the existing valid public Safety page (`GET /safety/c/{secure_token}`) into the v1 check-in interface — mobile-first UI, mandatory browser Geolocation gating, and SOS UI. No new route, no new column, no schema/migration change, no admin UI, no Telegram runtime, no server-side check-in/SOS execution. No changes to Redirect Engine, Page Engine, Activation Engine, or `BotClient`.
+
+**Runtime commit:** `34aa78083045e17c87ef60b567128352593a1e99` (`34aa780`) — `feat(safety): add S3 check-in GPS and SOS UI`
+
+**Locked design facts:**
+- The public Safety page requests browser location via the Geolocation API on load and exposes explicit `requesting`/`acquired`/`denied`/`unavailable`/`timeout` states — no IP-geolocation fallback and no fake/synthetic coordinates in any state.
+- `I'M SAFE` and `SOS🚨` are both rendered `disabled` and stay disabled until location is successfully acquired.
+- Neither action performs a network call in S3 — clicking either only updates on-page feedback text; the GET remains render-only with zero `SafetyCheckIn`/`SafetyAlert`/`SafetyEmergency` writes.
+- SOS additionally carries a persistent, always-visible "Not yet operational — no alert will be sent" label, independent of button state, so it cannot be mistaken for a working emergency action ahead of S4.
+- All S2 guarantees are unchanged: secure-token routing, identical 404 for unknown vs. inactive tokens, and HTML-escaped `display_name`.
+
+**Files changed:** `safety_public.py` (rendered HTML/JS upgraded), `tests/test_safety_checkin_ui_s3.py` (new, 13 tests).
+
+**Focused test result:** `tests/test_safety_checkin_ui_s3.py` — 13/13 passed (I'M SAFE UI present, SOS UI present and distinct from I'M SAFE, both actions start disabled, SOS non-operational labeling present, geolocation status element present, `navigator.geolocation`/`getCurrentPosition` usage present, all geolocation error paths handled, no IP-geolocation or fallback-coordinate wording present, unknown-token 404, inactive-token identical 404, zero Safety DB writes on GET, HTML-escaping of a malicious `display_name`).
+
+**Full regression:** 712 passed + 67 subtests. `git diff --check`: clean.
+
+**Production verification:** `HEAD == origin/master == 34aa780`; `shadz.service` active and enabled; `/health` returned 200; Uvicorn listening on `127.0.0.1:8000`.
+
+**Live production test (real iPhone Safari):** location allowed → location acquired; `I'M SAFE` enabled only after GPS acquisition and remains a client-side placeholder only; `SOS` enabled only after GPS acquisition and clearly remains pre-S4 / non-operational; location denied → both actions stay disabled. The temporary "SHADZ S3 Live Test" `SafetyUser` created for this verification was explicitly deleted afterward, returning the S3 test identity to a clean production state.
+
+**Deferred (not implemented in S3):** secure check-in/SOS submission — DB writes, Telegram notifications, reminder/deadline logic, alert escalation, scheduler/background jobs, alert resolution (Phase S4); Admin Safety UI and later phases. Next active phase: **S4 — secure check-in/SOS submission** (not started).
+
+---
+
 ## SHADZ Safety Engine v1 — Phase S2: NFC Safety Identity / Public Entry
 
-**Status:** Complete, deployed, and production-verified. **Phase S2 is now complete and closed.** No later Safety Engine phase (check-in UI, mandatory browser GPS, SOS UI, secure check-in/SOS submission, reminders/escalation, resolution, admin UI) has started or is claimed complete.
+**Status:** Complete, deployed, and production-verified. **Phase S2 is now complete and closed.** Phase S3 (check-in UI, mandatory browser GPS, SOS UI) is also complete and closed (`34aa780`). No later Safety Engine phase (secure check-in/SOS submission, reminders/escalation, resolution, admin UI) has started or is claimed complete.
 
 **Scope:** One new column (`SafetyUser.secure_token`) and one new public route (`GET /safety/c/{secure_token}`), plus a focused regression test file. Render-only public identity entry — no check-in UI, no GPS capture, no I'M SAFE/SOS controls, no Telegram workflow, no Admin UI. S2 did not modify any existing Redirect Engine, Page Engine, Activation Engine, or Media Engine runtime logic, and did not touch `BotClient`. It did add `"safety"` to `main.py`'s `RESERVED_SLUGS`, changing the generic `RedirectLink` slug surface so a bare `/safety` slug is now rejected as reserved — no other existing route's behavior changed.
 
@@ -30,7 +59,7 @@
 
 **Live production test:** an active valid secure token returned public HTTPS 200 HTML end-to-end (Nginx → FastAPI); an unknown secure token returned a 404 through the same public HTTPS path to FastAPI; the identical-404 behavior for an inactive token versus an unknown token was verified directly against the production FastAPI runtime locally (not separately re-verified through external HTTPS); the Safety entry GET caused zero runtime writes; temporary test `SafetyUser`s created for verification were explicitly deleted afterward, returning production Safety tables to a clean state; final public `/health` check returned 200.
 
-**Deferred (not implemented in S2):** check-in UI, mandatory browser GPS capture, SOS UI (Phase S3); secure check-in/SOS submission (Phase S4); reminders, deadlines, escalation, resolution, and admin UI (later phases). Next active phase: **S3 — Check-in UI + mandatory browser location + SOS UI** (not started).
+**Deferred (not implemented in S2):** check-in UI, mandatory browser GPS capture, SOS UI (Phase S3 — now complete, see above); secure check-in/SOS submission (Phase S4); reminders, deadlines, escalation, resolution, and admin UI (later phases). Next active phase: **S4 — secure check-in/SOS submission** (not started).
 
 ---
 
