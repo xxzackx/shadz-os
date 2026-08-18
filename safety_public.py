@@ -17,6 +17,7 @@ import models
 from fastapi import HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, field_validator
+from safety_deadline import resolve_checkin
 from sqlalchemy.orm import Session
 
 _NOT_FOUND_DETAIL = "Not found"
@@ -263,6 +264,11 @@ def submit_check_in(
     checked_in_at is never taken from the client -- SafetyCheckIn.checked_in_at
     defaults to datetime.now(utc) at insert time, so simply omitting it here
     guarantees a server-authoritative timestamp.
+
+    Phase S5: the check-in insert and its SafetyDailyState resolution commit
+    together as a single transaction -- resolve_checkin() only flushes, so
+    if anything here raises before the final commit, neither the check-in
+    row nor a partial daily-state change is persisted.
     """
     user = _resolve_active_safety_user(secure_token, db)
     check_in = models.SafetyCheckIn(
@@ -273,6 +279,8 @@ def submit_check_in(
         source=_CHECKIN_SOURCE_PUBLIC_WEB,
     )
     db.add(check_in)
+    db.flush()
+    resolve_checkin(db, user, check_in)
     db.commit()
     return SafetyCheckInResponse(status="ok")
 

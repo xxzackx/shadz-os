@@ -1,6 +1,6 @@
 import secrets
 from datetime import datetime, timezone, date, time
-from sqlalchemy import String, DateTime, Date, Time, Integer, BigInteger, Float, Text, Boolean, ForeignKey, CheckConstraint
+from sqlalchemy import String, DateTime, Date, Time, Integer, BigInteger, Float, Text, Boolean, ForeignKey, CheckConstraint, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from database import Base
 
@@ -342,6 +342,7 @@ class SlugMedia(Base):
 SAFETY_ALERT_TYPES = {"early_reminder", "missed_checkin"}
 SAFETY_ALERT_STATUSES = {"open", "resolved"}
 SAFETY_EMERGENCY_STATUSES = {"open", "acknowledged", "resolved"}
+SAFETY_DAILY_STATE_STATUSES = {"pending", "safe", "missed"}
 
 
 class SafetyUser(Base):
@@ -480,3 +481,47 @@ class SafetyEmergency(Base):
     acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     telegram_message_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class SafetyDailyState(Base):
+    """One row per SafetyUser per local safety day (Phase S5).
+
+    safety_date is the user's *local* calendar day (derived from
+    SafetyUser.timezone), never the server UTC date. deadline_utc is the
+    computed UTC instant of that day's deadline, cached at row-creation time
+    so re-evaluation never has to re-derive timezone/DST behavior from
+    scratch. The (user_id, safety_date) unique constraint is the DB-level
+    guarantee that a user's day can never have two daily-state rows, even
+    under concurrent evaluator/check-in races.
+    """
+    __tablename__ = "safety_daily_states"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'safe', 'missed')",
+            name="ck_safety_daily_states_status",
+        ),
+        UniqueConstraint("user_id", "safety_date", name="uq_safety_daily_states_user_date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("safety_users.id"), index=True, nullable=False
+    )
+    safety_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="pending", nullable=False)
+    deadline_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    checkin_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("safety_check_ins.id"), nullable=True
+    )
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )

@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import os
 import secrets
 from datetime import datetime, timezone
@@ -9,7 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 import models
-from database import Base, engine, get_db
+from database import Base, SessionLocal, engine, get_db
 from link_admin import register_link_admin_routes
 from media_admin import register_media_admin_routes
 from page_admin import register_page_admin_routes
@@ -23,6 +25,7 @@ from safety_public import (
     submit_check_in,
     submit_sos,
 )
+from safety_deadline import evaluate_all_active_users
 from nfc_legacy import register_nfc_routes, register_nfc_admin_routes
 from bot_admin import register_bot_admin_routes
 from bot_runtime import register_bot_webhook_routes
@@ -326,6 +329,63 @@ def safety_sos(
     route.
     """
     return submit_sos(secure_token, payload, db)
+
+
+# ---------------------------------------------------------------------------
+# Safety Engine v1 Phase S5 — Daily Safety State / Deadline Engine
+#
+# Periodic trigger only. SafetyDailyState in the DB is the sole authority —
+# this loop just calls the idempotent evaluator on an interval so a missed
+# deadline is detected in bounded time; a missed tick or a restart never
+# loses correctness, the next tick (or the next check-in) re-derives the
+# right state from scratch. Running multiple SHADZ processes is likewise
+# safe: evaluate_user_deadline's transitions are conditional UPDATEs guarded
+# by the (user_id, safety_date) unique constraint, so duplicate/overlapping
+# triggers are idempotent no-ops, never double-transitions.
+# ---------------------------------------------------------------------------
+
+_safety_deadline_logger = logging.getLogger("safety_deadline_loop")
+_SAFETY_DEADLINE_EVAL_INTERVAL_SECONDS = 60
+_safety_deadline_task: asyncio.Task | None = None
+
+
+def _run_safety_deadline_eval_tick() -> None:
+    """Synchronous DB work for one tick — run via asyncio.to_thread so it
+    never blocks the FastAPI event loop while evaluating."""
+    db = SessionLocal()
+    try:
+        evaluate_all_active_users(db)
+    finally:
+        db.close()
+
+
+async def _safety_deadline_eval_loop() -> None:
+    try:
+        while True:
+            try:
+                await asyncio.to_thread(_run_safety_deadline_eval_tick)
+            except Exception:
+                _safety_deadline_logger.exception("safety deadline eval loop tick failed")
+            await asyncio.sleep(_SAFETY_DEADLINE_EVAL_INTERVAL_SECONDS)
+    except asyncio.CancelledError:
+        raise
+
+
+@app.on_event("startup")
+async def _start_safety_deadline_eval_loop() -> None:
+    global _safety_deadline_task
+    _safety_deadline_task = asyncio.create_task(_safety_deadline_eval_loop())
+
+
+@app.on_event("shutdown")
+async def _stop_safety_deadline_eval_loop() -> None:
+    if _safety_deadline_task is None:
+        return
+    _safety_deadline_task.cancel()
+    try:
+        await _safety_deadline_task
+    except asyncio.CancelledError:
+        pass
 
 
 # ---------------------------------------------------------------------------
