@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 import models
 from database import Base, SessionLocal, engine, get_db
@@ -522,6 +522,23 @@ _safety_notify_logger = logging.getLogger("safety_notify_loop")
 _SAFETY_NOTIFY_INTERVAL_SECONDS = 30
 _safety_notify_task: asyncio.Task | None = None
 
+# ORM-handoff fix: SessionLocal (database.py) is intentionally left at its
+# default expire_on_commit=True for the rest of the app — every other
+# Session in this codebase is used and closed within a single function, so
+# there's nothing to expire-and-then-read afterward. _collect_due_safety_
+# notifications is different: collect_due_*() commits internally while
+# claiming leases, and the ORM objects it returns (user, alert, daily_state,
+# emergency) are read by safety_telegram's formatters *after* this session
+# has already been closed. With expire_on_commit=True those objects are
+# expired by each intervening commit, so any attribute access after close()
+# raises DetachedInstanceError -- reproduced in production: the SafetyAlert
+# got claimed correctly, but delivery never reached Telegram because
+# formatting the message required reading user.display_name etc. off an
+# expired instance. A local sessionmaker with expire_on_commit=False, scoped
+# to just this one collection function, is the fix -- it changes nothing
+# about how the rest of the app's Sessions behave.
+_SafetyNotifySession = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
+
 
 def _collect_due_safety_notifications():
     """Sync DB work for one notify tick — run via asyncio.to_thread so it
@@ -530,8 +547,13 @@ def _collect_due_safety_notifications():
     marked delivered — that only happens after a confirmed-successful send,
     below. Each collector's claim_at (the exact lease value this tick just
     won) rides along with every due item so it can be threaded through to
-    the matching mark_*/release_* call and prove lease ownership there."""
-    db = SessionLocal()
+    the matching mark_*/release_* call and prove lease ownership there.
+
+    Uses _SafetyNotifySession (expire_on_commit=False), not the app-wide
+    SessionLocal, because the ORM objects returned here are read by
+    safety_telegram's message formatters after this session is closed --
+    see the comment on _SafetyNotifySession above."""
+    db = _SafetyNotifySession()
     try:
         now = datetime.now(timezone.utc)
         reminders = collect_due_early_reminders(db, now)
