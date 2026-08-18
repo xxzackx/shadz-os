@@ -426,6 +426,15 @@ class SafetyAlert(Base):
             "status IN ('open', 'resolved')",
             name="ck_safety_alerts_status",
         ),
+        # Phase S6: DB-level guarantee that a given (user, safety day, alert
+        # type) can only ever be claimed once, even under duplicate or
+        # concurrent evaluator ticks — see safety_notify._get_or_create_alert.
+        # Whether that one claimed alert has actually been sent yet is a
+        # separate question, tracked by notified_at below.
+        UniqueConstraint(
+            "user_id", "safety_date", "alert_type",
+            name="uq_safety_alerts_user_date_type",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
@@ -450,6 +459,25 @@ class SafetyAlert(Base):
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+    # Phase S6 (delivery-retry correction): NULL means "claimed but not yet
+    # successfully delivered to Telegram" -- still retryable by a later
+    # notify tick. Set only once safety_telegram confirms a successful send.
+    # This is deliberately separate from the row's mere existence: the
+    # uq_safety_alerts_user_date_type unique constraint guarantees at most
+    # one logical alert per (user, safety_date, alert_type), while this
+    # column tracks whether that one alert has actually gone out yet.
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Phase S6 (concurrency correction): short-lived delivery lease so two
+    # concurrent/independent workers can never both pick the same
+    # not-yet-notified alert for delivery. NULL/expired means claimable;
+    # set to "now" by the atomic claiming UPDATE in
+    # safety_notify._claim_alert_delivery, and cleared again either by a
+    # successful mark_alert_notified or an explicit
+    # release_alert_delivery_claim after a failed send. If a worker crashes
+    # mid-delivery without releasing it, the lease simply expires after
+    # safety_notify.DELIVERY_LEASE_SECONDS and the alert becomes claimable
+    # again -- no separate crash-recovery mechanism needed.
+    delivery_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class SafetyEmergency(Base):
@@ -481,6 +509,25 @@ class SafetyEmergency(Base):
     acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     telegram_message_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Phase S6 (delivery-retry correction): last time an SOS Telegram
+    # notification was *successfully* sent for this emergency -- NOT merely
+    # attempted. NULL means never successfully notified yet (immediately
+    # due). A failed send leaves this column untouched so the very next
+    # notify tick retries; only safety_notify.mark_sos_notified (called
+    # after a confirmed-successful send) advances it, which is also what
+    # starts the SOS_RETRY_INTERVAL_SECONDS cooldown before the next retry.
+    # A future S7 status transition away from 'open' is what stops
+    # escalation entirely, not this column.
+    last_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Phase S6 (concurrency correction): short-lived delivery lease, mirrors
+    # SafetyAlert.delivery_claimed_at above -- prevents two concurrent
+    # workers from both picking the same open, due SafetyEmergency for
+    # notification. Set by the atomic claim in
+    # safety_notify._claim_sos_delivery, cleared by a successful
+    # mark_sos_notified or an explicit release_sos_delivery_claim after a
+    # failed send; an unreleased lease (worker crash) simply expires after
+    # safety_notify.DELIVERY_LEASE_SECONDS.
+    notification_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class SafetyDailyState(Base):

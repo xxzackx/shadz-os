@@ -26,6 +26,17 @@ from safety_public import (
     submit_sos,
 )
 from safety_deadline import evaluate_all_active_users
+import safety_telegram
+from safety_notify import (
+    collect_due_early_reminders,
+    collect_due_missed_alerts,
+    collect_due_sos_notifications,
+    last_checkin_before,
+    mark_alert_notified,
+    mark_sos_notified,
+    release_alert_delivery_claim,
+    release_sos_delivery_claim,
+)
 from nfc_legacy import register_nfc_routes, register_nfc_admin_routes
 from bot_admin import register_bot_admin_routes
 from bot_runtime import register_bot_webhook_routes
@@ -184,6 +195,72 @@ def _run_migrations() -> None:
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_safety_users_secure_token "
                     "ON safety_users(secure_token)"
                 ))
+
+        # ── Safety Engine v1 Phase S6 — Telegram notify additions ───────────
+        # safety_emergencies.last_notified_at / notification_claimed_at:
+        # additive, nullable columns driving the SOS retry/escalation
+        # cadence and the concurrent-delivery lease (see safety_notify.py).
+        rows = conn.execute(text("PRAGMA table_info(safety_emergencies)")).fetchall()
+        if rows:
+            existing = {row[1] for row in rows}
+            if "last_notified_at" not in existing:
+                conn.execute(text(
+                    "ALTER TABLE safety_emergencies ADD COLUMN last_notified_at DATETIME"
+                ))
+            if "notification_claimed_at" not in existing:
+                conn.execute(text(
+                    "ALTER TABLE safety_emergencies ADD COLUMN notification_claimed_at DATETIME"
+                ))
+
+        # safety_alerts.notified_at / delivery_claimed_at: additive,
+        # nullable columns separating "alert claimed" (row exists) from
+        # "alert successfully delivered" and from "a worker currently holds
+        # the delivery lease" (see safety_notify.py) — a Telegram failure
+        # never has to delete or rewrite the row, it just leaves
+        # notified_at NULL (and delivery_claimed_at released) for the next
+        # tick to retry.
+        rows = conn.execute(text("PRAGMA table_info(safety_alerts)")).fetchall()
+        if rows:
+            existing = {row[1] for row in rows}
+            if "notified_at" not in existing:
+                conn.execute(text(
+                    "ALTER TABLE safety_alerts ADD COLUMN notified_at DATETIME"
+                ))
+            if "delivery_claimed_at" not in existing:
+                conn.execute(text(
+                    "ALTER TABLE safety_alerts ADD COLUMN delivery_claimed_at DATETIME"
+                ))
+
+            # Unique index enforcing the one-shot (user, safety_date,
+            # alert_type) claim used by safety_notify._get_or_create_alert.
+            # IF NOT EXISTS makes this idempotent whether create_all already
+            # built it (brand-new table) or this is the first run against an
+            # existing table. Fail closed instead of creating it blind: if
+            # pre-S6 data somehow already contains duplicate
+            # (user_id, safety_date, alert_type) rows, SQLite would refuse
+            # the CREATE UNIQUE INDEX anyway with an opaque error — detect
+            # that case ourselves first and raise a clear, actionable
+            # message rather than silently deduping or leaving the app to
+            # crash on a cryptic IntegrityError deep in a migration.
+            dupes = conn.execute(text(
+                "SELECT user_id, safety_date, alert_type, COUNT(*) AS n "
+                "FROM safety_alerts "
+                "GROUP BY user_id, safety_date, alert_type "
+                "HAVING COUNT(*) > 1"
+            )).fetchall()
+            if dupes:
+                raise RuntimeError(
+                    "Cannot create uq_safety_alerts_user_date_type: "
+                    f"{len(dupes)} existing duplicate (user_id, safety_date, "
+                    "alert_type) group(s) found in safety_alerts "
+                    f"(e.g. {tuple(dupes[0])}). Refusing to silently dedupe "
+                    "historical Safety data -- resolve these rows manually, "
+                    "then restart."
+                )
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_safety_alerts_user_date_type "
+                "ON safety_alerts(user_id, safety_date, alert_type)"
+            ))
 
         conn.commit()
 
@@ -384,6 +461,215 @@ async def _stop_safety_deadline_eval_loop() -> None:
     _safety_deadline_task.cancel()
     try:
         await _safety_deadline_task
+    except asyncio.CancelledError:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Safety Engine v1 Phase S6 — Telegram Reminder + Missed Alert + SOS
+# Escalation
+#
+# A second, independent periodic loop. It never re-derives deadline/day
+# state — it only reads what S5's SafetyDailyState (and S4's
+# SafetyEmergency) already authoritatively recorded, via safety_notify.py's
+# collectors.
+#
+# Delivery-retry correction: claiming a notification (a SafetyAlert row
+# existing, or an open SafetyEmergency being selected) and successfully
+# delivering it to Telegram are two separate steps here, deliberately never
+# conflated:
+#   - collect_due_* only ever reads/claims rows (a SafetyAlert row's mere
+#     existence, or an open SafetyEmergency's eligibility) — it never marks
+#     anything "delivered".
+#   - Each safety_telegram.send_* call below returns an honest True/False
+#     for whether Telegram actually accepted it (see safety_telegram.py's
+#     docstring for why bot_runtime._send_message can't be reused for
+#     this), and mark_alert_notified / mark_sos_notified is only ever
+#     called when that came back True.
+#   - So a missed tick, a restart, a Telegram outage, or a missing
+#     SAFETY_TELEGRAM_CHAT_ID simply leaves the row unmarked — it stays (or
+#     becomes) due again on the very next tick, with no separate retry
+#     bookkeeping needed. Once successfully delivered, the same
+#     unique-constrained claim (SafetyAlert) or conditional UPDATE
+#     (SafetyEmergency.last_notified_at) that made the row eligible now
+#     keeps it from ever being re-selected.
+#   - SafetyDailyState/SafetyCheckIn data is never touched by any of this —
+#     a Telegram outcome can only affect whether a SafetyAlert/
+#     SafetyEmergency row is marked delivered, nothing else.
+#
+# Concurrency correction: collect_due_*() itself never just reads eligible
+# rows — for each one it also wins an atomic short-lived delivery lease
+# (SafetyAlert.delivery_claimed_at / SafetyEmergency.notification_claimed_at,
+# see safety_notify.DELIVERY_LEASE_SECONDS) before returning it, so two
+# independent/concurrent collectors can never both pick the same row for
+# delivery. This loop always releases a lease it doesn't use: on a False
+# send it releases immediately (_release_alert_claim_sync /
+# _release_sos_claim_sync) so the very next tick can retry without waiting
+# out the lease; on a genuine crash mid-delivery the lease is simply left
+# to expire on its own.
+#
+# Each due item's send+mark is handled in its own try/except so one failing
+# notification (a raised exception, not just a False return — see
+# safety_telegram._send, which already never raises under normal failure)
+# can never prevent any other due reminder/missed-alert/SOS in the same
+# batch from being attempted. The sync DB work (collecting, and the sync
+# half of marking-notified) runs off the event loop via asyncio.to_thread
+# (matching the S5 loop above); the httpx sends run directly on the event
+# loop (already async/non-blocking).
+# ---------------------------------------------------------------------------
+
+_safety_notify_logger = logging.getLogger("safety_notify_loop")
+_SAFETY_NOTIFY_INTERVAL_SECONDS = 30
+_safety_notify_task: asyncio.Task | None = None
+
+
+def _collect_due_safety_notifications():
+    """Sync DB work for one notify tick — run via asyncio.to_thread so it
+    never blocks the FastAPI event loop. The missed-alert last-known-check-in
+    lookup reuses the same open session before it's closed. Nothing here is
+    marked delivered — that only happens after a confirmed-successful send,
+    below. Each collector's claim_at (the exact lease value this tick just
+    won) rides along with every due item so it can be threaded through to
+    the matching mark_*/release_* call and prove lease ownership there."""
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        reminders = collect_due_early_reminders(db, now)
+        missed_raw = collect_due_missed_alerts(db, now)
+        missed = [
+            (user, daily_state, alert, claim_at, last_checkin_before(db, user.id, daily_state.deadline_utc))
+            for user, daily_state, alert, claim_at in missed_raw
+        ]
+        sos = collect_due_sos_notifications(db, now)
+        return reminders, missed, sos
+    finally:
+        db.close()
+
+
+def _mark_alert_notified_sync(alert_id: int, claim_at: datetime) -> None:
+    db = SessionLocal()
+    try:
+        mark_alert_notified(db, alert_id, datetime.now(timezone.utc), claim_at)
+    finally:
+        db.close()
+
+
+def _mark_sos_notified_sync(emergency_id: int, claim_at: datetime) -> None:
+    db = SessionLocal()
+    try:
+        mark_sos_notified(db, emergency_id, datetime.now(timezone.utc), claim_at)
+    finally:
+        db.close()
+
+
+def _release_alert_claim_sync(alert_id: int, claim_at: datetime) -> None:
+    db = SessionLocal()
+    try:
+        release_alert_delivery_claim(db, alert_id, claim_at)
+    finally:
+        db.close()
+
+
+def _release_sos_claim_sync(emergency_id: int, claim_at: datetime) -> None:
+    db = SessionLocal()
+    try:
+        release_sos_delivery_claim(db, emergency_id, claim_at)
+    finally:
+        db.close()
+
+
+async def _deliver_early_reminder(user, alert, claim_at) -> None:
+    try:
+        sent = await safety_telegram.send_early_reminder(user)
+        if sent:
+            await asyncio.to_thread(_mark_alert_notified_sync, alert.id, claim_at)
+        else:
+            # Release the lease immediately so the very next tick can
+            # retry, rather than waiting out DELIVERY_LEASE_SECONDS. Passes
+            # the exact claim_at this call won -- if that lease was already
+            # reclaimed by a newer worker (this one having stalled past
+            # DELIVERY_LEASE_SECONDS), this becomes a safe no-op instead of
+            # wiping out the new owner's lease.
+            await asyncio.to_thread(_release_alert_claim_sync, alert.id, claim_at)
+    except Exception:
+        _safety_notify_logger.exception(
+            "early reminder delivery failed for user_id=%s alert_id=%s — "
+            "lease will expire and retry",
+            user.id, alert.id,
+        )
+
+
+async def _deliver_missed_alert(user, daily_state, alert, claim_at, last_checkin) -> None:
+    try:
+        sent = await safety_telegram.send_missed_checkin_alert(user, daily_state, last_checkin)
+        if sent:
+            await asyncio.to_thread(_mark_alert_notified_sync, alert.id, claim_at)
+        else:
+            await asyncio.to_thread(_release_alert_claim_sync, alert.id, claim_at)
+    except Exception:
+        _safety_notify_logger.exception(
+            "missed-checkin alert delivery failed for user_id=%s alert_id=%s — "
+            "lease will expire and retry",
+            user.id, alert.id,
+        )
+
+
+async def _deliver_sos_notification(user, emergency, claim_at) -> None:
+    try:
+        sent = await safety_telegram.send_sos_notification(user, emergency)
+        if sent:
+            await asyncio.to_thread(_mark_sos_notified_sync, emergency.id, claim_at)
+        else:
+            await asyncio.to_thread(_release_sos_claim_sync, emergency.id, claim_at)
+    except Exception:
+        _safety_notify_logger.exception(
+            "SOS delivery failed for user_id=%s emergency_id=%s — "
+            "lease will expire and retry",
+            user.id, emergency.id,
+        )
+
+
+async def _safety_notify_eval_loop() -> None:
+    try:
+        while True:
+            try:
+                reminders, missed, sos = await asyncio.to_thread(_collect_due_safety_notifications)
+            except Exception:
+                _safety_notify_logger.exception("safety notify loop collection tick failed")
+                reminders, missed, sos = [], [], []
+
+            # Each item's delivery is independently try/excepted inside the
+            # _deliver_* helpers above, so one failure here can never skip
+            # or abort any later item in this same batch — including a due
+            # SOS after a failed early reminder. SOS is dispatched first,
+            # then missed check-ins, then early reminders -- the most
+            # urgent notification in a batch should never sit behind less
+            # urgent ones.
+            for user, emergency, claim_at in sos:
+                await _deliver_sos_notification(user, emergency, claim_at)
+            for user, daily_state, alert, claim_at, last_checkin in missed:
+                await _deliver_missed_alert(user, daily_state, alert, claim_at, last_checkin)
+            for user, alert, claim_at in reminders:
+                await _deliver_early_reminder(user, alert, claim_at)
+
+            await asyncio.sleep(_SAFETY_NOTIFY_INTERVAL_SECONDS)
+    except asyncio.CancelledError:
+        raise
+
+
+@app.on_event("startup")
+async def _start_safety_notify_eval_loop() -> None:
+    global _safety_notify_task
+    _safety_notify_task = asyncio.create_task(_safety_notify_eval_loop())
+
+
+@app.on_event("shutdown")
+async def _stop_safety_notify_eval_loop() -> None:
+    if _safety_notify_task is None:
+        return
+    _safety_notify_task.cancel()
+    try:
+        await _safety_notify_task
     except asyncio.CancelledError:
         pass
 

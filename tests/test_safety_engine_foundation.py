@@ -177,10 +177,13 @@ class SafetyEngineFoundationTests(unittest.TestCase):
 
     def test_alert_status_allowed_values_accepted(self):
         user = self._make_user()
-        for status in ("open", "resolved"):
+        # Distinct safety_date per row -- S6 added a uq_safety_alerts_user_date_type
+        # constraint on (user_id, safety_date, alert_type), so same-day/type
+        # rows can no longer coexist regardless of status.
+        for offset, status in enumerate(("open", "resolved")):
             alert = models.SafetyAlert(
                 user_id=user.id,
-                safety_date=date(2026, 8, 18),
+                safety_date=date(2026, 8, 18 + offset),
                 alert_type="missed_checkin",
                 status=status,
             )
