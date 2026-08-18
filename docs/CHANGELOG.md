@@ -2,9 +2,41 @@
 
 ---
 
+## SHADZ Safety Engine v1 — Phase S5: Daily Safety State / Deadline Engine
+
+**Status:** Complete, deployed, and production-verified. **Phase S5 is now complete and closed.** No later Safety Engine phase (S6 — Telegram Reminder + Missed Alert + SOS Escalation; S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
+
+**Scope:** New `SafetyDailyState` model and `safety_deadline.py` module implementing the daily safety lifecycle for each `SafetyUser` — timezone-aware local safety-day/deadline calculation, on-time check-in resolution, deadline evaluation, restart/multi-day recovery, and a lightweight periodic background trigger. No Telegram runtime, no reminder/escalation delivery, no late-check-in resolution workflow, no Admin Safety UI. No changes to Redirect Engine, Page Engine, Activation Engine, or `BotClient`.
+
+**Runtime commit:** `48e2fe3db64f90de3b81b2c86e25efa4ce268b24` (`48e2fe3`) — `feat(safety): add daily safety deadline engine`
+
+**Locked design facts:**
+- `SafetyDailyState` (`safety_daily_states`) persists exactly one row per `SafetyUser` per *local* safety date (derived from `SafetyUser.timezone`, never the server UTC date), enforced by a DB unique constraint on `(user_id, safety_date)`. Status is one of `pending`, `safe`, `missed`, enforced by a DB `CHECK` constraint.
+- The local safety date and that day's UTC deadline instant are computed via `zoneinfo` (`SafetyUser.timezone` + `SafetyUser.daily_deadline`), never a hardcoded or server timezone; every persisted timestamp remains server-authoritative UTC.
+- A user's eligibility start is `SafetyUser.created_at`: if created strictly before that local day's own deadline, that day is eligible; if created at or after it, monitoring starts the next local day instead — so a user can never be backfilled a fake historical `missed` day for a deadline that occurred before they existed.
+- A successful, on-time check-in (`checked_in_at` strictly before that day's deadline) resolves the day `pending → safe`. Once the deadline has passed with no such check-in, the day resolves `pending → missed`. `missed` is terminal in S5 — a later check-in never rewrites it back to `safe`; late-check-in resolution is deferred to Phase S7.
+- The check-in insert (`SafetyCheckIn`) and its `SafetyDailyState` resolution commit together as a single atomic transaction — a failure between the two leaves neither persisted.
+- Every `pending → safe` / `pending → missed` transition is a conditional `UPDATE ... WHERE status = 'pending'`, not a plain attribute mutation — this makes concurrent/duplicate evaluator runs, and a check-in racing the evaluator, resolve deterministically to whichever transaction's persisted state actually won, never a stale in-memory overwrite of an already-`missed` (or already-`safe`) row.
+- Evaluation is idempotent and restart-safe: each run advances from the user's first eligible day, detects and fills any missing day (not just the most recently known one), and re-evaluates only rows still `pending` — recovering correctly after any downtime, including a gap spanning multiple local days, without regenerating already-resolved history.
+- A lightweight periodic background trigger (no scheduler framework) re-evaluates all active users on an interval; the DB is the sole authority — the trigger only initiates evaluation, never holds state itself. Its DB work runs off the FastAPI event loop (`asyncio.to_thread`), and the task is tracked and cancelled cleanly on shutdown.
+
+**Files changed:** `models.py` (new `SafetyDailyState` model), `safety_deadline.py` (new — core S5 engine), `safety_public.py` (`submit_check_in` wired to the atomic check-in + daily-state resolution), `main.py` (background evaluator loop, startup/shutdown lifecycle), `tests/test_safety_deadline_engine_s5.py` (new).
+
+**Focused test result:** `tests/test_safety_deadline_engine_s5.py` plus the existing S1–S4 Safety suites — 115/115 passed (timezone-aware safety-day/deadline calculation including DST boundary determinism, daily-state uniqueness/integrity, before-deadline pending, on-time check-in → safe, passed-deadline-with-no-check-in → missed, missed remains terminal against a late check-in, atomic check-in/daily-state failure behavior, a stale-row concurrency race that must not overwrite an already-missed day, evaluator reconciling an already-persisted qualifying check-in, eligibility-boundary behavior around a user's creation time, multi-day downtime recovery, an internal missing-day gap repair, duplicate evaluator execution, and exact-deadline boundary behavior).
+
+**Full regression:** 776/776 passed.
+
+**Production verification:** `HEAD == origin/master == 48e2fe3`; `shadz.service` active and enabled; local `/health` returned 200; Uvicorn listening on `127.0.0.1:8000`; `safety_daily_states` table confirmed present with expected columns and DB constraints; no Safety/deadline runtime errors observed.
+
+**Live production test:** a temporary test `SafetyUser` submitted a valid on-time `I'M SAFE` check-in through the public token flow with browser GPS captured; the check-in persisted, and the corresponding `SafetyDailyState` for that local safety day correctly resolved to `safe` with `checkin_id` linked to the new check-in; the public check-in route returned 200. Testing data created during Safety Engine development is temporary and will be deleted/reset before final publication; formal `SafetyUser` configuration will later be managed through the SHADZ Admin Panel.
+
+**Deferred (not implemented in S5):** Telegram reminders / missed-alert / SOS escalation (Phase S6), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). Next active phase: **S6 — Telegram Reminder + Missed Alert + SOS Escalation** (not started).
+
+---
+
 ## SHADZ Safety Engine v1 — Phase S4: Secure Check-in / SOS Submission
 
-**Status:** Complete, deployed, and production-verified. **Phase S4 is now complete and closed.** No later Safety Engine phase (S5 — Daily Safety State / Deadline Engine; S6 — Telegram Reminder + Missed Alert + SOS Escalation; S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
+**Status:** Complete, deployed, and production-verified. **Phase S4 is now complete and closed.** Phase S5 (Daily Safety State / Deadline Engine) is also complete and closed (`48e2fe3`). No later Safety Engine phase (S6 — Telegram Reminder + Missed Alert + SOS Escalation; S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
 
 **Scope:** Two new secure POST routes on the existing public Safety flow — `POST /safety/c/{secure_token}/check-in` and `POST /safety/c/{secure_token}/sos` — wired to the S3 `I'M SAFE`/`SOS🚨` buttons. No new column, no schema/migration change, no Telegram runtime, no reminder/escalation logic, no Admin Safety UI. No changes to Redirect Engine, Page Engine, Activation Engine, or `BotClient`.
 
@@ -32,7 +64,7 @@
 
 **Live production test:** confirmed `I'M SAFE` securely POSTs through the public token flow with the active `SafetyUser` resolved server-side, mandatory GPS (latitude/longitude, plus accuracy when available) persisted, `SafetyCheckIn.source = "public_web"`, and a server-authoritative UTC check-in timestamp that correctly converts to the `SafetyUser` timezone for human-facing/local verification; confirmed SOS securely persists an open `SafetyEmergency` with the truthful `"SOS received."` message only; confirmed unknown-token 404 and identical inactive-user 404; confirmed the mandatory GPS gate remains intact. The production rapid-click defect above was found and fixed during this same live test, then re-verified: one page-session action now produces exactly one row. The temporary S4 test `SafetyUser` and all associated `SafetyCheckIn`/`SafetyEmergency` rows created for this verification were removed afterward, returning production Safety tables to a clean state.
 
-**Deferred (not implemented in S4):** daily deadline/state engine (Phase S5), Telegram reminders / missed-alert / SOS escalation (Phase S6), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). Next active phase: **S5 — Daily Safety State / Deadline Engine** (not started).
+**Deferred (not implemented in S4):** daily deadline/state engine (Phase S5 — now complete, see above), Telegram reminders / missed-alert / SOS escalation (Phase S6), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). Next active phase: **S6 — Telegram Reminder + Missed Alert + SOS Escalation** (not started).
 
 ---
 
