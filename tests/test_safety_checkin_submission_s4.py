@@ -325,6 +325,63 @@ class SafetyCheckInSubmissionS4Tests(unittest.TestCase):
         self.assertIn("/sos", resp.text)
         self.assertIn("fetch(", resp.text)
 
+    # ── S4 per-action success locking (rapid-click fix) ─────────────────
+    #
+    # A rapid-click live-production defect showed the in-flight `submitting`
+    # guard alone is insufficient: fast sequential clicks each land after
+    # the previous request has already completed, so every click still
+    # creates its own row. The fix adds a separate, independent success
+    # lock per action. These tests can only assert on the rendered
+    # HTML/JS source (no in-browser JS execution harness exists in this
+    # repo), so they check the lock flags exist, are set independently on
+    # each button's own success path, and both gate button state in
+    # setState -- the same convention used by the other S3/S4 UI tests.
+
+    def test_success_lock_flags_declared_independently(self):
+        user = self._make_user()
+        resp = self.client.get(f"/safety/c/{user.secure_token}")
+        self.assertIn("var safeLocked = false;", resp.text)
+        self.assertIn("var sosLocked = false;", resp.text)
+
+    def test_setState_gates_each_button_on_its_own_lock(self):
+        user = self._make_user()
+        resp = self.client.get(f"/safety/c/{user.secure_token}")
+        self.assertIn("!safeLocked", resp.text)
+        self.assertIn("!sosLocked", resp.text)
+        # Cross-gating would defeat "SOS must remain available after a
+        # successful I'M SAFE" (and vice versa) -- each button's enabled
+        # calculation must reference only its own lock flag.
+        self.assertNotIn("!safeLocked && !sosLocked", resp.text)
+
+    def test_safe_success_sets_only_safe_lock(self):
+        user = self._make_user()
+        resp = self.client.get(f"/safety/c/{user.secure_token}")
+        text = resp.text
+        safe_listener = text.index("safeBtn.addEventListener")
+        sos_listener = text.index("sosBtn.addEventListener")
+        safe_block = text[safe_listener:sos_listener]
+        self.assertIn("safeLocked = true", safe_block)
+        self.assertNotIn("sosLocked = true", safe_block)
+
+    def test_sos_success_sets_only_sos_lock(self):
+        user = self._make_user()
+        resp = self.client.get(f"/safety/c/{user.secure_token}")
+        text = resp.text
+        sos_listener = text.index("sosBtn.addEventListener")
+        sos_block = text[sos_listener:]
+        self.assertIn("sosLocked = true", sos_block)
+        self.assertNotIn("safeLocked = true", sos_block)
+
+    def test_locks_start_unset_so_both_actions_available_fresh(self):
+        # Mirrors S3's "both actions start disabled" contract (gated on
+        # geolocation, not on the new success locks): on a fresh page load
+        # neither lock flag is engaged, so once location is acquired both
+        # buttons are independently available.
+        user = self._make_user()
+        resp = self.client.get(f"/safety/c/{user.secure_token}")
+        self.assertIn("var safeLocked = false;", resp.text)
+        self.assertIn("var sosLocked = false;", resp.text)
+
 
 if __name__ == "__main__":
     unittest.main()

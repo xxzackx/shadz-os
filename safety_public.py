@@ -127,6 +127,8 @@ def _safety_entry_html(display_name: str) -> str:
       var feedbackEl = document.getElementById('action-feedback');
       var lastPosition = null;
       var submitting = false;
+      var safeLocked = false;
+      var sosLocked = false;
       var checkinUrl = window.location.pathname + '/check-in';
       var sosUrl = window.location.pathname + '/sos';
 
@@ -134,11 +136,12 @@ def _safety_entry_html(display_name: str) -> str:
         statusEl.setAttribute('data-state', state);
         statusEl.textContent = message;
         var acquired = state === 'acquired';
-        var enabled = acquired && !submitting;
-        safeBtn.disabled = !enabled;
-        safeBtn.setAttribute('aria-disabled', String(!enabled));
-        sosBtn.disabled = !enabled;
-        sosBtn.setAttribute('aria-disabled', String(!enabled));
+        var safeEnabled = acquired && !submitting && !safeLocked;
+        var sosEnabled = acquired && !submitting && !sosLocked;
+        safeBtn.disabled = !safeEnabled;
+        safeBtn.setAttribute('aria-disabled', String(!safeEnabled));
+        sosBtn.disabled = !sosEnabled;
+        sosBtn.setAttribute('aria-disabled', String(!sosEnabled));
       }}
 
       function requestLocation() {{
@@ -173,7 +176,7 @@ def _safety_entry_html(display_name: str) -> str:
         }}
       }});
 
-      function submitAction(url, pendingMessage, successMessage, errorMessage) {{
+      function submitAction(url, pendingMessage, successMessage, errorMessage, onSuccess) {{
         if (!lastPosition || submitting) return;
         submitting = true;
         setState(statusEl.getAttribute('data-state'), statusEl.textContent);
@@ -194,6 +197,7 @@ def _safety_entry_html(display_name: str) -> str:
         }}).then(function (response) {{
           if (!response.ok) {{ throw new Error('request failed'); }}
           feedbackEl.textContent = successMessage;
+          onSuccess();
         }}).catch(function () {{
           feedbackEl.textContent = errorMessage;
         }}).then(function () {{
@@ -207,7 +211,8 @@ def _safety_entry_html(display_name: str) -> str:
           checkinUrl,
           'Checking in…',
           'Checked in. Thank you.',
-          'Check-in failed. Please try again.'
+          'Check-in failed. Please try again.',
+          function () {{ safeLocked = true; }}
         );
       }});
 
@@ -216,7 +221,8 @@ def _safety_entry_html(display_name: str) -> str:
           sosUrl,
           'Sending SOS…',
           'SOS received.',
-          'SOS failed to send. Please try again or seek help directly.'
+          'SOS failed to send. Please try again or seek help directly.',
+          function () {{ sosLocked = true; }}
         );
       }});
 
