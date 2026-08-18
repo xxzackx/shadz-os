@@ -2,9 +2,46 @@
 
 ---
 
+## SHADZ Safety Engine v1 — Phase S6: Telegram Reminder + Missed Alert + SOS Escalation
+
+**Status:** Complete, deployed, and production-verified. **Phase S6 is now complete and closed.** No later Safety Engine phase (S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete. Before S7, the next Safety Engine work is **S6.1 — Safety Telegram Routing / Recipient Separation** (not started) — see "Important limitation" below.
+
+**Scope:** New `safety_notify.py` (due-notification collection, delivery leasing, and retry layer) and `safety_telegram.py` (Telegram delivery layer) implementing Early Reminder, Missed Check-in, and SOS Telegram notifications on top of S5's authoritative `SafetyDailyState` and S4's `SafetyEmergency`. No S5 deadline/state logic changed, no BotClient/self-service Telegram runtime behavior touched, no coupling of `SafetyUser` to `BotClient`, no Admin Safety UI. No changes to Redirect Engine, Page Engine, or Activation Engine.
+
+**Runtime commit:** `28c4cba739ad77614358be6bee6331b6437cafdb` (`28c4cba`) — `feat(safety): add telegram alert and sos escalation engine`
+
+**Production ORM-handoff hotfix commit:** `e9bbfaa51adcfcafb1cbe690a2268d3dcd0e3d00` (`e9bbfaa`) — `fix(safety): preserve notification orm handoff`
+
+**Locked design facts:**
+- Early Reminder, Missed Check-in, and immediate SOS Telegram notifications are all implemented; an open SOS re-escalates every 5 minutes while it remains `open`.
+- Delivery success is tracked durably and separately from claiming a notification: `SafetyAlert.notified_at` / `SafetyEmergency.last_notified_at` are set only after a confirmed-successful Telegram send, never speculatively and never merely because a row was claimed.
+- A short-lived delivery lease (`SafetyAlert.delivery_claimed_at` / `SafetyEmergency.notification_claimed_at`) stops two concurrent/independent workers from both claiming and sending the same notification; a failed send releases its own lease immediately so the very next tick can retry, and a crashed worker's held lease self-heals once it expires.
+- Lease ownership is enforced by exact claim-timestamp matching, not just row id — a stale worker whose lease already expired and was reclaimed by a newer worker can never clear or mark that newer claim as successful.
+- A Telegram send only counts as successful when the response is valid JSON and `body["ok"] is True` — an HTTP 2xx status alone is never treated as confirmed delivery.
+- Notification dispatch priority within a batch is SOS → missed check-in → early reminder, so the most urgent notification never sits behind less urgent ones.
+- `SafetyAlert` keeps a DB unique constraint on `(user_id, safety_date, alert_type)` — the DB can contain at most one `SafetyAlert` row for each `(user_id, safety_date, alert_type)`; delivery of that row may still be retried/reclaimed under the lease mechanism.
+
+**Production ORM-handoff bug and fix:** The S6 notification collector used the app-wide `SessionLocal` (`database.py`'s default `expire_on_commit=True`, unchanged by this fix). `collect_due_*()` commits internally while claiming delivery leases, and the collector then closes its Session before returning the ORM objects that the async Telegram formatters read afterward — with `expire_on_commit=True`, each intervening commit expired those already-loaded objects, so any attribute read after the Session closed raised `DetachedInstanceError`. The production symptom: `delivery_claimed_at` was set correctly (the lease claim succeeded) but `notified_at` stayed `NULL` forever and no Telegram message was sent. Reproduced directly on the VPS, then fixed with an S6-local `sessionmaker` (`expire_on_commit=False`) used **only** by `_collect_due_safety_notifications`; the app-wide `SessionLocal` behavior is unchanged for every other caller in the codebase. Regression tests were added reproducing the exact production boundary (a Session that commits, is closed, and whose returned ORM objects are read only afterward) for Early Reminder, Missed Check-in, and SOS.
+
+**Files changed:** `safety_notify.py` (new), `safety_telegram.py` (new), `models.py` (`SafetyAlert.notified_at`/`delivery_claimed_at`, `SafetyEmergency.last_notified_at`/`notification_claimed_at`, `SafetyAlert` unique constraint), `main.py` (notify loop, migrations, ORM-handoff fix), `.env.example` (`SAFETY_TELEGRAM_CHAT_ID`), `tests/test_safety_notify_s6.py` (new), `tests/test_safety_notify_orm_handoff_s6.py` (new), `tests/test_safety_engine_foundation.py` (unique-constraint test update).
+
+**Focused test result:** `tests/test_safety_notify_s6.py` — 38/38 passed (early-reminder/missed-alert/SOS due-detection and delivery-retry, lease claim/release/ownership including stale-lease-owner-cannot-reclaim proofs across two genuinely independent DB sessions, SOS escalation cooldown, Telegram `ok:true`/`ok:false`/malformed-body/HTTP-failure response-contract enforcement, SOS-before-missed-before-reminder dispatch order, one failed send never blocking another due notification). `tests/test_safety_notify_orm_handoff_s6.py` — 3/3 passed (reproduces the actual production Session-handoff boundary for Early Reminder, Missed Check-in, and SOS).
+
+**Full regression:** 817/817 passed. `py_compile` clean. `git diff --check` clean.
+
+**Production verification:** `HEAD == origin/master == e9bbfaa51adcfcafb1cbe690a2268d3dcd0e3d00`; `shadz.service` active and enabled; `/health` 200; port 8000 listening; no post-hotfix runtime errors observed.
+
+**Live production test:** Early Reminder was received on Telegram, with `notified_at` set, `delivery_claimed_at` cleared, and the daily state remaining `pending`. Missed Check-in was received on Telegram after S5 transitioned the day `pending → missed`, with `notified_at` set and `delivery_claimed_at` cleared. Immediate SOS was received on Telegram; the same open SOS re-escalated successfully once the retry window was forced past 5 minutes, with `last_notified_at` advancing and `notification_claimed_at` clearing after each successful send while the emergency remained `open`. All S6 temporary live-test users/data were removed afterward; orphan counts for alerts, emergencies, daily states, and check-ins were all confirmed zero.
+
+**Important limitation — not the final Safety recipient design:** S6 intentionally sends every notification (Early Reminder, Missed Check-in, and SOS) to one shared `SAFETY_TELEGRAM_CHAT_ID` destination. This is accepted **only** for S6 engine completion/testing and must not be read as the final Safety recipient design. **Next Safety Engine work — S6.1 (Safety Telegram Routing / Recipient Separation, not started)** — will route Early Reminder to the `SafetyUser` themselves, and Missed Check-in and SOS (plus its escalation) to SHADZ Admin, without coupling `SafetyUser` to `BotClient`; the same physical Telegram bot may be reused, but the two domains stay separate.
+
+**Deferred (not implemented in S6):** recipient routing/separation (Phase S6.1), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). Next active phase: **S6.1 — Safety Telegram Routing / Recipient Separation** (not started).
+
+---
+
 ## SHADZ Safety Engine v1 — Phase S5: Daily Safety State / Deadline Engine
 
-**Status:** Complete, deployed, and production-verified. **Phase S5 is now complete and closed.** No later Safety Engine phase (S6 — Telegram Reminder + Missed Alert + SOS Escalation; S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
+**Status:** Complete, deployed, and production-verified. **Phase S5 is now complete and closed.** Phase S6 (Telegram Reminder + Missed Alert + SOS Escalation) is also complete and closed (`28c4cba`; production ORM-handoff hotfix `e9bbfaa`). No later Safety Engine phase (S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
 
 **Scope:** New `SafetyDailyState` model and `safety_deadline.py` module implementing the daily safety lifecycle for each `SafetyUser` — timezone-aware local safety-day/deadline calculation, on-time check-in resolution, deadline evaluation, restart/multi-day recovery, and a lightweight periodic background trigger. No Telegram runtime, no reminder/escalation delivery, no late-check-in resolution workflow, no Admin Safety UI. No changes to Redirect Engine, Page Engine, Activation Engine, or `BotClient`.
 
