@@ -15,7 +15,14 @@ from media_admin import register_media_admin_routes
 from page_admin import register_page_admin_routes
 from page_public import serve_public_page
 from link_public import expired_page_response, resolve_activation_redirect, serve_public_media
-from safety_public import serve_safety_entry
+from safety_public import (
+    SafetyCheckInResponse,
+    SafetyGPSPayload,
+    SafetySOSResponse,
+    serve_safety_entry,
+    submit_check_in,
+    submit_sos,
+)
 from nfc_legacy import register_nfc_routes, register_nfc_admin_routes
 from bot_admin import register_bot_admin_routes
 from bot_runtime import register_bot_webhook_routes
@@ -291,6 +298,34 @@ def safety_entry(secure_token: str, db: Session = Depends(get_db)):
     phases. Unknown token and inactive-user token return an identical 404.
     """
     return serve_safety_entry(secure_token, db)
+
+
+@app.post("/safety/c/{secure_token}/check-in", response_model=SafetyCheckInResponse)
+def safety_check_in(
+    secure_token: str, payload: SafetyGPSPayload, db: Session = Depends(get_db)
+):
+    """Safety Engine v1 Phase S4 — secure server-side I'M SAFE submission.
+
+    Resolves the SafetyUser from secure_token only (never a client-supplied
+    user id), validates the GPS payload, and persists a SafetyCheckIn with a
+    server-generated timestamp. Unknown/inactive token returns the same 404
+    as the GET entry route.
+    """
+    return submit_check_in(secure_token, payload, db)
+
+
+@app.post("/safety/c/{secure_token}/sos", response_model=SafetySOSResponse)
+def safety_sos(
+    secure_token: str, payload: SafetyGPSPayload, db: Session = Depends(get_db)
+):
+    """Safety Engine v1 Phase S4 — secure server-side SOS submission.
+
+    Resolves the SafetyUser from secure_token only, validates the GPS
+    payload, and persists an open SafetyEmergency with a server-generated
+    timestamp. Unknown/inactive token returns the same 404 as the GET entry
+    route.
+    """
+    return submit_sos(secure_token, payload, db)
 
 
 # ---------------------------------------------------------------------------

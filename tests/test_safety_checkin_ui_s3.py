@@ -109,12 +109,13 @@ class SafetyCheckInUIS3Tests(unittest.TestCase):
         self.assertIn("disabled", safe_tag)
         self.assertIn("disabled", sos_tag)
 
-    def test_sos_marked_not_operational_pre_s4(self):
+    def test_sos_button_present_for_submission(self):
+        # Phase S4 wires SOS to a real server-side submission endpoint --
+        # see tests/test_safety_checkin_submission_s4.py -- so this only
+        # checks the button itself is still present and correctly labeled.
         user = self._make_user()
         resp = self.client.get(f"/safety/c/{user.secure_token}")
-        self.assertIn('id="sos-not-operational"', resp.text)
-        self.assertIn("Not yet operational", resp.text)
-        self.assertIn("No emergency alert was sent", resp.text)
+        self.assertIn('id="sos-btn"', resp.text)
 
     def test_geolocation_status_element_present(self):
         user = self._make_user()
