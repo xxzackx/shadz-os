@@ -2,9 +2,43 @@
 
 ---
 
+## SHADZ Safety Engine v1 — Phase S4: Secure Check-in / SOS Submission
+
+**Status:** Complete, deployed, and production-verified. **Phase S4 is now complete and closed.** No later Safety Engine phase (S5 — Daily Safety State / Deadline Engine; S6 — Telegram Reminder + Missed Alert + SOS Escalation; S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
+
+**Scope:** Two new secure POST routes on the existing public Safety flow — `POST /safety/c/{secure_token}/check-in` and `POST /safety/c/{secure_token}/sos` — wired to the S3 `I'M SAFE`/`SOS🚨` buttons. No new column, no schema/migration change, no Telegram runtime, no reminder/escalation logic, no Admin Safety UI. No changes to Redirect Engine, Page Engine, Activation Engine, or `BotClient`.
+
+**Runtime commit:** `fa0dc62523bd53260af232b7ae8d480faf268abb` (`fa0dc62`) — `feat(safety): add secure check-in and SOS submission`
+
+**Production rapid-click fix commit:** `f3c648e7f8dc0bb8b8f8e2390204a6c7479b957f` (`f3c648e`) — `fix(safety): lock successful public submissions`
+
+**Locked design facts:**
+- Both routes resolve the `SafetyUser` from `secure_token` only (never a client-supplied user id), sharing the same resolution helper as the GET route — an unknown token and an inactive-user token return an identical 404 across all three routes.
+- The request body carries GPS data only (`latitude`, `longitude`, optional `accuracy`) — no user-id or timestamp field exists, so nothing client-supplied can be trusted for identity or time. Coordinates and accuracy are validated server-side (finite, in-range; non-negative accuracy) and rejected with `422` otherwise.
+- Check-in/trigger timestamps are always server-authoritative UTC — the client cannot supply one. UTC is the sole storage format; conversion to each `SafetyUser.timezone` happens only for human-facing/local presentation, never at storage.
+- A successful check-in persists a `SafetyCheckIn` with `source = "public_web"`. A successful SOS persists a `SafetyEmergency` with `status = "open"`, committed with no dependency on any notification/escalation mechanism (none exists in S4) — a future notification failure can never cause an SOS to be lost.
+- The SOS success message is deliberately limited to `"SOS received."` — S4 makes no notification/escalation claim to the user.
+- Response bodies are minimal (`{"status": "ok"}` / `{"status": "received"}`) and never echo internal ids.
+
+**Production rapid-click defect and fix:** Live testing found that fast repeated clicks on `I'M SAFE` created many `SafetyCheckIn` rows, because the original in-flight `submitting` guard alone could not stop sequential clicks landing after a fast prior request had already completed. Fixed with an additional, independent per-action success lock scoped to the current page session: a successful `I'M SAFE` disables only `I'M SAFE` for the rest of that page load while `SOS` remains available; a successful `SOS` disables only `SOS` while `I'M SAFE` remains available; a failed submission leaves that action retryable; reloading the page resets both locks. No DB-level deduplication, cooldown timer, or daily lifecycle rule was added.
+
+**Files changed:** `safety_public.py` (two new POST routes' logic, GPS payload validation, HTML/JS submission wiring and per-action success locks), `main.py` (route registration), `tests/test_safety_checkin_submission_s4.py` (new), `tests/test_safety_checkin_ui_s3.py` (one test updated to match S4's operational SOS UI).
+
+**Focused test result:** `tests/test_safety_checkin_submission_s4.py` plus the existing S2/S3/S1 Safety suites — 83/83 passed (check-in/SOS success and persistence, `source`/`status` values, ignored client-supplied user-id/timestamp, no internal-id leakage, missing/malformed/out-of-range GPS and accuracy rejected with `422` and no write, malformed JSON body rejected, unknown-token and inactive-user identical `404` with no write, repeated valid requests each persist independently, cross-table write isolation, UI no longer claims SOS is non-operational, `fetch()` submission wired for both actions, per-action success-lock flags declared independently, each button gated on only its own lock, and each lock set only by that button's own success path).
+
+**Full regression:** 744 passed + 67 subtests. `git diff --check`: clean.
+
+**Production verification:** `HEAD == origin/master == f3c648e`; `shadz.service` active and enabled; local `/health` returned 200; Uvicorn listening on `127.0.0.1:8000`; Redirect Engine / Admin regression spot-check passed.
+
+**Live production test:** confirmed `I'M SAFE` securely POSTs through the public token flow with the active `SafetyUser` resolved server-side, mandatory GPS (latitude/longitude, plus accuracy when available) persisted, `SafetyCheckIn.source = "public_web"`, and a server-authoritative UTC check-in timestamp that correctly converts to the `SafetyUser` timezone for human-facing/local verification; confirmed SOS securely persists an open `SafetyEmergency` with the truthful `"SOS received."` message only; confirmed unknown-token 404 and identical inactive-user 404; confirmed the mandatory GPS gate remains intact. The production rapid-click defect above was found and fixed during this same live test, then re-verified: one page-session action now produces exactly one row. The temporary S4 test `SafetyUser` and all associated `SafetyCheckIn`/`SafetyEmergency` rows created for this verification were removed afterward, returning production Safety tables to a clean state.
+
+**Deferred (not implemented in S4):** daily deadline/state engine (Phase S5), Telegram reminders / missed-alert / SOS escalation (Phase S6), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). Next active phase: **S5 — Daily Safety State / Deadline Engine** (not started).
+
+---
+
 ## SHADZ Safety Engine v1 — Phase S3: Safety Check-in UI + Mandatory GPS + SOS UI
 
-**Status:** Complete, deployed, and production-verified. **Phase S3 is now complete and closed.** No later Safety Engine phase (secure check-in/SOS submission, reminders/escalation, resolution, admin UI) has started or is claimed complete.
+**Status:** Complete, deployed, and production-verified. **Phase S3 is now complete and closed.** Phase S4 (secure check-in/SOS submission) is also complete and closed (`fa0dc62`; rapid-click fix `f3c648e`). No later Safety Engine phase (S5 — Daily Safety State / Deadline Engine; S6 — Telegram Reminder + Missed Alert + SOS Escalation; S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
 
 **Scope:** Upgrades the existing valid public Safety page (`GET /safety/c/{secure_token}`) into the v1 check-in interface — mobile-first UI, mandatory browser Geolocation gating, and SOS UI. No new route, no new column, no schema/migration change, no admin UI, no Telegram runtime, no server-side check-in/SOS execution. No changes to Redirect Engine, Page Engine, Activation Engine, or `BotClient`.
 
@@ -27,7 +61,7 @@
 
 **Live production test (real iPhone Safari):** location allowed → location acquired; `I'M SAFE` enabled only after GPS acquisition and remains a client-side placeholder only; `SOS` enabled only after GPS acquisition and clearly remains pre-S4 / non-operational; location denied → both actions stay disabled. The temporary "SHADZ S3 Live Test" `SafetyUser` created for this verification was explicitly deleted afterward, returning the S3 test identity to a clean production state.
 
-**Deferred (not implemented in S3):** secure check-in/SOS submission — DB writes, Telegram notifications, reminder/deadline logic, alert escalation, scheduler/background jobs, alert resolution (Phase S4); Admin Safety UI and later phases. Next active phase: **S4 — secure check-in/SOS submission** (not started).
+**Deferred (not implemented in S3):** secure check-in/SOS submission (Phase S4 — now complete, see above; S4's actual scope was check-in/SOS submission only — no Telegram notifications, reminder/deadline logic, alert escalation, scheduler/background jobs, or alert resolution); daily deadline/state engine (Phase S5), Telegram reminders / missed-alert / SOS escalation (Phase S6), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). Next active phase: **S5 — Daily Safety State / Deadline Engine** (not started).
 
 ---
 
