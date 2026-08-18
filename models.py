@@ -370,6 +370,14 @@ class SafetyUser(Base):
         nullable=False,
         default=lambda: secrets.token_urlsafe(32),
     )
+    # Phase S6.1: this SafetyUser's own Telegram recipient for early
+    # reminders only -- deliberately separate from SAFETY_TELEGRAM_CHAT_ID
+    # (the Admin recipient for missed/late/SOS alerts, see safety_telegram.py)
+    # and from BotClient's chat_id (an unrelated Telegram self-service
+    # identity). Nullable: a user with no chat id configured simply never
+    # gets an early reminder sent -- see safety_telegram._user_chat_id --
+    # it must never fall back to the Admin recipient or another user's id.
+    telegram_chat_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -477,6 +485,57 @@ class SafetyAlert(Base):
     # mid-delivery without releasing it, the lease simply expires after
     # safety_notify.DELIVERY_LEASE_SECONDS and the alert becomes claimable
     # again -- no separate crash-recovery mechanism needed.
+    delivery_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SafetyLateCheckinAlert(Base):
+    """Phase S6.1 — one row per SafetyUser per local safety day for which a
+    check-in was submitted late (at/after that day's deadline, on a day
+    that is not -- or does not become -- SAFE).
+
+    Deliberately a separate table from SafetyAlert rather than a third
+    alert_type value there: SafetyAlert's CHECK constraint
+    (ck_safety_alerts_alert_type) is baked into the already-live production
+    table and altering a SQLite CHECK constraint requires recreating that
+    table -- out of scope and unnecessary risk for this phase. A brand-new
+    table only ever needs CREATE TABLE (handled by Base.metadata.create_all,
+    which is always safe for a table that doesn't exist yet), so this adds
+    the same one-shot-claim / delivery-lease / retry shape as SafetyAlert
+    (see safety_notify.claim_late_checkin_alert / collect_due_late_checkin_
+    alerts / mark_late_checkin_notified) without touching any existing
+    table's schema.
+
+    Never rewrites SafetyDailyState -- S5's MISSED-is-terminal rule is
+    unchanged; this purely records "Admin should be told a late check-in
+    happened for this day", independent of that state machine.
+    """
+    __tablename__ = "safety_late_checkin_alerts"
+    __table_args__ = (
+        # One notification per (user, safety_date), no matter how many late
+        # check-ins arrive that same day -- matches SafetyAlert's one-shot
+        # (user, safety_date, alert_type) pattern.
+        UniqueConstraint(
+            "user_id", "safety_date", name="uq_safety_late_checkin_alerts_user_date"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("safety_users.id"), index=True, nullable=False
+    )
+    safety_date: Mapped[date] = mapped_column(Date, nullable=False)
+    checkin_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("safety_check_ins.id"), nullable=False
+    )
+    triggered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    # Same delivery-retry / concurrency-lease contract as SafetyAlert: row
+    # existence is the one-shot claim, notified_at is the confirmed-delivery
+    # fact, delivery_claimed_at is the short-lived lease.
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     delivery_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

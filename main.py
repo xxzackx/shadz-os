@@ -29,17 +29,21 @@ from safety_deadline import evaluate_all_active_users
 import safety_telegram
 from safety_notify import (
     collect_due_early_reminders,
+    collect_due_late_checkin_alerts,
     collect_due_missed_alerts,
     collect_due_sos_notifications,
     last_checkin_before,
     mark_alert_notified,
+    mark_late_checkin_notified,
     mark_sos_notified,
     release_alert_delivery_claim,
+    release_late_checkin_delivery_claim,
     release_sos_delivery_claim,
 )
 from nfc_legacy import register_nfc_routes, register_nfc_admin_routes
 from bot_admin import register_bot_admin_routes
 from bot_runtime import register_bot_webhook_routes
+from safety_admin import register_safety_admin_routes
 
 Base.metadata.create_all(bind=engine)
 
@@ -194,6 +198,18 @@ def _run_migrations() -> None:
                 conn.execute(text(
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_safety_users_secure_token "
                     "ON safety_users(secure_token)"
+                ))
+
+            # ── Safety Engine v1 Phase S6.1 — safety_users.telegram_chat_id ──
+            # Additive, nullable column: this SafetyUser's own Telegram
+            # recipient for early reminders (see models.SafetyUser and
+            # safety_telegram._user_chat_id). Left NULL on every existing
+            # row -- no backfill possible or needed, a user with no chat id
+            # configured simply never gets an early reminder sent (never
+            # falls back to the Admin recipient).
+            if "telegram_chat_id" not in existing:
+                conn.execute(text(
+                    "ALTER TABLE safety_users ADD COLUMN telegram_chat_id INTEGER"
                 ))
 
         # ── Safety Engine v1 Phase S6 — Telegram notify additions ───────────
@@ -562,8 +578,9 @@ def _collect_due_safety_notifications():
             (user, daily_state, alert, claim_at, last_checkin_before(db, user.id, daily_state.deadline_utc))
             for user, daily_state, alert, claim_at in missed_raw
         ]
+        late_checkins = collect_due_late_checkin_alerts(db, now)
         sos = collect_due_sos_notifications(db, now)
-        return reminders, missed, sos
+        return reminders, missed, late_checkins, sos
     finally:
         db.close()
 
@@ -596,6 +613,22 @@ def _release_sos_claim_sync(emergency_id: int, claim_at: datetime) -> None:
     db = SessionLocal()
     try:
         release_sos_delivery_claim(db, emergency_id, claim_at)
+    finally:
+        db.close()
+
+
+def _mark_late_checkin_notified_sync(alert_id: int, claim_at: datetime) -> None:
+    db = SessionLocal()
+    try:
+        mark_late_checkin_notified(db, alert_id, datetime.now(timezone.utc), claim_at)
+    finally:
+        db.close()
+
+
+def _release_late_checkin_claim_sync(alert_id: int, claim_at: datetime) -> None:
+    db = SessionLocal()
+    try:
+        release_late_checkin_delivery_claim(db, alert_id, claim_at)
     finally:
         db.close()
 
@@ -636,6 +669,21 @@ async def _deliver_missed_alert(user, daily_state, alert, claim_at, last_checkin
         )
 
 
+async def _deliver_late_checkin_alert(user, checkin, alert, claim_at) -> None:
+    try:
+        sent = await safety_telegram.send_late_checkin_alert(user, checkin, alert)
+        if sent:
+            await asyncio.to_thread(_mark_late_checkin_notified_sync, alert.id, claim_at)
+        else:
+            await asyncio.to_thread(_release_late_checkin_claim_sync, alert.id, claim_at)
+    except Exception:
+        _safety_notify_logger.exception(
+            "late-checkin alert delivery failed for user_id=%s alert_id=%s — "
+            "lease will expire and retry",
+            user.id, alert.id,
+        )
+
+
 async def _deliver_sos_notification(user, emergency, claim_at) -> None:
     try:
         sent = await safety_telegram.send_sos_notification(user, emergency)
@@ -655,22 +703,26 @@ async def _safety_notify_eval_loop() -> None:
     try:
         while True:
             try:
-                reminders, missed, sos = await asyncio.to_thread(_collect_due_safety_notifications)
+                reminders, missed, late_checkins, sos = await asyncio.to_thread(
+                    _collect_due_safety_notifications
+                )
             except Exception:
                 _safety_notify_logger.exception("safety notify loop collection tick failed")
-                reminders, missed, sos = [], [], []
+                reminders, missed, late_checkins, sos = [], [], [], []
 
             # Each item's delivery is independently try/excepted inside the
             # _deliver_* helpers above, so one failure here can never skip
             # or abort any later item in this same batch — including a due
             # SOS after a failed early reminder. SOS is dispatched first,
-            # then missed check-ins, then early reminders -- the most
-            # urgent notification in a batch should never sit behind less
-            # urgent ones.
+            # then missed check-ins, then late-checkin notices, then early
+            # reminders -- the most urgent notification in a batch should
+            # never sit behind less urgent ones.
             for user, emergency, claim_at in sos:
                 await _deliver_sos_notification(user, emergency, claim_at)
             for user, daily_state, alert, claim_at, last_checkin in missed:
                 await _deliver_missed_alert(user, daily_state, alert, claim_at, last_checkin)
+            for user, checkin, alert, claim_at in late_checkins:
+                await _deliver_late_checkin_alert(user, checkin, alert, claim_at)
             for user, alert, claim_at in reminders:
                 await _deliver_early_reminder(user, alert, claim_at)
 
@@ -744,6 +796,9 @@ register_page_admin_routes(admin_router)
 
 # Bot Engine admin routes live in bot_admin.py — registered here.
 register_bot_admin_routes(admin_router)
+
+# Safety Engine admin routes live in safety_admin.py — registered here.
+register_safety_admin_routes(admin_router)
 
 # Register admin_router BEFORE /{slug} — ensures /admin is never captured
 # by the catch-all slug route below.

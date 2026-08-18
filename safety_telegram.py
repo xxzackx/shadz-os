@@ -1,5 +1,5 @@
 """Safety Engine v1 Phase S6 — Telegram delivery for early reminders,
-missed-checkin alerts, and SOS escalation.
+missed-checkin alerts, late-checkin notices, and SOS escalation.
 
 Delivery-retry correction: bot_runtime._send_message cannot be reused here
 because it never reports whether the send actually succeeded — every path
@@ -15,22 +15,38 @@ _TELEGRAM_API_BASE constant directly rather than duplicating the URL
 format), scoped entirely to Safety notifications.
 
 Safety notifications are independent of the BotClient self-service runtime:
-they always target one fixed destination (SAFETY_TELEGRAM_CHAT_ID), never a
-customer's own chat_id, and this module never reads or writes
-bot_runtime._SESSIONS or any other BotClient/activation state.
+this module never reads or writes bot_runtime._SESSIONS or any other
+BotClient/activation state.
+
+Phase S6.1 — recipient separation: S6 originally routed every Safety
+notification to one shared SAFETY_TELEGRAM_CHAT_ID as a temporary stand-in.
+The locked routing is now:
+  - early_reminder   -> the target SafetyUser's own telegram_chat_id
+                         (models.SafetyUser.telegram_chat_id, see
+                         _user_chat_id). Missing/invalid -> logged and
+                         returns False; NEVER falls back to the Admin
+                         recipient or another user.
+  - missed_checkin, late_checkin, sos, sos escalation
+                     -> SHADZ Admin, i.e. SAFETY_TELEGRAM_CHAT_ID (see
+                         _admin_chat_id). This is a fixed operational
+                         destination, never a SafetyUser's own chat id.
+These two resolvers are deliberately kept separate (not a single "resolve a
+chat id" function with a fallback) so an Admin-directed send can never
+accidentally read a user's telegram_chat_id, and a user-directed reminder
+can never accidentally fall back to Admin.
 
 Every public send function here is best-effort and never raises: any
-failure (missing chat id, missing token, HTTP error, network error, or an
-unexpected exception) is logged and the function returns False. That keeps
-one failing notification from ever being able to abort delivery of any
-other notification in the same batch — main.py's notify loop can simply
+failure (missing/invalid chat id, missing token, HTTP error, network error,
+or an unexpected exception) is logged and the function returns False. That
+keeps one failing notification from ever being able to abort delivery of
+any other notification in the same batch — main.py's notify loop can simply
 await each send_* call in turn with no per-call try/except of its own
 needed for that guarantee. The caller only ever marks a notification
-delivered (safety_notify.mark_alert_notified / mark_sos_notified) after
-seeing True come back here — never speculatively, and never as a side
-effect of a DB claim. GPS/Maps content is only ever built from persisted
-latitude/longitude — there is no path that fabricates or guesses a
-location.
+delivered (safety_notify.mark_alert_notified / mark_sos_notified /
+mark_late_checkin_notified) after seeing True come back here — never
+speculatively, and never as a side effect of a DB claim. GPS/Maps content is
+only ever built from persisted latitude/longitude — there is no path that
+fabricates or guesses a location.
 """
 import logging
 import os
@@ -43,12 +59,15 @@ import models  # noqa: F401 -- referenced only in string type hints below
 logger = logging.getLogger("safety_telegram")
 
 
-def _safety_chat_id() -> int | None:
+def _admin_chat_id() -> int | None:
+    """SHADZ Admin's Telegram recipient — used for missed-checkin,
+    late-checkin, SOS, and SOS-escalation notifications. Never used for an
+    early reminder (see _user_chat_id for that)."""
     raw = os.environ.get("SAFETY_TELEGRAM_CHAT_ID", "")
     if not raw:
         logger.error(
             "SAFETY_TELEGRAM_CHAT_ID is not configured — cannot send Safety "
-            "Telegram notification"
+            "Admin Telegram notification"
         )
         return None
     try:
@@ -56,6 +75,21 @@ def _safety_chat_id() -> int | None:
     except ValueError:
         logger.error("SAFETY_TELEGRAM_CHAT_ID is not a valid integer chat id")
         return None
+
+
+def _user_chat_id(user: "models.SafetyUser") -> int | None:
+    """A SafetyUser's own Telegram recipient — used for early reminders
+    only. Missing/invalid is logged and returns None; the caller must never
+    substitute the Admin recipient or any other user's chat id for it."""
+    chat_id = user.telegram_chat_id
+    if chat_id is None:
+        logger.error(
+            "SafetyUser id=%s has no telegram_chat_id configured — cannot "
+            "send early reminder",
+            user.id,
+        )
+        return None
+    return chat_id
 
 
 def maps_link(latitude: float | None, longitude: float | None) -> str | None:
@@ -135,14 +169,19 @@ async def _send_telegram_message(chat_id: int, text: str) -> bool:
     return True
 
 
-async def _send(text: str) -> bool:
-    """Resolve the destination chat id and send, catching any unexpected
-    exception defensively (on top of _send_telegram_message's own internal
-    handling) so a caller can always await send_early_reminder /
-    send_missed_checkin_alert / send_sos_notification without a
-    try/except of its own and without risking the loop that processes a
-    batch of due notifications ever being aborted by one bad send."""
-    chat_id = _safety_chat_id()
+async def _send(text: str, chat_id: int | None) -> bool:
+    """Send to an already-resolved destination chat id, catching any
+    unexpected exception defensively (on top of _send_telegram_message's
+    own internal handling) so a caller can always await send_early_reminder
+    / send_missed_checkin_alert / send_late_checkin_alert /
+    send_sos_notification without a try/except of its own and without
+    risking the loop that processes a batch of due notifications ever being
+    aborted by one bad send.
+
+    chat_id resolution is deliberately the caller's job (_admin_chat_id vs
+    _user_chat_id) rather than this function's -- see the module docstring
+    for why the two resolvers are kept separate instead of one with a
+    fallback."""
     if chat_id is None:
         return False
     try:
@@ -190,10 +229,29 @@ def _format_sos(user: "models.SafetyUser", emergency: "models.SafetyEmergency") 
     return "\n".join(lines)
 
 
+def _format_late_checkin(
+    user: "models.SafetyUser",
+    checkin: "models.SafetyCheckIn",
+    alert: "models.SafetyLateCheckinAlert",
+) -> str:
+    lines = [
+        f"🟡 Late check-in: {user.display_name}",
+        f"Safety date: {alert.safety_date.isoformat()}",
+        f"Checked in at: {checkin.checked_in_at.isoformat()} UTC (after deadline)",
+    ]
+    link = maps_link(checkin.latitude, checkin.longitude)
+    if link:
+        lines.append(f"Location: {link}")
+    return "\n".join(lines)
+
+
 async def send_early_reminder(user: "models.SafetyUser") -> bool:
     """True only on confirmed delivery — callers must only mark this
-    notification's SafetyAlert.notified_at when this returns True."""
-    return await _send(_format_early_reminder(user))
+    notification's SafetyAlert.notified_at when this returns True.
+
+    Always routes to the SafetyUser's own telegram_chat_id — never the
+    Admin recipient (see _user_chat_id)."""
+    return await _send(_format_early_reminder(user), _user_chat_id(user))
 
 
 async def send_missed_checkin_alert(
@@ -202,13 +260,32 @@ async def send_missed_checkin_alert(
     last_checkin: "models.SafetyCheckIn | None",
 ) -> bool:
     """True only on confirmed delivery — callers must only mark this
-    notification's SafetyAlert.notified_at when this returns True."""
-    return await _send(_format_missed_checkin(user, daily_state, last_checkin))
+    notification's SafetyAlert.notified_at when this returns True.
+
+    Always routes to SHADZ Admin — never the target SafetyUser's own
+    telegram_chat_id (see _admin_chat_id)."""
+    return await _send(_format_missed_checkin(user, daily_state, last_checkin), _admin_chat_id())
+
+
+async def send_late_checkin_alert(
+    user: "models.SafetyUser",
+    checkin: "models.SafetyCheckIn",
+    alert: "models.SafetyLateCheckinAlert",
+) -> bool:
+    """True only on confirmed delivery — callers must only call
+    safety_notify.mark_late_checkin_notified when this returns True.
+
+    Always routes to SHADZ Admin — never the target SafetyUser's own
+    telegram_chat_id (see _admin_chat_id)."""
+    return await _send(_format_late_checkin(user, checkin, alert), _admin_chat_id())
 
 
 async def send_sos_notification(
     user: "models.SafetyUser", emergency: "models.SafetyEmergency"
 ) -> bool:
     """True only on confirmed delivery — callers must only call
-    safety_notify.mark_sos_notified when this returns True."""
-    return await _send(_format_sos(user, emergency))
+    safety_notify.mark_sos_notified when this returns True.
+
+    Always routes to SHADZ Admin — never the target SafetyUser's own
+    telegram_chat_id (see _admin_chat_id)."""
+    return await _send(_format_sos(user, emergency), _admin_chat_id())

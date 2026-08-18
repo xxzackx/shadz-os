@@ -12,12 +12,14 @@ validity is never distinguishable from the outside.
 """
 import html
 import math
+from datetime import timezone
 
 import models
 from fastapi import HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, field_validator
 from safety_deadline import resolve_checkin
+from safety_notify import claim_late_checkin_alert
 from sqlalchemy.orm import Session
 
 _NOT_FOUND_DETAIL = "Not found"
@@ -269,6 +271,19 @@ def submit_check_in(
     together as a single transaction -- resolve_checkin() only flushes, so
     if anything here raises before the final commit, neither the check-in
     row nor a partial daily-state change is persisted.
+
+    Phase S6.1: if this check-in lands at/after its safety day's deadline
+    and that day isn't (and doesn't become) SAFE, it's a late check-in --
+    claim_late_checkin_alert records that fact (one-shot per user/day) for
+    the async notify loop to deliver to Admin. claim_late_checkin_alert also
+    only flushes, never commits, so this claim joins the same atomic
+    transaction as the check-in insert and the daily-state resolution above
+    -- if anything raises before the single db.commit() below, the check-in,
+    any daily-state change, and the late-checkin claim all roll back
+    together; none of them can be left half-persisted. This never changes
+    S5's locked daily-state rule (MISSED stays terminal, a late check-in
+    never rewrites it back to SAFE) -- it is purely a notification-routing
+    record, read only by safety_notify.collect_due_late_checkin_alerts.
     """
     user = _resolve_active_safety_user(secure_token, db)
     check_in = models.SafetyCheckIn(
@@ -280,7 +295,17 @@ def submit_check_in(
     )
     db.add(check_in)
     db.flush()
-    resolve_checkin(db, user, check_in)
+    daily_state = resolve_checkin(db, user, check_in)
+
+    checked_in_at = check_in.checked_in_at
+    if checked_in_at.tzinfo is None:
+        checked_in_at = checked_in_at.replace(tzinfo=timezone.utc)
+    deadline_utc = daily_state.deadline_utc
+    if deadline_utc.tzinfo is None:
+        deadline_utc = deadline_utc.replace(tzinfo=timezone.utc)
+    if daily_state.status != "safe" and checked_in_at >= deadline_utc:
+        claim_late_checkin_alert(db, user.id, daily_state.safety_date, check_in.id)
+
     db.commit()
     return SafetyCheckInResponse(status="ok")
 

@@ -79,7 +79,8 @@ class SafetyNotifyS6Tests(unittest.TestCase):
         self.db.close()
 
     def _make_user(self, nfc_token="tok-1", timezone_name="UTC", deadline=time(21, 0),
-                    early_reminder_minutes=30, is_active=True, created_at=None):
+                    early_reminder_minutes=30, is_active=True, created_at=None,
+                    telegram_chat_id=777777):
         kwargs = {}
         if created_at is not None:
             kwargs["created_at"] = created_at
@@ -90,6 +91,7 @@ class SafetyNotifyS6Tests(unittest.TestCase):
             early_reminder_minutes=early_reminder_minutes,
             nfc_token=nfc_token,
             is_active=is_active,
+            telegram_chat_id=telegram_chat_id,
             **kwargs,
         )
         self.db.add(user)
@@ -244,28 +246,28 @@ class SafetyNotifyS6Tests(unittest.TestCase):
             1,
         )
 
-    def test_missing_chat_id_leaves_notification_retryable(self):
-        self._chat_env.stop()
-        os.environ.pop("SAFETY_TELEGRAM_CHAT_ID", None)
-        try:
-            user = self._make_user(deadline=time(21, 0), early_reminder_minutes=30)
-            trigger_at = datetime(2026, 8, 19, 20, 30, tzinfo=timezone.utc)
-            due_first = collect_due_early_reminders(self.db, trigger_at)
-            due_user, alert, claim_at = due_first[0]
+    def test_missing_user_chat_id_leaves_reminder_retryable(self):
+        # Phase S6.1: early reminder routes to the SafetyUser's own
+        # telegram_chat_id, not SAFETY_TELEGRAM_CHAT_ID -- a missing *user*
+        # chat id (independent of the Admin env var, which stays set here)
+        # is what must fail closed and stay retryable now. See
+        # tests/test_safety_telegram_routing_s6_1.py for the full S6.1
+        # recipient-routing suite.
+        user = self._make_user(deadline=time(21, 0), early_reminder_minutes=30, telegram_chat_id=None)
+        trigger_at = datetime(2026, 8, 19, 20, 30, tzinfo=timezone.utc)
+        due_first = collect_due_early_reminders(self.db, trigger_at)
+        due_user, alert, claim_at = due_first[0]
 
-            with self._patch_send(return_value=True) as mock_send:
-                sent = _run(safety_telegram.send_early_reminder(due_user))
-            self.assertFalse(sent)
-            mock_send.assert_not_awaited()  # never even reached Telegram
-            self.assertTrue(release_alert_delivery_claim(self.db, alert.id, claim_at))
+        with self._patch_send(return_value=True) as mock_send:
+            sent = _run(safety_telegram.send_early_reminder(due_user))
+        self.assertFalse(sent)
+        mock_send.assert_not_awaited()  # never even reached Telegram
+        self.assertTrue(release_alert_delivery_claim(self.db, alert.id, claim_at))
 
-            row = self.db.query(models.SafetyAlert).filter(models.SafetyAlert.id == alert.id).first()
-            self.assertIsNone(row.notified_at)
-            due_second = collect_due_early_reminders(self.db, trigger_at + timedelta(minutes=1))
-            self.assertEqual(len(due_second), 1)
-        finally:
-            self._chat_env = patch.dict(os.environ, {"SAFETY_TELEGRAM_CHAT_ID": "999999"})
-            self._chat_env.start()
+        row = self.db.query(models.SafetyAlert).filter(models.SafetyAlert.id == alert.id).first()
+        self.assertIsNone(row.notified_at)
+        due_second = collect_due_early_reminders(self.db, trigger_at + timedelta(minutes=1))
+        self.assertEqual(len(due_second), 1)
 
     def test_successful_one_shot_send_has_no_later_duplicate(self):
         user = self._make_user(deadline=time(21, 0), early_reminder_minutes=30)
@@ -705,6 +707,7 @@ class SafetyNotifyConcurrencyTests(unittest.TestCase):
             daily_deadline=time(21, 0),
             early_reminder_minutes=30,
             nfc_token=nfc_token,
+            telegram_chat_id=777777,
         )
         defaults.update(overrides)
         user = models.SafetyUser(**defaults)

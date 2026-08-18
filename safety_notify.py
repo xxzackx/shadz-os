@@ -329,6 +329,151 @@ def last_checkin_before(
     )
 
 
+def claim_late_checkin_alert(
+    db: Session, user_id: int, safety_date, checkin_id: int
+) -> "models.SafetyLateCheckinAlert":
+    """Phase S6.1 — record that a late check-in happened for (user_id,
+    safety_date), creating the one-shot claim row if this is the first late
+    check-in observed for that day (see models.SafetyLateCheckinAlert).
+
+    Called synchronously from safety_public.submit_check_in once it has
+    determined the check-in is late -- this only ever claims/records the
+    event; delivering the Admin Telegram notification is still the async
+    notify loop's job (collect_due_late_checkin_alerts below), exactly like
+    every other S6 notification. A second late check-in the same day is a
+    safe no-op here (the unique constraint keeps exactly one row), so the
+    caller's checkin_id argument is only used the first time.
+
+    Only flushes, never commits -- submit_check_in owns the transaction
+    boundary, exactly like safety_deadline.resolve_checkin, so the
+    SafetyCheckIn insert, any SafetyDailyState change, and this claim all
+    commit (or roll back) together as one atomic unit. The uq_safety_late_
+    checkin_alerts_user_date unique constraint is still the real one-shot
+    guarantee, enforced at flush time inside the SAVEPOINT below -- it does
+    not depend on this function committing.
+    """
+    existing = (
+        db.query(models.SafetyLateCheckinAlert)
+        .filter(
+            models.SafetyLateCheckinAlert.user_id == user_id,
+            models.SafetyLateCheckinAlert.safety_date == safety_date,
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing
+
+    row = models.SafetyLateCheckinAlert(
+        user_id=user_id, safety_date=safety_date, checkin_id=checkin_id
+    )
+    try:
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+    except IntegrityError:
+        return (
+            db.query(models.SafetyLateCheckinAlert)
+            .filter(
+                models.SafetyLateCheckinAlert.user_id == user_id,
+                models.SafetyLateCheckinAlert.safety_date == safety_date,
+            )
+            .one()
+        )
+    return row
+
+
+def _claim_late_checkin_delivery(db: Session, alert_id: int, now: datetime) -> bool:
+    """Atomically reserve a SafetyLateCheckinAlert for delivery -- same
+    claimable-when-undelivered-and-unleased contract as
+    _claim_alert_delivery."""
+    lease_cutoff = now - timedelta(seconds=DELIVERY_LEASE_SECONDS)
+    claimed = (
+        db.query(models.SafetyLateCheckinAlert)
+        .filter(
+            models.SafetyLateCheckinAlert.id == alert_id,
+            models.SafetyLateCheckinAlert.notified_at.is_(None),
+            or_(
+                models.SafetyLateCheckinAlert.delivery_claimed_at.is_(None),
+                models.SafetyLateCheckinAlert.delivery_claimed_at <= lease_cutoff,
+            ),
+        )
+        .update({"delivery_claimed_at": now}, synchronize_session=False)
+    )
+    db.commit()
+    return bool(claimed)
+
+
+def release_late_checkin_delivery_claim(
+    db: Session, alert_id: int, expected_claimed_at: datetime
+) -> bool:
+    """Release a SafetyLateCheckinAlert's delivery lease after a failed
+    send -- same lease-ownership contract as release_alert_delivery_claim."""
+    updated = (
+        db.query(models.SafetyLateCheckinAlert)
+        .filter(
+            models.SafetyLateCheckinAlert.id == alert_id,
+            models.SafetyLateCheckinAlert.notified_at.is_(None),
+            models.SafetyLateCheckinAlert.delivery_claimed_at == expected_claimed_at,
+        )
+        .update({"delivery_claimed_at": None}, synchronize_session=False)
+    )
+    db.commit()
+    return bool(updated)
+
+
+def mark_late_checkin_notified(
+    db: Session, alert_id: int, now: datetime, expected_claimed_at: datetime
+) -> bool:
+    """Record a confirmed-successful late-checkin Telegram delivery -- same
+    lease-ownership contract as mark_alert_notified."""
+    updated = (
+        db.query(models.SafetyLateCheckinAlert)
+        .filter(
+            models.SafetyLateCheckinAlert.id == alert_id,
+            models.SafetyLateCheckinAlert.notified_at.is_(None),
+            models.SafetyLateCheckinAlert.delivery_claimed_at == expected_claimed_at,
+        )
+        .update({"notified_at": now, "delivery_claimed_at": None}, synchronize_session=False)
+    )
+    db.commit()
+    return bool(updated)
+
+
+def collect_due_late_checkin_alerts(
+    db: Session, now: datetime
+) -> list[tuple["models.SafetyUser", "models.SafetyCheckIn", "models.SafetyLateCheckinAlert", datetime]]:
+    """Return (user, checkin, alert, claim_at) for every late-checkin alert
+    this call just won the delivery lease for -- same shape/contract as
+    collect_due_missed_alerts. Scoped to is_active users, matching every
+    other S6 collector."""
+    due: list[tuple[models.SafetyUser, models.SafetyCheckIn, models.SafetyLateCheckinAlert, datetime]] = []
+    rows = (
+        db.query(models.SafetyLateCheckinAlert, models.SafetyUser)
+        .join(models.SafetyUser, models.SafetyUser.id == models.SafetyLateCheckinAlert.user_id)
+        .filter(
+            models.SafetyLateCheckinAlert.notified_at.is_(None),
+            models.SafetyUser.is_active.is_(True),
+        )
+        .all()
+    )
+    for alert, user in rows:
+        if not _claim_late_checkin_delivery(db, alert.id, now):
+            continue
+        db.refresh(alert)
+        checkin = (
+            db.query(models.SafetyCheckIn)
+            .filter(models.SafetyCheckIn.id == alert.checkin_id)
+            .first()
+        )
+        if checkin is not None:
+            due.append((user, checkin, alert, alert.delivery_claimed_at))
+        else:
+            # Should never happen (checkin_id is a required FK) -- release
+            # rather than leave an unreleasable lease if it somehow does.
+            release_late_checkin_delivery_claim(db, alert.id, alert.delivery_claimed_at)
+    return due
+
+
 def _claim_sos_delivery(db: Session, emergency_id: int, now: datetime) -> bool:
     """Atomically reserve emergency_id for SOS notification by this caller.
 
