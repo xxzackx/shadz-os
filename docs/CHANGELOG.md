@@ -2,9 +2,42 @@
 
 ---
 
+## SHADZ Safety Engine v1 — Phase S7: Late Check-in Resolution + SOS Acknowledge / Resolution
+
+**Status:** Runtime complete, deployed, and production-verified. **Phase S7 closure is pending this documentation commit** (VPS has not yet been fast-forwarded to the closure commit). No later Safety Engine phase (S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
+
+**Scope:** Adds an explicit resolution lifecycle for the two urgent Safety Engine states, reusing `SafetyAlert.status`/`resolved_at`/`resolved_checkin_id` and `SafetyEmergency.status`/`acknowledged_at`/`resolved_at` — columns present in the production schema since the S6 and S4 table creations respectively but unused until now, so **no migration was required**. New functions `resolve_missed_checkin_alert`, `acknowledge_sos`, and `resolve_sos` in `safety_notify.py`; `resolve_missed_checkin_alert` is wired into `safety_public.submit_check_in`'s existing late-check-in path. New admin routes in `safety_admin.py` (`GET /admin/safety/emergencies`, `POST /admin/safety/emergencies/{id}/acknowledge`, `POST /admin/safety/emergencies/{id}/resolve`), behind the existing `admin_router`/`verify_admin` Basic Auth. No S5 deadline/state logic changed, no S6.1 Telegram recipient routing changed. No changes to Redirect Engine, Page Engine, or Activation Engine.
+
+**Runtime commit:** `b3fcb6e4c2aff51c55f8450175b82757436ecc07` (`b3fcb6e`) — `feat(safety): add late check-in and sos resolution lifecycle`
+
+**Locked design facts:**
+- A later valid check-in for the exact same `(user_id, safety_date)` as an outstanding `missed_checkin` `SafetyAlert` resolves that alert — `status = "resolved"`, `resolved_at`, and `resolved_checkin_id` set, scoped strictly to that user/date so one user's check-in can never resolve another user's (or another day's) incident. The alert is pre-created already-resolved if the periodic evaluator hasn't created the row yet, covering the race where the check-in beats the evaluator to it.
+- `SafetyDailyState.status == "missed"` is never rewritten — S5's terminal-`missed` rule for the *daily state* is unchanged; only the operational alert's own delivery lifecycle is affected.
+- `collect_due_missed_alerts` now skips any `status == "resolved"` alert, so a resolved incident is never re-collected or re-sent by the scheduler, even if it was resolved before ever being delivered.
+- The SOS lifecycle is strictly `open → acknowledged → resolved`. `resolve_sos` only transitions a row it currently finds `acknowledged` — a still-`open` row is left completely untouched by that function.
+- The admin resolve route (`POST /admin/safety/emergencies/{id}/resolve`) fails closed with HTTP 409 whenever the emergency `resolve_sos` returns is not `resolved` — this covers both a direct `open → resolved` attempt *and* a TOCTOU race where a concurrent acknowledge lands between this call's failed update and its re-query (checking only for `status == "open"` would have wrongly returned `200` in that race).
+- SOS escalation eligibility (`collect_due_sos_notifications` / `_claim_sos_delivery` / `mark_sos_notified`) is `status IN ('open', 'acknowledged')` — acknowledging an SOS alone never stops escalation; only resolving it does.
+- `acknowledge_sos` and `resolve_sos` are both idempotent conditional `UPDATE`s: a repeat call on an already-transitioned row is a safe no-op, and acknowledging an already-resolved emergency never regresses its status back to `acknowledged`.
+- A normal `I'M SAFE` check-in never touches `SafetyEmergency` at all — SOS acknowledgement/resolution is admin-only, reachable solely through the new authenticated routes.
+- Resolved SOS rows are never deleted — `GET /admin/safety/emergencies` lists every emergency including historical resolved ones, so SOS history remains fully auditable.
+
+**Files changed:** `safety_notify.py` (`resolve_missed_checkin_alert`, `acknowledge_sos`, `resolve_sos`, escalation-eligibility query change), `safety_public.py` (`submit_check_in` wired to `resolve_missed_checkin_alert`), `safety_admin.py` (new SOS admin routes), `tests/test_safety_missed_checkin_resolution_s7.py` (new), `tests/test_safety_sos_lifecycle_s7.py` (new), `tests/test_safety_admin_sos_endpoints_s7.py` (new), `tests/test_safety_notify_s6.py` (3 tests updated to match the locked S7 escalation-eligibility rule).
+
+**Focused test result:** S7-specific suite (`test_safety_missed_checkin_resolution_s7.py`, `test_safety_sos_lifecycle_s7.py`, `test_safety_admin_sos_endpoints_s7.py`, `test_safety_notify_s6.py`) — 74/74 passed.
+
+**Full regression:** Full Safety Engine suite and full repo regression both passed with the sole exception of one pre-existing wall-clock-dependent S5 test failure (`test_checkin_integration_via_submit_check_in_marks_safe`), independently confirmed unrelated to S7 by reproducing the identical failure against a clean checkout of the pre-S7 `HEAD` commit (`59302a1`) at the same wall-clock time. `git diff --check` clean.
+
+**Production verification:** VPS `HEAD == origin/master == b3fcb6e4c2aff51c55f8450175b82757436ecc07`; working tree clean; `shadz.service` active and enabled; `/health` 200; `127.0.0.1:8000` listening; S7 imports and admin route wiring verified.
+
+**Live production test:** Controlled functional test confirmed a late valid check-in resolves the matching `missed_checkin` `SafetyAlert` with correct `resolved_at`/`resolved_checkin_id`, scoped to the correct user/date; `SafetyDailyState.status == "missed"` remains unchanged; a normal check-in does not acknowledge or resolve SOS; the SOS lifecycle enforces strict `open → acknowledged → resolved` with a direct `open → resolved` attempt rejected `409`; SOS escalation continues while `open` or `acknowledged` and stops only once `resolved`; repeated SOS resolve remained idempotent; resolved SOS history stays persisted and auditable; S6.1 Telegram recipient separation is unchanged. The temporary `SafetyUser` and all child rows created for this test were removed afterward.
+
+**Deferred (not implemented in S7):** Admin Safety Module / hardening (Phase S8) — no broader Admin Safety UI beyond the two new SOS routes above. Next active phase: **S8 — SHADZ Admin Safety Module + Hardening** (not started).
+
+---
+
 ## SHADZ Safety Engine v1 — Phase S6.1: Safety Telegram Routing / Recipient Separation
 
-**Status:** Complete, deployed, and production-verified. **Phase S6.1 is now complete and closed.** No later Safety Engine phase (S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
+**Status:** Complete, deployed, and production-verified. **Phase S6.1 is now complete and closed.** Phase S7 (Late Check-in Resolution + SOS Acknowledge / Resolution) runtime is also complete, deployed, and production-verified (`b3fcb6e`); its closure is pending this documentation commit. No later Safety Engine phase (S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
 
 **Scope:** Replaces S6's temporary single shared `SAFETY_TELEGRAM_CHAT_ID` destination with real per-domain recipient routing. Adds `safety_users.telegram_chat_id` (nullable), a new `SafetyLateCheckinAlert` one-shot/retry delivery path (`safety_late_checkin_alerts`, deliberately a separate table from `SafetyAlert` rather than a third `alert_type`, to avoid altering `SafetyAlert`'s live `CHECK` constraint), and new minimal authenticated `SafetyUser` Telegram-configuration admin endpoints (`safety_admin.py`). `SafetyUser` remains fully independent of `BotClient` — no coupling introduced. No S5 deadline/state logic changed, no changes to Redirect Engine, Page Engine, or Activation Engine.
 
@@ -31,7 +64,7 @@
 
 **Live production test:** Recipient separation verified with real Telegram delivery to distinct destinations. `SafetyUser` id 1 (`telegram_chat_id` initially `NULL`) was temporarily set to a second Telegram test account to verify live routing, then cleared to `NULL` to confirm a missing target recipient fails closed rather than falling back to Admin or another recipient. The second Telegram test account was set again afterward as the current recipient — the final value was not restored to the pre-test `NULL` state.
 
-**Deferred (not implemented in S6.1):** late check-in *resolution* (rewriting `missed` back to `safe`) and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). Next active phase: **S7 — Late Check-in Resolution + SOS Acknowledge / Resolution** (not started).
+**Deferred (not implemented in S6.1):** late/missed check-in alert resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). S7 was subsequently completed in runtime commit `b3fcb6e` (see the Phase S7 entry above); S8 and later phases remain not started.
 
 ---
 
