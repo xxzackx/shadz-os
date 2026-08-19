@@ -3058,6 +3058,134 @@ async def _handle_message(chat_id: int, text: str, from_user: dict, db: Session,
 
 
 # ---------------------------------------------------------------------------
+# Safety Engine v1 — SOS inline-button callbacks (urgent live-testing fix)
+#
+# Distinct "sos_ack:"/"sos_resolve:" callback_data prefixes -- routed
+# separately from every activation/A4U/A4M/URL-management callback above,
+# and never touches BotClient/activation state (_SESSIONS, etc.) or
+# _handle_message's own state machine. safety_notify/safety_telegram are
+# imported locally inside the handler rather than at module level:
+# safety_telegram already imports bot_runtime (for _TELEGRAM_API_BASE), so
+# a module-level import here would be circular.
+# ---------------------------------------------------------------------------
+
+_SOS_CALLBACK_UNAUTHORIZED_TEXT = "Not authorized."
+_SOS_CALLBACK_NOT_FOUND_TEXT = "SOS not found."
+_SOS_CALLBACK_CONFLICT_TEXT = "SOS must be acknowledged before it can be resolved."
+
+
+def _safety_telegram_module():
+    """Deferred import of safety_telegram, shared by the webhook route's
+    callback_data prefix check and _handle_sos_action_callback below --
+    Python caches the module after the first import, so this is not a
+    repeated-import cost, just the standard way to break the circular
+    import (safety_telegram already imports bot_runtime)."""
+    import safety_telegram
+    return safety_telegram
+
+
+async def _handle_sos_action_callback(callback_query: dict, db: Session) -> None:
+    """Handle an SOS ACKNOWLEDGE/RESOLVE inline-button tap.
+
+    Reuses safety_notify.acknowledge_sos/resolve_sos exactly as
+    safety_admin.py's admin routes do -- the strict S7
+    open -> acknowledged -> resolved lifecycle (idempotency, TOCTOU
+    handling, and the "resolve requires prior acknowledge" rule) lives
+    there and only there; this function only decides which of those two
+    functions to call from the tapped button and how to re-render the
+    result back into the Telegram message. No new lifecycle logic, no new
+    DB field.
+
+    Fails closed: a callback whose message chat is not the configured
+    SAFETY_TELEGRAM_CHAT_ID is rejected without touching the DB or the
+    Telegram message at all (matches safety_telegram._admin_chat_id's own
+    fail-closed contract). A malformed/unknown emergency id, or one with
+    no matching SafetyEmergency row, is answered with an error toast
+    instead of crashing webhook processing -- exactly like every other
+    handler reached from the callback_query dispatch below.
+    """
+    import safety_notify
+    safety_telegram = _safety_telegram_module()
+
+    if not isinstance(callback_query, dict):
+        return
+
+    callback_query_id = callback_query.get("id")
+    data = callback_query.get("data")
+    if not isinstance(data, str):
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id)
+        return
+
+    if data.startswith(safety_telegram.SOS_ACK_CALLBACK_PREFIX):
+        action = "acknowledge"
+        raw_id = data[len(safety_telegram.SOS_ACK_CALLBACK_PREFIX):]
+    elif data.startswith(safety_telegram.SOS_RESOLVE_CALLBACK_PREFIX):
+        action = "resolve"
+        raw_id = data[len(safety_telegram.SOS_RESOLVE_CALLBACK_PREFIX):]
+    else:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id)
+        return
+
+    try:
+        emergency_id = int(raw_id)
+    except (TypeError, ValueError):
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_SOS_CALLBACK_NOT_FOUND_TEXT)
+        return
+
+    chat_id = _callback_chat_id(callback_query)
+    admin_chat_id = safety_telegram._admin_chat_id()
+    if admin_chat_id is None or chat_id != admin_chat_id:
+        logger.error(
+            "Rejected SOS %s callback for emergency_id=%s from unauthorized chat_id=%s",
+            action, emergency_id, chat_id,
+        )
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_SOS_CALLBACK_UNAUTHORIZED_TEXT)
+        return
+
+    now = datetime.now(timezone.utc)
+    if action == "acknowledge":
+        emergency = safety_notify.acknowledge_sos(db, emergency_id, now)
+    else:
+        emergency = safety_notify.resolve_sos(db, emergency_id, now)
+
+    if emergency is None:
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_SOS_CALLBACK_NOT_FOUND_TEXT)
+        return
+
+    if action == "resolve" and emergency.status != "resolved":
+        # Mirrors safety_admin.py's resolve route exactly: resolve_sos
+        # leaves a still-'open' row untouched, so a direct open -> resolve
+        # tap (or a TOCTOU race landing between two taps) is rejected
+        # rather than silently no-opping or faking a resolution.
+        if callback_query_id:
+            await _answer_callback_query(callback_query_id, text=_SOS_CALLBACK_CONFLICT_TEXT)
+        return
+
+    if callback_query_id:
+        await _answer_callback_query(callback_query_id)
+
+    message = callback_query.get("message")
+    message_id = message.get("message_id") if isinstance(message, dict) else None
+    user = db.query(models.SafetyUser).filter(models.SafetyUser.id == emergency.user_id).first()
+    if message_id is not None and user is not None:
+        # for_edit=True -- a resolved SOS must get an explicit
+        # {"inline_keyboard": []}, not None, or Telegram leaves the
+        # already-sent ACKNOWLEDGE/RESOLVE keyboard on the message (see
+        # _sos_inline_keyboard's docstring).
+        await safety_telegram.edit_sos_message(
+            chat_id,
+            message_id,
+            safety_telegram._format_sos(user, emergency),
+            safety_telegram._sos_inline_keyboard(emergency.id, emergency.status, for_edit=True),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
 
@@ -3132,6 +3260,14 @@ def register_bot_webhook_routes(app) -> None:
                     # Distinct fixed literals — never touches the
                     # activation-engine callback paths above.
                     await _handle_url_management_confirmation_callback(callback_query, db)
+                elif isinstance(cq_data, str) and (
+                    cq_data.startswith(_safety_telegram_module().SOS_ACK_CALLBACK_PREFIX)
+                    or cq_data.startswith(_safety_telegram_module().SOS_RESOLVE_CALLBACK_PREFIX)
+                ):
+                    # Distinct "sos_ack:"/"sos_resolve:" prefixes — Safety
+                    # Engine v1 SOS lifecycle actions, never touches
+                    # BotClient/activation dispatch above or below.
+                    await _handle_sos_action_callback(callback_query, db)
                 else:
                     await _handle_activation_callback(callback_query, db)
             except Exception:

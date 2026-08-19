@@ -18,6 +18,24 @@ Safety notifications are independent of the BotClient self-service runtime:
 this module never reads or writes bot_runtime._SESSIONS or any other
 BotClient/activation state.
 
+SOS inline actions (urgent live-testing fix): send_sos_notification attaches
+an ACKNOWLEDGE (status "open") or RESOLVE (status "acknowledged") inline
+button, built by _sos_inline_keyboard purely from the emergency's current
+status -- there is no separate UI-state tracked anywhere. The tap itself is
+handled by bot_runtime._handle_sos_action_callback (SOS_ACK_CALLBACK_PREFIX /
+SOS_RESOLVE_CALLBACK_PREFIX, exported from this module since it owns every
+other SOS-message concern), which reuses safety_notify.acknowledge_sos /
+resolve_sos exactly as safety_admin.py's admin routes do -- no parallel
+lifecycle logic exists here, and the strict S7 open -> acknowledged ->
+resolved transition (with its idempotency and TOCTOU handling) is untouched.
+edit_sos_message then re-renders the tapped Telegram message via
+editMessageText, swapping its keyboard to match the new status --
+acknowledged gets the RESOLVE keyboard, and resolved gets an explicit
+{"inline_keyboard": []} (never None/omission, which Telegram does not
+treat as "remove the existing keyboard" on an edit -- see
+_sos_inline_keyboard's for_edit parameter and edit_sos_message's own
+docstring for why).
+
 Phase S6.1 — recipient separation: S6 originally routed every Safety
 notification to one shared SAFETY_TELEGRAM_CHAT_ID as a temporary stand-in.
 The locked routing is now:
@@ -100,7 +118,59 @@ def maps_link(latitude: float | None, longitude: float | None) -> str | None:
     return f"https://maps.google.com/?q={latitude},{longitude}"
 
 
-async def _send_telegram_message(chat_id: int, text: str) -> bool:
+# Telegram inline-button callback_data prefixes for SOS actions. Public
+# (no leading underscore) because bot_runtime's webhook dispatch imports
+# these to route a tapped button to _handle_sos_action_callback -- kept
+# here rather than in bot_runtime.py since this module already owns every
+# other SOS-message concern (formatting, chat routing, sending).
+SOS_ACK_CALLBACK_PREFIX = "sos_ack:"
+SOS_RESOLVE_CALLBACK_PREFIX = "sos_resolve:"
+
+
+def _sos_inline_keyboard(
+    emergency_id: int, status: str, *, for_edit: bool = False
+) -> dict | None:
+    """The inline keyboard attached to an SOS Telegram message, driven only
+    by the emergency's current status -- there is no separately tracked UI
+    state, so this can never drift from the real S7 lifecycle:
+      open         -> ACKNOWLEDGE button
+      acknowledged -> RESOLVE button
+      resolved (or anything else):
+        - for_edit=False (the initial sendMessage call in
+          send_sos_notification): None -- there is no prior keyboard on a
+          brand-new message, and collect_due_sos_notifications never
+          selects an already-resolved emergency anyway (see
+          _SOS_ESCALATION_STATUSES), so this path never actually runs for
+          "resolved" today; None is simply "no keyboard on send", which
+          sendMessage accepts by omitting reply_markup entirely.
+        - for_edit=True (_handle_sos_action_callback's editMessageText
+          call, after resolve_sos succeeds): an explicit
+          {"inline_keyboard": []}. Telegram's editMessageText does NOT
+          remove an existing keyboard when reply_markup is left out of the
+          request -- it only removes/replaces one when reply_markup is
+          present, so an already-sent ACKNOWLEDGE/RESOLVE keyboard must be
+          overwritten with this explicit empty keyboard, never by omission.
+    """
+    if status == "open":
+        return {
+            "inline_keyboard": [[
+                {"text": "ACKNOWLEDGE", "callback_data": f"{SOS_ACK_CALLBACK_PREFIX}{emergency_id}"}
+            ]]
+        }
+    if status == "acknowledged":
+        return {
+            "inline_keyboard": [[
+                {"text": "RESOLVE", "callback_data": f"{SOS_RESOLVE_CALLBACK_PREFIX}{emergency_id}"}
+            ]]
+        }
+    if for_edit:
+        return {"inline_keyboard": []}
+    return None
+
+
+async def _send_telegram_message(
+    chat_id: int, text: str, reply_markup: dict | None = None
+) -> bool:
     """Low-level Safety sendMessage call with an honest success signal.
 
     Mirrors bot_runtime._send_message's token lookup / httpx / sendMessage
@@ -127,6 +197,8 @@ async def _send_telegram_message(chat_id: int, text: str) -> bool:
         return False
     url = bot_runtime._TELEGRAM_API_BASE.format(token=token) + "/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(url, json=payload)
@@ -169,7 +241,7 @@ async def _send_telegram_message(chat_id: int, text: str) -> bool:
     return True
 
 
-async def _send(text: str, chat_id: int | None) -> bool:
+async def _send(text: str, chat_id: int | None, reply_markup: dict | None = None) -> bool:
     """Send to an already-resolved destination chat id, catching any
     unexpected exception defensively (on top of _send_telegram_message's
     own internal handling) so a caller can always await send_early_reminder
@@ -185,10 +257,97 @@ async def _send(text: str, chat_id: int | None) -> bool:
     if chat_id is None:
         return False
     try:
+        if reply_markup is not None:
+            return await _send_telegram_message(chat_id, text, reply_markup=reply_markup)
+        # Omit the kwarg entirely (rather than passing reply_markup=None)
+        # for every non-SOS send, so send_early_reminder/
+        # send_missed_checkin_alert/send_late_checkin_alert keep their
+        # exact pre-existing call shape -- only SOS attaches a keyboard.
         return await _send_telegram_message(chat_id, text)
     except Exception:
         logger.exception("Unexpected error sending Safety Telegram message to chat_id=%s", chat_id)
         return False
+
+
+async def edit_sos_message(
+    chat_id: int, message_id: int, text: str, reply_markup: dict | None
+) -> bool:
+    """Edit a previously-sent SOS Telegram message (editMessageText) after
+    an inline Acknowledge/Resolve tap, to reflect the emergency's new
+    status and swap/remove its inline keyboard in the same call --
+    Telegram's editMessageText accepts reply_markup directly, so no
+    separate editMessageReplyMarkup call is needed.
+
+    IMPORTANT: reply_markup=None here means "omit the key from the
+    request", and Telegram does NOT remove an already-attached keyboard
+    when the key is simply absent from an editMessageText call -- it only
+    changes the keyboard when reply_markup is present in the request. To
+    actually remove a keyboard (the resolved case), the caller must pass
+    an explicit {"inline_keyboard": []}, not None -- see
+    _sos_inline_keyboard(..., for_edit=True), which is exactly why that
+    parameter exists. None should only ever be passed here when there was
+    never a keyboard to remove in the first place.
+
+    Same honest fail-closed True/False contract as _send_telegram_message
+    (only a confirmed {"ok": true} response counts as success); this is a
+    parallel, independently-structured low-level sender rather than a
+    shared refactor of _send_telegram_message, matching this module's
+    existing convention of one thin function per Bot API method (see the
+    module docstring on why bot_runtime._send_message isn't reused
+    either). Never raises -- a failed edit is logged and simply leaves the
+    Telegram message showing its prior (still-accurate-enough) text; it
+    never blocks or reverses the already-committed acknowledge_sos/
+    resolve_sos transition that triggered this call.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if not token:
+        logger.error(
+            "TELEGRAM_BOT_TOKEN is not configured — cannot edit Safety "
+            "Telegram message chat_id=%s message_id=%s",
+            chat_id, message_id,
+        )
+        return False
+    url = bot_runtime._TELEGRAM_API_BASE.format(token=token) + "/editMessageText"
+    payload = {"chat_id": chat_id, "message_id": message_id, "text": text}
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "Failed to edit Safety Telegram message chat_id=%s message_id=%s: "
+            "HTTP %s (%s)",
+            chat_id, message_id, exc.response.status_code, type(exc).__name__,
+        )
+        return False
+    except httpx.HTTPError as exc:
+        logger.error(
+            "Failed to edit Safety Telegram message chat_id=%s message_id=%s: %s",
+            chat_id, message_id, type(exc).__name__,
+        )
+        return False
+
+    try:
+        body = response.json()
+    except ValueError:
+        logger.error(
+            "Safety Telegram editMessageText chat_id=%s message_id=%s returned "
+            "a non-JSON response body",
+            chat_id, message_id,
+        )
+        return False
+
+    if not isinstance(body, dict) or body.get("ok") is not True:
+        logger.error(
+            "Safety Telegram editMessageText chat_id=%s message_id=%s was not "
+            "confirmed successful by the Bot API",
+            chat_id, message_id,
+        )
+        return False
+
+    return True
 
 
 def _format_early_reminder(user: "models.SafetyUser") -> str:
@@ -218,11 +377,20 @@ def _format_missed_checkin(
     return "\n".join(lines)
 
 
+_SOS_STATUS_LABELS = {"open": "OPEN", "acknowledged": "ACKNOWLEDGED", "resolved": "RESOLVED"}
+
+
 def _format_sos(user: "models.SafetyUser", emergency: "models.SafetyEmergency") -> str:
+    """Shared by both the initial SOS send and every later
+    _handle_sos_action_callback editMessageText call, so the Status line
+    always reflects emergency.status at the moment this is called -- there
+    is no separate "acknowledged text" / "resolved text" template to keep
+    in sync."""
     lines = [
         "🚨 SOS EMERGENCY 🚨",
         f"{user.display_name} has triggered an emergency alert.",
         f"Triggered at: {emergency.triggered_at.isoformat()} UTC",
+        f"Status: {_SOS_STATUS_LABELS.get(emergency.status, emergency.status.upper())}",
     ]
     link = maps_link(emergency.latitude, emergency.longitude)
     lines.append(f"Location: {link}" if link else "Location: not available")
@@ -287,5 +455,13 @@ async def send_sos_notification(
     safety_notify.mark_sos_notified when this returns True.
 
     Always routes to SHADZ Admin — never the target SafetyUser's own
-    telegram_chat_id (see _admin_chat_id)."""
-    return await _send(_format_sos(user, emergency), _admin_chat_id())
+    telegram_chat_id (see _admin_chat_id). Attaches the ACKNOWLEDGE inline
+    button whenever emergency.status is still "open" at send time
+    (_sos_inline_keyboard) -- every escalation retry re-sends this while
+    still open, so each such message carries a working button, not just
+    the very first one."""
+    return await _send(
+        _format_sos(user, emergency),
+        _admin_chat_id(),
+        reply_markup=_sos_inline_keyboard(emergency.id, emergency.status),
+    )
