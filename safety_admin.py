@@ -71,7 +71,7 @@ from sqlalchemy.orm import Session
 
 import models
 from database import get_db
-from safety_deadline import local_safety_date
+from safety_deadline import local_deadline_utc, local_safety_date
 from safety_notify import acknowledge_sos, resolve_sos
 
 
@@ -343,9 +343,24 @@ def register_safety_admin_routes(admin_router) -> None:
         time (see safety_deadline.get_or_create_daily_state /
         local_deadline_utc). So a change made here takes effect for
         SafetyDailyState rows created from this point on -- it is never
-        applied retroactively: any day that already has a row keeps that
-        row's deadline_utc, status, and any linked SafetyAlert/
-        SafetyLateCheckinAlert exactly as they were, with no recompute.
+        applied retroactively to a past day, or to today's row once it is
+        no longer pending: 'safe' and 'missed' are left completely
+        untouched, and the SOS/missed-alert lifecycles are never touched
+        here either.
+
+        Same-day usability exception: if this PATCH actually changes
+        daily_deadline AND today (this user's own local safety date, via
+        local_safety_date) already has a SafetyDailyState row that is still
+        'pending', that one row's deadline_utc is recalculated in place
+        (local_deadline_utc, the same helper get_or_create_daily_state uses)
+        -- otherwise an Admin fixing a wrong deadline earlier in the day
+        would have no effect until tomorrow. This never creates a row (a day
+        with no state yet stays that way -- the evaluator/check-in path
+        creates it, not this route), never changes the row's id, and never
+        touches status: if the recalculated deadline is already in the
+        past, the row is simply left 'pending' -- the normal evaluator
+        transitions it to 'missed' on its next tick, exactly as it would
+        for any other pending row past its deadline.
 
         No-op guard: if the request body changes nothing (all fields
         omitted, or every provided value already matches the current row),
@@ -358,10 +373,12 @@ def register_safety_admin_routes(admin_router) -> None:
             raise HTTPException(status_code=404, detail=f"SafetyUser {safety_user_id} not found")
 
         changed = False
+        daily_deadline_changed = False
 
         if payload.daily_deadline is not None and payload.daily_deadline != user.daily_deadline:
             user.daily_deadline = payload.daily_deadline
             changed = True
+            daily_deadline_changed = True
 
         if (
             payload.early_reminder_minutes is not None
@@ -373,6 +390,19 @@ def register_safety_admin_routes(admin_router) -> None:
         if payload.is_active is not None and payload.is_active != user.is_active:
             user.is_active = payload.is_active
             changed = True
+
+        if daily_deadline_changed:
+            today = local_safety_date(user, datetime.now(timezone.utc))
+            today_state = (
+                db.query(models.SafetyDailyState)
+                .filter(
+                    models.SafetyDailyState.user_id == user.id,
+                    models.SafetyDailyState.safety_date == today,
+                )
+                .first()
+            )
+            if today_state is not None and today_state.status == "pending":
+                today_state.deadline_utc = local_deadline_utc(user, today)
 
         if changed:
             user.updated_at = datetime.now(timezone.utc)
