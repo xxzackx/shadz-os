@@ -475,26 +475,36 @@ class SafetyNotifyS6Tests(unittest.TestCase):
         retried = collect_due_sos_notifications(self.db, later)
         self.assertEqual(len(retried), 1)
 
-    def test_mark_sos_notified_guards_against_non_open_status(self):
+    def test_mark_sos_notified_guards_against_resolved_status(self):
+        # Phase S7 locked the final escalation-eligibility rule: 'resolved'
+        # is the only status that stops escalation -- 'acknowledged' alone
+        # must not (see tests/test_safety_sos_lifecycle_s7.py). This test
+        # originally asserted the opposite for 'acknowledged'; updated here
+        # to assert the actual locked S7 behavior instead.
         user = self._make_user()
-        emergency = models.SafetyEmergency(user_id=user.id, status="acknowledged")
+        emergency = models.SafetyEmergency(user_id=user.id, status="resolved")
         self.db.add(emergency)
         self.db.commit()
         self.db.refresh(emergency)
 
-        # Never claimed (not open, so collect_due_sos_notifications would
-        # never select it -- see test_acknowledged_sos_no_longer_selected).
-        # notification_claimed_at is still NULL here; passing None proves
-        # the status guard alone rejects this, independent of any lease
-        # mismatch.
+        # Never claimed (not open/acknowledged, so
+        # collect_due_sos_notifications would never select it -- see
+        # test_resolved_sos_no_longer_selected). notification_claimed_at is
+        # still NULL here; passing None proves the status guard alone
+        # rejects this, independent of any lease mismatch.
         marked = mark_sos_notified(self.db, emergency.id, datetime.now(timezone.utc), None)
         self.assertFalse(marked)
         row = self.db.query(models.SafetyEmergency).filter(models.SafetyEmergency.id == emergency.id).first()
         self.assertIsNone(row.last_notified_at)
 
-    def test_acknowledged_sos_no_longer_selected(self):
+    def test_resolved_sos_no_longer_selected(self):
+        # Phase S7: escalation stops only once status == 'resolved' -- see
+        # test_safety_sos_lifecycle_s7.py for the full acknowledge/resolve
+        # lifecycle coverage, including that 'acknowledged' alone must NOT
+        # stop escalation (that used to be asserted here as
+        # test_acknowledged_sos_no_longer_selected).
         user = self._make_user()
-        emergency = models.SafetyEmergency(user_id=user.id, status="acknowledged")
+        emergency = models.SafetyEmergency(user_id=user.id, status="resolved")
         self.db.add(emergency)
         self.db.commit()
 
@@ -822,6 +832,11 @@ class SafetyNotifyConcurrencyTests(unittest.TestCase):
         self.assertEqual(len(due_b), 1)
 
     def test_non_open_sos_cannot_be_marked_successful_across_sessions(self):
+        # Phase S7 locked 'resolved' (not 'acknowledged') as the status that
+        # stops escalation/marking -- an admin acknowledging concurrently
+        # must NOT block this send from being recorded successful (see
+        # tests/test_safety_sos_lifecycle_s7.py). Updated to use the actual
+        # S7 admin action ('resolved') that fails this closed instead.
         user = self._make_user(self.db_a, nfc_token="tok-conc-sos-nonopen")
         emergency = models.SafetyEmergency(user_id=user.id, status="open")
         self.db_a.add(emergency)
@@ -832,19 +847,19 @@ class SafetyNotifyConcurrencyTests(unittest.TestCase):
         self.assertEqual(len(due_a), 1)
         _due_user, due_emergency, claim_at = due_a[0]
 
-        # Session B (e.g. a future S7 acknowledgement route) flips status
-        # away from 'open' while session A still holds the delivery lease.
+        # Session B (the S7 admin resolve route) resolves the SOS while
+        # session A still holds the delivery lease.
         emergency_b = (
             self.db_b.query(models.SafetyEmergency)
             .filter(models.SafetyEmergency.id == emergency.id)
             .first()
         )
-        emergency_b.status = "acknowledged"
+        emergency_b.status = "resolved"
         self.db_b.commit()
 
         # Session A's send "succeeds", and it still holds the exact claim
         # it won, but marking must fail closed because the row is no
-        # longer open by the time it tries to record success.
+        # longer open/acknowledged by the time it tries to record success.
         marked = mark_sos_notified(self.db_a, due_emergency.id, datetime.now(timezone.utc), claim_at)
         self.assertFalse(marked)
 

@@ -19,7 +19,7 @@ from fastapi import HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, field_validator
 from safety_deadline import resolve_checkin
-from safety_notify import claim_late_checkin_alert
+from safety_notify import claim_late_checkin_alert, resolve_missed_checkin_alert
 from sqlalchemy.orm import Session
 
 _NOT_FOUND_DETAIL = "Not found"
@@ -284,6 +284,14 @@ def submit_check_in(
     S5's locked daily-state rule (MISSED stays terminal, a late check-in
     never rewrites it back to SAFE) -- it is purely a notification-routing
     record, read only by safety_notify.collect_due_late_checkin_alerts.
+
+    Phase S7: that same late check-in also resolves the missed-checkin
+    SafetyAlert for this exact (user, safety_date), if one is (or becomes)
+    outstanding -- see safety_notify.resolve_missed_checkin_alert, which
+    also only flushes, so it joins this same atomic transaction. This does
+    not change S5's terminal-MISSED daily-state rule either; it only stops
+    Admin from being told about (or re-told about) a missed check-in that
+    this same user has since resolved with a late check-in.
     """
     user = _resolve_active_safety_user(secure_token, db)
     check_in = models.SafetyCheckIn(
@@ -305,6 +313,7 @@ def submit_check_in(
         deadline_utc = deadline_utc.replace(tzinfo=timezone.utc)
     if daily_state.status != "safe" and checked_in_at >= deadline_utc:
         claim_late_checkin_alert(db, user.id, daily_state.safety_date, check_in.id)
+        resolve_missed_checkin_alert(db, user.id, daily_state.safety_date, check_in.id)
 
     db.commit()
     return SafetyCheckInResponse(status="ok")

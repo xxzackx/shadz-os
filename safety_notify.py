@@ -76,13 +76,23 @@ from sqlalchemy.orm import Session
 
 from safety_deadline import get_or_create_daily_state, local_safety_date
 
-# Cadence for repeat SOS notifications while status stays 'open', counted
-# from the last *successful* delivery (see mark_sos_notified). One explicit,
-# named constant instead of scattering timing magic through the module — a
-# future S7 acknowledge/resolve workflow stops the escalation simply by
-# moving SafetyEmergency.status away from 'open'; nothing here needs to
-# change for that.
+# Cadence for repeat SOS notifications while status is 'open' or
+# 'acknowledged', counted from the last *successful* delivery (see
+# mark_sos_notified). One explicit, named constant instead of scattering
+# timing magic through the module.
+#
+# Phase S7: escalation eligibility is status IN ('open', 'acknowledged') —
+# acknowledging an SOS (see acknowledge_sos below) deliberately does NOT stop
+# escalation on its own, only resolving it does (status == 'resolved'). See
+# _SOS_ESCALATION_STATUSES.
 SOS_RETRY_INTERVAL_SECONDS = 300
+
+# Phase S7 — SafetyEmergency statuses for which SOS escalation stays active.
+# 'resolved' is the only status that stops it; 'acknowledged' alone must not
+# (an admin acknowledging an SOS is not the same as the situation being
+# resolved — see models.SafetyEmergency and safety_admin.py's
+# acknowledge/resolve routes).
+_SOS_ESCALATION_STATUSES = ("open", "acknowledged")
 
 # How long a delivery claim (SafetyAlert.delivery_claimed_at /
 # SafetyEmergency.notification_claimed_at) is honored before it's treated as
@@ -304,12 +314,106 @@ def collect_due_missed_alerts(
     )
     for row, user in rows:
         alert = _get_or_create_alert(db, user.id, row.safety_date, "missed_checkin")
-        if alert.notified_at is not None:
+        # Phase S7: a resolved missed-checkin alert (see
+        # resolve_missed_checkin_alert) must never be re-collected or
+        # re-sent, even if it was resolved before ever being delivered.
+        if alert.status == "resolved" or alert.notified_at is not None:
             continue
         if _claim_alert_delivery(db, alert.id, now):
             db.refresh(alert)
             due.append((user, row, alert, alert.delivery_claimed_at))
     return due
+
+
+def _get_or_create_missed_alert_no_commit(
+    db: Session, user_id: int, safety_date
+) -> "models.SafetyAlert":
+    """Same fetch-or-create-with-savepoint shape as _get_or_create_alert,
+    but only flushes, never commits -- for use from safety_public.submit_
+    check_in (Phase S7), which owns its own transaction boundary and must
+    not have it prematurely committed here (unlike _get_or_create_alert's
+    callers, which are top-level notify-loop entry points that already
+    commit independently)."""
+    existing = (
+        db.query(models.SafetyAlert)
+        .filter(
+            models.SafetyAlert.user_id == user_id,
+            models.SafetyAlert.safety_date == safety_date,
+            models.SafetyAlert.alert_type == "missed_checkin",
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing
+
+    row = models.SafetyAlert(user_id=user_id, safety_date=safety_date, alert_type="missed_checkin")
+    try:
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+    except IntegrityError:
+        return (
+            db.query(models.SafetyAlert)
+            .filter(
+                models.SafetyAlert.user_id == user_id,
+                models.SafetyAlert.safety_date == safety_date,
+                models.SafetyAlert.alert_type == "missed_checkin",
+            )
+            .one()
+        )
+    return row
+
+
+def resolve_missed_checkin_alert(
+    db: Session, user_id: int, safety_date, checkin_id: int
+) -> "models.SafetyAlert":
+    """Phase S7 — resolve the missed-checkin SafetyAlert for (user_id,
+    safety_date), the moment a later valid check-in for that exact user and
+    day arrives (see safety_public.submit_check_in, called under the same
+    "late check-in" condition as claim_late_checkin_alert).
+
+    Reuses SafetyAlert's existing status / resolved_at / resolved_checkin_id
+    columns (present since the table's Phase S6 creation, unused until now)
+    rather than a parallel alert/resolution system. This never touches
+    SafetyDailyState -- S5's MISSED-is-terminal rule for the *daily state*
+    itself is unchanged; only the operational "should Admin still be told /
+    keep being told about this missed check-in" alert is affected.
+
+    Pre-creates the alert (already resolved) via
+    _get_or_create_missed_alert_no_commit when it doesn't exist yet -- this
+    covers the race where a late check-in arrives before the periodic
+    evaluator (safety_deadline.evaluate_user_deadline) has flipped the day's
+    SafetyDailyState to 'missed' and so no SafetyAlert row exists yet: by
+    resolving it up front, the alert can never later be created "open" and
+    sent to Admin for a day that already has a valid (if late) check-in.
+
+    Idempotent: the transition is a conditional UPDATE ... WHERE
+    status = 'open', so a second/duplicate late check-in the same day (or a
+    race with the notify loop) never re-resolves or overwrites an
+    already-resolved alert's resolved_at / resolved_checkin_id.
+
+    Only flushes, never commits -- joins the caller's (submit_check_in's)
+    existing atomic transaction, exactly like claim_late_checkin_alert.
+    Scoped strictly to the given user_id/safety_date, so one user's check-in
+    can never resolve another user's (or another day's) alert.
+    """
+    alert = _get_or_create_missed_alert_no_commit(db, user_id, safety_date)
+    if alert.status == "resolved":
+        return alert
+    db.query(models.SafetyAlert).filter(
+        models.SafetyAlert.id == alert.id,
+        models.SafetyAlert.status == "open",
+    ).update(
+        {
+            "status": "resolved",
+            "resolved_at": datetime.now(timezone.utc),
+            "resolved_checkin_id": checkin_id,
+        },
+        synchronize_session=False,
+    )
+    db.flush()
+    db.refresh(alert)
+    return alert
 
 
 def last_checkin_before(
@@ -488,7 +592,7 @@ def _claim_sos_delivery(db: Session, emergency_id: int, now: datetime) -> bool:
         db.query(models.SafetyEmergency)
         .filter(
             models.SafetyEmergency.id == emergency_id,
-            models.SafetyEmergency.status == "open",
+            models.SafetyEmergency.status.in_(_SOS_ESCALATION_STATUSES),
             or_(
                 models.SafetyEmergency.last_notified_at.is_(None),
                 models.SafetyEmergency.last_notified_at <= cutoff,
@@ -553,7 +657,7 @@ def collect_due_sos_notifications(
     candidates = (
         db.query(models.SafetyEmergency)
         .filter(
-            models.SafetyEmergency.status == "open",
+            models.SafetyEmergency.status.in_(_SOS_ESCALATION_STATUSES),
             or_(
                 models.SafetyEmergency.last_notified_at.is_(None),
                 models.SafetyEmergency.last_notified_at <= cutoff,
@@ -584,23 +688,79 @@ def mark_sos_notified(
     lease's current owner (see release_sos_delivery_claim for why that
     check exists).
 
-    Conditional UPDATE ... WHERE status = 'open' AND
+    Conditional UPDATE ... WHERE status IN ('open', 'acknowledged') AND
     notification_claimed_at == expected_claimed_at, so this can never
-    resurrect/mark an emergency that has since been acknowledged/resolved
-    (S7), never overwrites across a race with another successful send for
-    the same row, and never lets a stale/expired-lease caller record
-    success for a claim it no longer holds. Returns True only if this call
-    actually transitioned the row -- the caller must only call this after
-    confirming the Telegram send succeeded, never speculatively.
+    resurrect/mark an emergency that has since been resolved (S7) -- but,
+    deliberately, an *acknowledged* emergency still counts, since
+    acknowledgement alone must not stop escalation (see
+    _SOS_ESCALATION_STATUSES). This never overwrites across a race with
+    another successful send for the same row, and never lets a
+    stale/expired-lease caller record success for a claim it no longer
+    holds. Returns True only if this call actually transitioned the row --
+    the caller must only call this after confirming the Telegram send
+    succeeded, never speculatively.
     """
     updated = (
         db.query(models.SafetyEmergency)
         .filter(
             models.SafetyEmergency.id == emergency_id,
-            models.SafetyEmergency.status == "open",
+            models.SafetyEmergency.status.in_(_SOS_ESCALATION_STATUSES),
             models.SafetyEmergency.notification_claimed_at == expected_claimed_at,
         )
         .update({"last_notified_at": now, "notification_claimed_at": None}, synchronize_session=False)
     )
     db.commit()
     return bool(updated)
+
+
+def acknowledge_sos(db: Session, emergency_id: int, now: datetime) -> "models.SafetyEmergency | None":
+    """Phase S7 — SHADZ Admin acknowledges an open SOS: active -> acknowledged.
+
+    Conditional UPDATE ... WHERE status = 'open', so this only ever
+    transitions a still-open emergency; calling it again (or after the
+    emergency has already been resolved) is a safe no-op that leaves
+    acknowledged_at/status untouched -- repeated acknowledge is always safe,
+    and acknowledgement can never regress a resolved emergency back to
+    acknowledged. Deliberately does NOT touch SOS escalation eligibility
+    (see _SOS_ESCALATION_STATUSES) -- acknowledging alone must not stop
+    escalation, only resolving does.
+
+    Returns the current row (whether or not this call changed it), or None
+    if emergency_id does not exist at all -- the caller (safety_admin.py)
+    treats that as 404.
+    """
+    db.query(models.SafetyEmergency).filter(
+        models.SafetyEmergency.id == emergency_id,
+        models.SafetyEmergency.status == "open",
+    ).update({"status": "acknowledged", "acknowledged_at": now}, synchronize_session=False)
+    db.commit()
+    return db.query(models.SafetyEmergency).filter(models.SafetyEmergency.id == emergency_id).first()
+
+
+def resolve_sos(db: Session, emergency_id: int, now: datetime) -> "models.SafetyEmergency | None":
+    """Phase S7 — SHADZ Admin resolves an SOS: acknowledged -> resolved.
+
+    The locked S7 lifecycle is strictly open -> acknowledged -> resolved --
+    a still-open SOS must be acknowledged first, so this only transitions a
+    currently 'acknowledged' emergency. Conditional UPDATE ... WHERE
+    status = 'acknowledged', so:
+      - an already-resolved emergency is a safe no-op (repeated resolve is
+        always safe, resolved_at is never overwritten by a second call);
+      - a still-'open' emergency is left completely untouched -- the caller
+        (safety_admin.py) inspects the returned row's status and rejects an
+        'open' row with 409 Conflict, since 'open' -> 'resolved' directly is
+        not a valid transition.
+    Once status becomes 'resolved', every SOS escalation query in this
+    module (_SOS_ESCALATION_STATUSES) stops selecting this emergency, so
+    escalation stops here and only here.
+
+    Returns the current row (whether or not this call changed it), or None
+    if emergency_id does not exist at all -- the caller (safety_admin.py)
+    treats that as 404.
+    """
+    db.query(models.SafetyEmergency).filter(
+        models.SafetyEmergency.id == emergency_id,
+        models.SafetyEmergency.status == "acknowledged",
+    ).update({"status": "resolved", "resolved_at": now}, synchronize_session=False)
+    db.commit()
+    return db.query(models.SafetyEmergency).filter(models.SafetyEmergency.id == emergency_id).first()
