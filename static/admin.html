@@ -576,6 +576,7 @@
       <button type="button" class="nav-link" data-nav="media" onclick="navToModule('media')">Media</button>
       <button type="button" class="nav-link" data-nav="pages" onclick="navToModule('pages')">Pages</button>
       <button type="button" class="nav-link" data-nav="bot" onclick="navToModule('bot')">Bot Clients</button>
+      <button type="button" class="nav-link" data-nav="safety" onclick="navToModule('safety')">Safety</button>
     </nav>
 
     <!-- Home screen -->
@@ -607,6 +608,11 @@
             <div class="overview-card-label">Bot Clients</div>
             <div class="overview-card-value" id="ov-bot-value">…</div>
             <div class="overview-card-hint" id="ov-bot-hint">Loading…</div>
+          </div>
+          <div class="overview-card" onclick="navToModule('safety')">
+            <div class="overview-card-label">Safety Engine</div>
+            <div class="overview-card-value" id="ov-safety-value">…</div>
+            <div class="overview-card-hint" id="ov-safety-hint">Loading…</div>
           </div>
         </div>
       </div>
@@ -696,6 +702,21 @@
           <div class="home-card" onclick="loadBotClients(); show('botSection')">
             <div class="home-card-title">Manage Bot Clients</div>
             <div class="home-card-desc">Create clients, view access codes, assign slugs</div>
+            <div class="home-card-arrow">›</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Module E: Safety Engine (S8) -->
+      <div class="module-group" id="module-safety">
+        <div class="module-header">
+          <span class="module-header-label">Safety Engine</span>
+          <div class="module-header-line"></div>
+        </div>
+        <div class="home-grid">
+          <div class="home-card" onclick="loadAllSafetyData(); show('safetySection')">
+            <div class="home-card-title">Manage Safety</div>
+            <div class="home-card-desc">Overview, user configuration, check-in/alert history, SOS management</div>
             <div class="home-card-arrow">›</div>
           </div>
         </div>
@@ -1217,6 +1238,88 @@
       <div id="bl-msg" class="msg"></div>
     </div>
 
+    <!-- Safety Engine section (S8) -->
+    <div id="safetySection" class="section">
+      <div class="section-header">
+        <button class="back-btn" onclick="goHome()">← Back</button>
+        <span class="section-title">Safety Engine</span>
+      </div>
+      <div style="font-size:0.65rem;color:var(--text-muted);margin-bottom:1rem">
+        Management, visibility, configuration, audit, and history only — immediate incident response (missed/late/SOS notifications) stays on SHADZ Admin Telegram.
+      </div>
+
+      <!-- Overview -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem">
+        <span style="font-size:0.62rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:var(--gold-dim)">Overview</span>
+        <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadSafetyOverviewPanel()">Refresh</button>
+      </div>
+      <div id="safetyOverviewPanel" class="overview-grid" style="margin-bottom:1.5rem">
+        <div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>
+      </div>
+
+      <!-- Divider -->
+      <div style="height:1px;background:var(--border-2);margin-bottom:1.5rem"></div>
+
+      <!-- SafetyUser configuration -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem">
+        <span style="font-size:0.62rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:var(--gold-dim)">Safety Users</span>
+        <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadSafetyUsers()">Refresh</button>
+      </div>
+      <div style="font-size:0.65rem;color:var(--text-muted);margin-bottom:0.6rem">
+Timezone is shown for reference only and cannot be changed here. Daily Deadline applies only to days created after you save — it never rewrites an existing day's already-recorded deadline, status, or history. Early Reminder minutes take effect on the next reminder calculation. Telegram Chat ID sets this user's own Early Reminder recipient only — Missed Check-in, Late Check-in, SOS, and SOS escalation always route to SHADZ Admin regardless of this setting. Activation/deactivation only — user creation/deletion is not available here.
+      </div>
+
+      <div id="safetyUserList" class="card-grid"></div>
+      <div id="su-msg" class="msg"></div>
+
+      <!-- Divider -->
+      <div style="height:1px;background:var(--border-2);margin-top:1.25rem;margin-bottom:1.5rem"></div>
+
+      <!-- Daily Check-in History -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem">
+        <span style="font-size:0.62rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:var(--gold-dim)">Daily Check-in History</span>
+        <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadSafetyDailyStates(); loadSafetyCheckins()">Refresh</button>
+      </div>
+      <div style="font-size:0.65rem;color:var(--text-muted);margin-bottom:0.6rem">
+        Per-day pending/safe/missed state, most recent first. "missed" is terminal — a later check-in resolves the matching alert below but never rewrites this day's state.
+      </div>
+      <div id="safetyDailyStateList" class="card-grid"></div>
+
+      <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-muted);margin-top:1rem;margin-bottom:0.6rem">Raw Check-in Events (GPS)</div>
+      <div id="safetyCheckinList" class="card-grid"></div>
+
+      <!-- Divider -->
+      <div style="height:1px;background:var(--border-2);margin-top:1.25rem;margin-bottom:1.5rem"></div>
+
+      <!-- Safety Alert History -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem">
+        <span style="font-size:0.62rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:var(--gold-dim)">Safety Alert History</span>
+        <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadSafetyAlerts(); loadSafetyLateCheckinAlerts()">Refresh</button>
+      </div>
+      <div style="font-size:0.65rem;color:var(--text-muted);margin-bottom:0.6rem">
+        Early-reminder and missed-checkin alerts, open and resolved — audit history, not an action queue (resolution happens automatically when a matching check-in lands).
+      </div>
+      <div id="safetyAlertList" class="card-grid"></div>
+
+      <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-muted);margin-top:1rem;margin-bottom:0.6rem">Late Check-in Notices</div>
+      <div id="safetyLateCheckinAlertList" class="card-grid"></div>
+
+      <!-- Divider -->
+      <div style="height:1px;background:var(--border-2);margin-top:1.25rem;margin-bottom:1.5rem"></div>
+
+      <!-- SOS Emergencies -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem">
+        <span style="font-size:0.62rem;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:var(--gold-dim)">SOS Emergencies</span>
+        <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadSafetyEmergencies()">Refresh</button>
+      </div>
+      <div style="font-size:0.65rem;color:var(--text-muted);margin-bottom:0.6rem">
+        Lifecycle is strictly open → acknowledged → resolved. Acknowledging does not stop escalation; only Resolve does. Historical (resolved) SOS remain listed here for audit.
+      </div>
+
+      <div id="safetyEmergencyList" class="card-grid"></div>
+      <div id="se-msg" class="msg"></div>
+    </div>
+
   </div>
 
   <!-- Toast notifications (Storage Manager card Attach shortcut only) -->
@@ -1257,7 +1360,7 @@
   </div>
 
   <script>
-    const GRID_SECTIONS = new Set(['statsSection', 'storageSection', 'botSection']);
+    const GRID_SECTIONS = new Set(['statsSection', 'storageSection', 'botSection', 'safetySection']);
 
     // Keyed by asset id (number). Populated by loadStorage() before rendering.
     // renameAsset() reads current display_name from here — avoids passing any
@@ -1275,7 +1378,7 @@
       createSection: 'slugs', updateSection: 'slugs', statsSection: 'slugs',
       mediaUploadSection: 'media', attachSection: 'media', storageSection: 'media',
       pageCreateSection: 'pages', pageEditSection: 'pages', pageAttachSection: 'pages',
-      botSection: 'bot'
+      botSection: 'bot', safetySection: 'safety'
     };
 
     function setActiveNav(navKey) {
@@ -1289,6 +1392,7 @@
     function loadDashboardOverview() {
       loadMediaOverview();
       loadBotOverview();
+      loadSafetyOverview();
     }
 
     async function loadMediaOverview() {
@@ -1317,6 +1421,22 @@
         const activeCount = data.filter(c => c.is_active).length;
         valueEl.textContent = data.length;
         hintEl.textContent = data.length ? `${activeCount} active` : 'No clients yet';
+      } catch {
+        valueEl.textContent = '—';
+        hintEl.textContent = 'Unavailable';
+      }
+    }
+
+    async function loadSafetyOverview() {
+      const valueEl = document.getElementById('ov-safety-value');
+      const hintEl  = document.getElementById('ov-safety-hint');
+      try {
+        const res  = await fetch('/admin/safety/emergencies', { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!res.ok) throw new Error();
+        const openCount = data.filter(e => e.status === 'open').length;
+        valueEl.textContent = openCount;
+        hintEl.textContent = openCount ? `${openCount} open SOS` : 'No open SOS';
       } catch {
         valueEl.textContent = '—';
         hintEl.textContent = 'Unavailable';
@@ -3636,6 +3756,528 @@
         }
       } catch {
         showMsg('bl-msg', 'error', 'Network error.');
+      }
+    }
+
+    // ── Safety Engine admin module (S8) ─────────────────────────────────────
+    // Admin Panel = Safety management / visibility / configuration / audit /
+    // history. Admin Telegram remains immediate incident response only --
+    // nothing here sends a notification or duplicates
+    // safety_deadline.py/safety_notify.py's state-machine logic. Acknowledge/
+    // Resolve call the same S7 admin API that already enforces the strict
+    // open -> acknowledged -> resolved lifecycle server-side; the buttons
+    // below are gated on current status purely so the UI never even offers
+    // an invalid transition, it does not replace the server's own fail-closed
+    // enforcement (a stale card can still get a 409, handled below).
+
+    function loadAllSafetyData() {
+      loadSafetyOverviewPanel();
+      loadSafetyUsers();
+      loadSafetyDailyStates();
+      loadSafetyCheckins();
+      loadSafetyAlerts();
+      loadSafetyLateCheckinAlerts();
+      loadSafetyEmergencies();
+    }
+
+    async function loadSafetyOverviewPanel() {
+      const container = document.getElementById('safetyOverviewPanel');
+      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+      try {
+        const res  = await fetch('/admin/safety/overview', { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!res.ok) {
+          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          return;
+        }
+        container.innerHTML = `
+          <div class="overview-card">
+            <div class="overview-card-label">Active Safety Users</div>
+            <div class="overview-card-value">${esc(data.active_safety_users)}</div>
+          </div>
+          <div class="overview-card">
+            <div class="overview-card-label">Today: Safe</div>
+            <div class="overview-card-value">${esc(data.today_safe)}</div>
+          </div>
+          <div class="overview-card">
+            <div class="overview-card-label">Today: Pending</div>
+            <div class="overview-card-value">${esc(data.today_pending)}</div>
+          </div>
+          <div class="overview-card">
+            <div class="overview-card-label">Today: Missed</div>
+            <div class="overview-card-value">${esc(data.today_missed)}</div>
+          </div>
+          <div class="overview-card">
+            <div class="overview-card-label">Open Missed Alerts</div>
+            <div class="overview-card-value">${esc(data.open_missed_checkin_alerts)}</div>
+          </div>
+          <div class="overview-card">
+            <div class="overview-card-label">Active SOS Incidents</div>
+            <div class="overview-card-value">${esc(data.active_sos_incidents)}</div>
+          </div>`;
+      } catch {
+        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+      }
+    }
+
+    async function loadSafetyUsers() {
+      const container = document.getElementById('safetyUserList');
+      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+
+      try {
+        const res  = await fetch('/admin/safety/users', { credentials: 'same-origin' });
+        const data = await res.json();
+
+        if (!res.ok) {
+          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          return;
+        }
+        if (data.length === 0) {
+          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No Safety Users yet.</div>';
+          return;
+        }
+        container.innerHTML = data.map(u => buildSafetyUserCard(u)).join('');
+      } catch {
+        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+      }
+    }
+
+    function buildSafetyUserCard(u) {
+      const statusBadge = u.is_active
+        ? '<span style="color:var(--gold-light)">Active</span>'
+        : '<span style="color:var(--text-muted)">Inactive</span>';
+
+      const toggleBtn = u.is_active
+        ? `<button class="ghost-btn sm danger" onclick="setSafetyUserActive(${esc(u.id)}, false)">Deactivate</button>`
+        : `<button class="ghost-btn sm" onclick="setSafetyUserActive(${esc(u.id)}, true)">Activate</button>`;
+
+      return `
+        <div class="stats-box" style="display:block">
+          <div class="stats-row">
+            <span class="stats-label">ID</span>
+            <span class="stats-value gold">${esc(u.id)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Name</span>
+            <span class="stats-value value-overflow">${esc(u.display_name)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Status</span>
+            <span class="stats-value">${statusBadge}</span>
+          </div>
+          <div class="stats-row" style="justify-content:flex-end">
+            ${toggleBtn}
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Timezone</span>
+            <span class="stats-value">${esc(u.timezone)} <span style="color:var(--text-muted);font-size:0.85em">(read-only)</span></span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Daily Deadline</span>
+            <input type="time" id="su-deadline-${esc(u.id)}" step="1" value="${escVal(u.daily_deadline)}"
+                   style="width:auto;flex:1;margin:0" />
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Early Reminder (min)</span>
+            <input type="number" min="0" max="1440" id="su-reminder-${esc(u.id)}" value="${escVal(u.early_reminder_minutes)}"
+                   style="width:auto;flex:1;margin:0" />
+          </div>
+          <div class="stats-row" style="justify-content:flex-end">
+            <button class="ghost-btn sm" onclick="saveSafetyUserConfig(${esc(u.id)})">Save Config</button>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Telegram Chat ID</span>
+            <input type="text" id="su-chatid-${esc(u.id)}" value="${escVal(u.telegram_chat_id)}"
+                   placeholder="empty = clear" autocomplete="off" style="width:auto;flex:1;margin:0"
+                   onkeydown="onEnterTrigger(event, () => saveSafetyUserTelegramChatId(${esc(u.id)}))" />
+          </div>
+          <div class="stats-row" style="justify-content:flex-end">
+            <button class="ghost-btn sm" onclick="saveSafetyUserTelegramChatId(${esc(u.id)})">Save Telegram ID</button>
+          </div>
+        </div>`;
+    }
+
+    async function setSafetyUserActive(userId, active) {
+      const verb = active ? 'Activate' : 'Deactivate';
+      if (!confirm(`${verb} Safety User ${userId}?`)) return;
+      try {
+        const res  = await fetch(`/admin/safety/users/${userId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ is_active: active }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showMsg('su-msg', 'ok', `Safety User ${userId} ${active ? 'activated' : 'deactivated'}.`);
+          loadSafetyUsers();
+        } else {
+          showMsg('su-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('su-msg', 'error', 'Network error.');
+      }
+    }
+
+    async function saveSafetyUserConfig(userId) {
+      // Timezone is intentionally not read/sent here -- it is read-only in
+      // the Admin Panel (see safety_admin.SafetyUserConfigUpdateRequest's
+      // docstring): unlike daily_deadline, it is read live and repeatedly
+      // throughout the deadline engine, so there is no safe "applies only
+      // to future rows" story for changing it from here.
+      const deadlineInput = document.getElementById(`su-deadline-${userId}`);
+      const reminderInput = document.getElementById(`su-reminder-${userId}`);
+      if (!deadlineInput || !reminderInput) return;
+
+      const payload = {};
+
+      const deadline = deadlineInput.value.trim();
+      if (deadline) payload.daily_deadline = deadline.length === 5 ? `${deadline}:00` : deadline;
+
+      const reminder = reminderInput.value.trim();
+      if (reminder !== '') {
+        if (!/^\d+$/.test(reminder) || Number(reminder) > 1440) {
+          showMsg('su-msg', 'error', 'Early Reminder minutes must be a whole number from 0 to 1440.');
+          return;
+        }
+        payload.early_reminder_minutes = parseInt(reminder, 10);
+      }
+
+      try {
+        const res  = await fetch(`/admin/safety/users/${userId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showMsg('su-msg', 'ok', `Safety User ${userId} configuration updated.`);
+          loadSafetyUsers();
+        } else {
+          showMsg('su-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('su-msg', 'error', 'Network error.');
+      }
+    }
+
+    async function saveSafetyUserTelegramChatId(userId) {
+      const input = document.getElementById(`su-chatid-${userId}`);
+      if (!input) return;
+      const raw = input.value.trim();
+
+      let telegramChatId;
+      if (raw === '') {
+        telegramChatId = null;
+      } else if (/^-?\d+$/.test(raw)) {
+        telegramChatId = parseInt(raw, 10);
+      } else {
+        showMsg('su-msg', 'error', 'Telegram Chat ID must be a whole number, or empty to clear.');
+        return;
+      }
+
+      try {
+        const res  = await fetch(`/admin/safety/users/${userId}/telegram-chat-id`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ telegram_chat_id: telegramChatId }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showMsg('su-msg', 'ok', `Safety User ${userId} Telegram Chat ID updated.`);
+          loadSafetyUsers();
+        } else {
+          showMsg('su-msg', 'error', data.detail || `Error ${res.status}`);
+        }
+      } catch {
+        showMsg('su-msg', 'error', 'Network error.');
+      }
+    }
+
+    // ── Daily Check-in History (S8) ─────────────────────────────────────────
+
+    async function loadSafetyDailyStates() {
+      const container = document.getElementById('safetyDailyStateList');
+      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+      try {
+        const res  = await fetch('/admin/safety/daily-states', { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!res.ok) {
+          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          return;
+        }
+        if (data.length === 0) {
+          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No daily state history yet.</div>';
+          return;
+        }
+        const statusColors = { safe: 'var(--gold-light)', missed: '#e07070', pending: 'var(--text-muted)' };
+        container.innerHTML = data.map(s => `
+          <div class="stats-box" style="display:block">
+            <div class="stats-row">
+              <span class="stats-label">User ID</span>
+              <span class="stats-value gold">${esc(s.user_id)}</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Date</span>
+              <span class="stats-value">${esc(s.safety_date)}</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Status</span>
+              <span class="stats-value" style="color:${statusColors[s.status] || 'var(--text-muted)'}">${esc(s.status)}</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Check-in ID</span>
+              <span class="stats-value">${esc(s.checkin_id)}</span>
+            </div>
+          </div>`).join('');
+      } catch {
+        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+      }
+    }
+
+    async function loadSafetyCheckins() {
+      const container = document.getElementById('safetyCheckinList');
+      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+      try {
+        const res  = await fetch('/admin/safety/checkins', { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!res.ok) {
+          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          return;
+        }
+        if (data.length === 0) {
+          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No check-ins recorded yet.</div>';
+          return;
+        }
+        container.innerHTML = data.map(c => {
+          const gps = (c.latitude != null && c.longitude != null)
+            ? `${esc(c.latitude)}, ${esc(c.longitude)}${c.accuracy_m != null ? ` (±${esc(c.accuracy_m)}m)` : ''}`
+            : 'Unavailable';
+          return `
+            <div class="stats-box" style="display:block">
+              <div class="stats-row">
+                <span class="stats-label">User ID</span>
+                <span class="stats-value gold">${esc(c.user_id)}</span>
+              </div>
+              <div class="stats-row">
+                <span class="stats-label">Checked In</span>
+                <span class="stats-value">${esc(c.checked_in_at)}</span>
+              </div>
+              <div class="stats-row">
+                <span class="stats-label">Source</span>
+                <span class="stats-value">${esc(c.source)}</span>
+              </div>
+              <div class="stats-row">
+                <span class="stats-label">GPS</span>
+                <span class="stats-value value-overflow">${gps}</span>
+              </div>
+            </div>`;
+        }).join('');
+      } catch {
+        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+      }
+    }
+
+    // ── Safety Alert History (S8) ───────────────────────────────────────────
+
+    async function loadSafetyAlerts() {
+      const container = document.getElementById('safetyAlertList');
+      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+      try {
+        const res  = await fetch('/admin/safety/alerts', { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!res.ok) {
+          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          return;
+        }
+        if (data.length === 0) {
+          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No alerts recorded yet.</div>';
+          return;
+        }
+        container.innerHTML = data.map(a => `
+          <div class="stats-box" style="display:block">
+            <div class="stats-row">
+              <span class="stats-label">User ID</span>
+              <span class="stats-value gold">${esc(a.user_id)}</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Date</span>
+              <span class="stats-value">${esc(a.safety_date)}</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Type</span>
+              <span class="stats-value">${esc(a.alert_type)}</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Status</span>
+              <span class="stats-value" style="color:${a.status === 'open' ? '#e07070' : 'var(--text-muted)'}">${esc(a.status)}</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Triggered</span>
+              <span class="stats-value">${esc(a.triggered_at)}</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Resolved</span>
+              <span class="stats-value">${esc(a.resolved_at)}</span>
+            </div>
+          </div>`).join('');
+      } catch {
+        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+      }
+    }
+
+    async function loadSafetyLateCheckinAlerts() {
+      const container = document.getElementById('safetyLateCheckinAlertList');
+      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+      try {
+        const res  = await fetch('/admin/safety/late-checkin-alerts', { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!res.ok) {
+          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          return;
+        }
+        if (data.length === 0) {
+          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No late check-in notices yet.</div>';
+          return;
+        }
+        container.innerHTML = data.map(a => `
+          <div class="stats-box" style="display:block">
+            <div class="stats-row">
+              <span class="stats-label">User ID</span>
+              <span class="stats-value gold">${esc(a.user_id)}</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Date</span>
+              <span class="stats-value">${esc(a.safety_date)}</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Check-in ID</span>
+              <span class="stats-value">${esc(a.checkin_id)}</span>
+            </div>
+            <div class="stats-row">
+              <span class="stats-label">Triggered</span>
+              <span class="stats-value">${esc(a.triggered_at)}</span>
+            </div>
+          </div>`).join('');
+      } catch {
+        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+      }
+    }
+
+    // ── SOS History / Management (S7 lifecycle, S8 surfaces it in the panel) ─
+
+    async function loadSafetyEmergencies() {
+      const container = document.getElementById('safetyEmergencyList');
+      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+
+      try {
+        const res  = await fetch('/admin/safety/emergencies', { credentials: 'same-origin' });
+        const data = await res.json();
+
+        if (!res.ok) {
+          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          return;
+        }
+        if (data.length === 0) {
+          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No SOS emergencies recorded.</div>';
+          return;
+        }
+        container.innerHTML = data.map(e => buildSafetyEmergencyCard(e)).join('');
+      } catch {
+        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+      }
+    }
+
+    function buildSafetyEmergencyCard(e) {
+      const statusColors = { open: '#e07070', acknowledged: 'var(--gold-light)', resolved: 'var(--text-muted)' };
+      const statusBadge = `<span style="color:${statusColors[e.status] || 'var(--text-muted)'}">${esc(e.status)}</span>`;
+
+      const gps = (e.latitude != null && e.longitude != null)
+        ? `${esc(e.latitude)}, ${esc(e.longitude)}${e.accuracy_m != null ? ` (±${esc(e.accuracy_m)}m)` : ''}`
+        : 'Unavailable';
+
+      const actions = [];
+      if (e.status === 'open') {
+        actions.push(`<button class="ghost-btn sm" onclick="acknowledgeSafetyEmergency(${e.id})">Acknowledge</button>`);
+      }
+      if (e.status === 'acknowledged') {
+        actions.push(`<button class="ghost-btn sm danger" onclick="resolveSafetyEmergency(${e.id})">Resolve</button>`);
+      }
+
+      return `
+        <div class="stats-box" style="display:block">
+          <div class="stats-row">
+            <span class="stats-label">ID</span>
+            <span class="stats-value gold">${esc(e.id)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Safety User ID</span>
+            <span class="stats-value">${esc(e.user_id)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Status</span>
+            <span class="stats-value">${statusBadge}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Triggered</span>
+            <span class="stats-value">${esc(e.triggered_at)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">GPS</span>
+            <span class="stats-value value-overflow">${gps}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Acknowledged</span>
+            <span class="stats-value">${esc(e.acknowledged_at)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Resolved</span>
+            <span class="stats-value">${esc(e.resolved_at)}</span>
+          </div>
+          ${actions.length ? `<div class="stats-row" style="justify-content:flex-end;gap:0.5rem">${actions.join('')}</div>` : ''}
+        </div>`;
+    }
+
+    async function acknowledgeSafetyEmergency(emergencyId) {
+      try {
+        const res  = await fetch(`/admin/safety/emergencies/${emergencyId}/acknowledge`, {
+          method: 'POST',
+          credentials: 'same-origin',
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showMsg('se-msg', 'ok', `SOS ${emergencyId} acknowledged.`);
+          loadSafetyEmergencies();
+          loadSafetyOverview();
+        } else {
+          showMsg('se-msg', 'error', data.detail || `Error ${res.status}`);
+          loadSafetyEmergencies();
+        }
+      } catch {
+        showMsg('se-msg', 'error', 'Network error.');
+      }
+    }
+
+    async function resolveSafetyEmergency(emergencyId) {
+      if (!confirm(`Resolve SOS ${emergencyId}? This stops escalation.`)) return;
+      try {
+        const res  = await fetch(`/admin/safety/emergencies/${emergencyId}/resolve`, {
+          method: 'POST',
+          credentials: 'same-origin',
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showMsg('se-msg', 'ok', `SOS ${emergencyId} resolved.`);
+          loadSafetyEmergencies();
+          loadSafetyOverview();
+        } else {
+          showMsg('se-msg', 'error', data.detail || `Error ${res.status}`);
+          loadSafetyEmergencies();
+        }
+      } catch {
+        showMsg('se-msg', 'error', 'Network error.');
       }
     }
 
