@@ -62,6 +62,7 @@ codebase. These routes inherit admin_router's Basic Auth the same way as the
 telegram-chat-id route above -- no public/unauthenticated SOS-management
 endpoint is introduced.
 """
+import os
 from datetime import date, datetime, time, timezone
 
 from fastapi import Depends, HTTPException
@@ -74,12 +75,36 @@ from safety_deadline import local_safety_date
 from safety_notify import acknowledge_sos, resolve_sos
 
 
+def _safety_checkin_url(user: "models.SafetyUser") -> str:
+    """The full canonical public Safety Check-in entry URL for a
+    SafetyUser, for Admin to copy into the normal Redirect Engine's
+    destination_url -- preserves the locked S2 architecture unchanged
+    (permanent SHADZ redirect slug -> GET /safety/c/{secure_token}) rather
+    than introducing any parallel routing.
+
+    Base URL follows the same env-var-with-default pattern as
+    media_admin._make_public_url's R2_PUBLIC_BASE_URL -- overridable via
+    SHADZ_PUBLIC_BASE_URL, defaulting to the documented production domain
+    (see CLAUDE.md) so this never needs a literal hostname hard-coded into
+    request-handling logic.
+
+    Only ever called with user.secure_token (the existing S2 public-entry
+    key) -- never nfc_token -- and the token value itself is not exposed by
+    any Safety admin schema; only this fully-assembled URL is.
+    """
+    base = os.environ.get("SHADZ_PUBLIC_BASE_URL", "https://shadz.io").rstrip("/")
+    return f"{base}/safety/c/{user.secure_token}"
+
+
 class SafetyUserOut(BaseModel):
     """S8 extends this with the rest of a SafetyUser's own visible
     configuration (timezone, daily_deadline, early_reminder_minutes) so the
     Admin Panel can show it -- still deliberately excludes nfc_token
-    (physical-token lookup key) and secure_token (public-entry key),
-    neither of which Admin ever needs to see or manage.
+    (physical-token lookup key) and secure_token (public-entry key) in raw
+    form, neither of which Admin ever needs to see or manage. checkin_url
+    is the one derived, safe-to-share artifact of secure_token: the full
+    browser entry URL, for pasting into a normal Redirect Engine
+    destination_url -- read-only, no edit/regenerate action exists here.
 
     timezone here is visibility-only: it is not a field on
     SafetyUserConfigUpdateRequest below, so no PATCH can change it in S8 v1
@@ -91,6 +116,7 @@ class SafetyUserOut(BaseModel):
     daily_deadline:          time
     early_reminder_minutes:  int
     telegram_chat_id:        int | None
+    checkin_url:             str
 
     model_config = {"from_attributes": True}
 
@@ -256,13 +282,32 @@ class SafetyLateCheckinAlertOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+def _to_safety_user_out(user: "models.SafetyUser") -> SafetyUserOut:
+    """Build the admin-facing SafetyUserOut for one SafetyUser, including
+    the derived checkin_url -- SafetyUserOut.model_config's from_attributes
+    alone can't populate checkin_url since it isn't a real SafetyUser
+    column, so every route below constructs it through this one helper
+    rather than returning the raw ORM row directly."""
+    return SafetyUserOut(
+        id=user.id,
+        display_name=user.display_name,
+        is_active=user.is_active,
+        timezone=user.timezone,
+        daily_deadline=user.daily_deadline,
+        early_reminder_minutes=user.early_reminder_minutes,
+        telegram_chat_id=user.telegram_chat_id,
+        checkin_url=_safety_checkin_url(user),
+    )
+
+
 def register_safety_admin_routes(admin_router) -> None:
     """Register the Safety Engine admin routes onto admin_router."""
 
     @admin_router.get("/safety/users", response_model=list[SafetyUserOut])
     def list_safety_users(db: Session = Depends(get_db)):
         """List every SafetyUser, for looking up the id to configure."""
-        return db.query(models.SafetyUser).order_by(models.SafetyUser.id).all()
+        users = db.query(models.SafetyUser).order_by(models.SafetyUser.id).all()
+        return [_to_safety_user_out(u) for u in users]
 
     @admin_router.patch("/safety/users/{safety_user_id}", response_model=SafetyUserOut)
     def update_safety_user_config(
@@ -333,7 +378,7 @@ def register_safety_admin_routes(admin_router) -> None:
             user.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(user)
-        return user
+        return _to_safety_user_out(user)
 
     @admin_router.patch("/safety/users/{safety_user_id}/telegram-chat-id", response_model=SafetyUserOut)
     def update_safety_user_telegram_chat_id(
@@ -353,7 +398,7 @@ def register_safety_admin_routes(admin_router) -> None:
         user.telegram_chat_id = payload.telegram_chat_id
         db.commit()
         db.refresh(user)
-        return user
+        return _to_safety_user_out(user)
 
     @admin_router.get("/safety/emergencies", response_model=list[SafetyEmergencyOut])
     def list_safety_emergencies(db: Session = Depends(get_db)):

@@ -152,14 +152,17 @@ class SafetyAdminEndpointsS61Tests(unittest.TestCase):
         self.assertEqual(payload["list_status"], 200)
         self.assertEqual(len(payload["list_body"]), 1)
         row = payload["list_body"][0]
-        # nfc_token and secure_token are deliberately never exposed by this
-        # admin endpoint. S8 added timezone/daily_deadline/
+        # nfc_token and raw secure_token are deliberately never exposed by
+        # this admin endpoint. S8 added timezone/daily_deadline/
         # early_reminder_minutes visibility -- see test_admin_safety_module_s8.py.
+        # A later S8 UX fix added checkin_url, a derived, safe-to-share
+        # artifact of secure_token (see test_admin_safety_checkin_link_and_timezone_s8.py).
         self.assertEqual(
             set(row.keys()),
             {
                 "id", "display_name", "is_active", "telegram_chat_id",
                 "timezone", "daily_deadline", "early_reminder_minutes",
+                "checkin_url",
             },
         )
         self.assertEqual(row["display_name"], "Admin Route User")

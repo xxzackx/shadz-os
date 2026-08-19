@@ -3770,6 +3770,29 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
     // an invalid transition, it does not replace the server's own fail-closed
     // enforcement (a stale card can still get a 409, handled below).
 
+    // Every Safety timestamp (check-in, alert, late-checkin, SOS) is stored
+    // and transmitted as server-authoritative UTC -- unchanged. This
+    // formatter is display-only: it converts to Asia/Phnom_Penh (Cambodia)
+    // purely for how the Admin Panel renders it, and does not touch
+    // SafetyUser.timezone or any deadline-engine computation (those remain
+    // exactly as safety_deadline.py defines them). Pydantic/FastAPI
+    // serializes a naive-looking UTC datetime without a 'Z'/offset suffix
+    // (see safety_deadline._as_aware_utc's docstring on SQLite stripping
+    // tzinfo) -- append 'Z' before parsing so the browser's Date treats it
+    // as UTC rather than local time.
+    function fmtSafetyTime(isoString) {
+      if (!isoString) return '—';
+      const hasOffset = /[zZ]|[+-]\d{2}:\d{2}$/.test(isoString);
+      const d = new Date(hasOffset ? isoString : `${isoString}Z`);
+      if (isNaN(d.getTime())) return isoString;
+      const formatted = d.toLocaleString('en-US', {
+        timeZone: 'Asia/Phnom_Penh',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+      });
+      return `${formatted} (Cambodia)`;
+    }
+
     function loadAllSafetyData() {
       loadSafetyOverviewPanel();
       loadSafetyUsers();
@@ -3869,6 +3892,14 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
             ${toggleBtn}
           </div>
           <div class="stats-row">
+            <span class="stats-label">Check-in Link</span>
+            <input type="text" id="su-checkinurl-${esc(u.id)}" value="${escVal(u.checkin_url)}"
+                   readonly autocomplete="off" style="width:auto;flex:1;margin:0" />
+          </div>
+          <div class="stats-row" style="justify-content:flex-end">
+            <button class="ghost-btn sm" onclick="copySafetyCheckinLink(${esc(u.id)})">Copy Link</button>
+          </div>
+          <div class="stats-row">
             <span class="stats-label">Timezone</span>
             <span class="stats-value">${esc(u.timezone)} <span style="color:var(--text-muted);font-size:0.85em">(read-only)</span></span>
           </div>
@@ -3895,6 +3926,23 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
             <button class="ghost-btn sm" onclick="saveSafetyUserTelegramChatId(${esc(u.id)})">Save Telegram ID</button>
           </div>
         </div>`;
+    }
+
+    // Read-only Check-in Link copy -- no edit/regenerate action exists here.
+    // Preserves the locked S2 architecture (permanent SHADZ redirect slug ->
+    // GET /safety/c/{token}) exactly; this only copies the URL the backend
+    // already computed (safety_admin._safety_checkin_url) -- the raw public
+    // token and the physical NFC token are never sent to the browser at all.
+    async function copySafetyCheckinLink(userId) {
+      const input = document.getElementById(`su-checkinurl-${userId}`);
+      if (!input) return;
+      try {
+        await navigator.clipboard.writeText(input.value);
+        showMsg('su-msg', 'ok', `Check-in link for Safety User ${userId} copied.`);
+      } catch {
+        input.select();
+        showMsg('su-msg', 'error', 'Could not copy automatically -- link is selected, copy manually.');
+      }
     }
 
     async function setSafetyUserActive(userId, active) {
@@ -4063,7 +4111,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
               </div>
               <div class="stats-row">
                 <span class="stats-label">Checked In</span>
-                <span class="stats-value">${esc(c.checked_in_at)}</span>
+                <span class="stats-value">${esc(fmtSafetyTime(c.checked_in_at))}</span>
               </div>
               <div class="stats-row">
                 <span class="stats-label">Source</span>
@@ -4116,11 +4164,11 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
             </div>
             <div class="stats-row">
               <span class="stats-label">Triggered</span>
-              <span class="stats-value">${esc(a.triggered_at)}</span>
+              <span class="stats-value">${esc(fmtSafetyTime(a.triggered_at))}</span>
             </div>
             <div class="stats-row">
               <span class="stats-label">Resolved</span>
-              <span class="stats-value">${esc(a.resolved_at)}</span>
+              <span class="stats-value">${esc(fmtSafetyTime(a.resolved_at))}</span>
             </div>
           </div>`).join('');
       } catch {
@@ -4158,7 +4206,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
             </div>
             <div class="stats-row">
               <span class="stats-label">Triggered</span>
-              <span class="stats-value">${esc(a.triggered_at)}</span>
+              <span class="stats-value">${esc(fmtSafetyTime(a.triggered_at))}</span>
             </div>
           </div>`).join('');
       } catch {
@@ -4222,7 +4270,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
           </div>
           <div class="stats-row">
             <span class="stats-label">Triggered</span>
-            <span class="stats-value">${esc(e.triggered_at)}</span>
+            <span class="stats-value">${esc(fmtSafetyTime(e.triggered_at))}</span>
           </div>
           <div class="stats-row">
             <span class="stats-label">GPS</span>
@@ -4230,11 +4278,11 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
           </div>
           <div class="stats-row">
             <span class="stats-label">Acknowledged</span>
-            <span class="stats-value">${esc(e.acknowledged_at)}</span>
+            <span class="stats-value">${esc(fmtSafetyTime(e.acknowledged_at))}</span>
           </div>
           <div class="stats-row">
             <span class="stats-label">Resolved</span>
-            <span class="stats-value">${esc(e.resolved_at)}</span>
+            <span class="stats-value">${esc(fmtSafetyTime(e.resolved_at))}</span>
           </div>
           ${actions.length ? `<div class="stats-row" style="justify-content:flex-end;gap:0.5rem">${actions.join('')}</div>` : ''}
         </div>`;
