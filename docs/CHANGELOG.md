@@ -2,9 +2,42 @@
 
 ---
 
+## SHADZ Safety Engine v1 — Phase S6.1: Safety Telegram Routing / Recipient Separation
+
+**Status:** Complete, deployed, and production-verified. **Phase S6.1 is now complete and closed.** No later Safety Engine phase (S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
+
+**Scope:** Replaces S6's temporary single shared `SAFETY_TELEGRAM_CHAT_ID` destination with real per-domain recipient routing. Adds `safety_users.telegram_chat_id` (nullable), a new `SafetyLateCheckinAlert` one-shot/retry delivery path (`safety_late_checkin_alerts`, deliberately a separate table from `SafetyAlert` rather than a third `alert_type`, to avoid altering `SafetyAlert`'s live `CHECK` constraint), and new minimal authenticated `SafetyUser` Telegram-configuration admin endpoints (`safety_admin.py`). `SafetyUser` remains fully independent of `BotClient` — no coupling introduced. No S5 deadline/state logic changed, no changes to Redirect Engine, Page Engine, or Activation Engine.
+
+**Runtime commit:** `ca9174b0d53ba90a9d0bf95be6c63e20af45c901` (`ca9174b`) — `feat(safety): separate telegram notification recipients`
+
+**Locked routing (final Safety recipient design):**
+- Early Reminder → the target `SafetyUser.telegram_chat_id` — never falls back to Admin or another user when missing/invalid; that reminder simply fails closed and stays retryable.
+- Missed Check-in → SHADZ Admin (`SAFETY_TELEGRAM_CHAT_ID`)
+- Late Check-in → SHADZ Admin (`SAFETY_TELEGRAM_CHAT_ID`)
+- SOS → SHADZ Admin (`SAFETY_TELEGRAM_CHAT_ID`)
+- SOS escalation → SHADZ Admin (`SAFETY_TELEGRAM_CHAT_ID`)
+
+**Locked design facts:**
+- `SafetyDailyState`'s `missed` remains terminal after a late check-in — S6.1 only adds an Admin notification for the late check-in event; it never rewrites daily state back to `safe` (still deferred to S7).
+- The late-checkin claim (`claim_late_checkin_alert`) only flushes, never commits — it joins `submit_check_in`'s single existing transaction, so the check-in insert, any daily-state change, and the late-checkin claim commit or roll back together atomically.
+- `collect_due_late_checkin_alerts` follows the same collect → claim-lease → refresh shape, delivery lease, and retry contract as S6's `collect_due_missed_alerts`, through the same `expire_on_commit=False` collector session — audited directly against the real ORM-handoff boundary, including a batch where SOS is collected immediately after it.
+- The new admin endpoints (`GET /admin/safety/users`, `PATCH /admin/safety/users/{id}/telegram-chat-id`) sit behind the existing `admin_router` / `verify_admin` Basic Auth, expose only `id`/`display_name`/`is_active`/`telegram_chat_id` (never `nfc_token`), and require `telegram_chat_id` explicitly in the PATCH body (`null` clears it; an omitted field is rejected `422` rather than silently defaulting to a clear).
+
+**Files changed:** `safety_admin.py` (new), `safety_notify.py`, `safety_public.py`, `safety_telegram.py`, `models.py` (`SafetyUser.telegram_chat_id`, `SafetyLateCheckinAlert`), `main.py` (migration, admin route registration, notify-loop wiring), `.env.example` (`SAFETY_TELEGRAM_CHAT_ID` re-scoped to Admin-only), `tests/test_safety_telegram_routing_s6_1.py` (new), `tests/test_safety_admin_endpoints_s6_1.py` (new), `tests/test_safety_notify_orm_handoff_s6.py` (extended), `tests/test_safety_notify_s6.py` (updated).
+
+**Full regression:** 839 passed, 67 subtests passed.
+
+**Production verification:** VPS `HEAD == origin/master == ca9174b0d53ba90a9d0bf95be6c63e20af45c901`; `shadz.service` active and enabled; local `/health` 200; public `/health` 200; `telegram_chat_id` migration confirmed present; `safety_late_checkin_alerts` table confirmed present; startup logs clean.
+
+**Live production test:** Recipient separation verified with real Telegram delivery to distinct destinations. `SafetyUser` id 1 (`telegram_chat_id` initially `NULL`) was temporarily set to a second Telegram test account to verify live routing, then cleared to `NULL` to confirm a missing target recipient fails closed rather than falling back to Admin or another recipient. The second Telegram test account was set again afterward as the current recipient — the final value was not restored to the pre-test `NULL` state.
+
+**Deferred (not implemented in S6.1):** late check-in *resolution* (rewriting `missed` back to `safe`) and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). Next active phase: **S7 — Late Check-in Resolution + SOS Acknowledge / Resolution** (not started).
+
+---
+
 ## SHADZ Safety Engine v1 — Phase S6: Telegram Reminder + Missed Alert + SOS Escalation
 
-**Status:** Complete, deployed, and production-verified. **Phase S6 is now complete and closed.** No later Safety Engine phase (S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete. Before S7, the next Safety Engine work is **S6.1 — Safety Telegram Routing / Recipient Separation** (not started) — see "Important limitation" below.
+**Status:** Complete, deployed, and production-verified. **Phase S6 is now complete and closed.** Phase S6.1 (Safety Telegram Routing / Recipient Separation) is also complete and closed (`ca9174b`). No later Safety Engine phase (S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
 
 **Scope:** New `safety_notify.py` (due-notification collection, delivery leasing, and retry layer) and `safety_telegram.py` (Telegram delivery layer) implementing Early Reminder, Missed Check-in, and SOS Telegram notifications on top of S5's authoritative `SafetyDailyState` and S4's `SafetyEmergency`. No S5 deadline/state logic changed, no BotClient/self-service Telegram runtime behavior touched, no coupling of `SafetyUser` to `BotClient`, no Admin Safety UI. No changes to Redirect Engine, Page Engine, or Activation Engine.
 
@@ -33,9 +66,9 @@
 
 **Live production test:** Early Reminder was received on Telegram, with `notified_at` set, `delivery_claimed_at` cleared, and the daily state remaining `pending`. Missed Check-in was received on Telegram after S5 transitioned the day `pending → missed`, with `notified_at` set and `delivery_claimed_at` cleared. Immediate SOS was received on Telegram; the same open SOS re-escalated successfully once the retry window was forced past 5 minutes, with `last_notified_at` advancing and `notification_claimed_at` clearing after each successful send while the emergency remained `open`. All S6 temporary live-test users/data were removed afterward; orphan counts for alerts, emergencies, daily states, and check-ins were all confirmed zero.
 
-**Important limitation — not the final Safety recipient design:** S6 intentionally sends every notification (Early Reminder, Missed Check-in, and SOS) to one shared `SAFETY_TELEGRAM_CHAT_ID` destination. This is accepted **only** for S6 engine completion/testing and must not be read as the final Safety recipient design. **Next Safety Engine work — S6.1 (Safety Telegram Routing / Recipient Separation, not started)** — will route Early Reminder to the `SafetyUser` themselves, and Missed Check-in and SOS (plus its escalation) to SHADZ Admin, without coupling `SafetyUser` to `BotClient`; the same physical Telegram bot may be reused, but the two domains stay separate.
+**Historical limitation (resolved in S6.1):** S6 originally sent every notification (Early Reminder, Missed Check-in, and SOS) to one shared `SAFETY_TELEGRAM_CHAT_ID` destination as a temporary stand-in, accepted only for S6 engine completion/testing. This was resolved in Phase S6.1 (`ca9174b`) — see the Phase S6.1 entry above for the final locked recipient routing.
 
-**Deferred (not implemented in S6):** recipient routing/separation (Phase S6.1), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). Next active phase: **S6.1 — Safety Telegram Routing / Recipient Separation** (not started).
+**Deferred (not implemented in S6):** recipient routing/separation (Phase S6.1), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). S6.1 was subsequently completed in runtime commit `ca9174b` (see the Phase S6.1 entry above); S7 and later phases remain not started.
 
 ---
 
