@@ -2,9 +2,57 @@
 
 ---
 
+## SHADZ Safety Engine v1 — Phase S8 + S8.1: SHADZ Admin Safety Module + Hardening (Closure)
+
+**Status:** Complete, deployed, and production-verified. **This is the first formal closure documentation commit for Phase S8** — S8's runtime work landed across three commits (`af93655`, `56ff51e`, `5076499`) without a closure documentation commit at the time. Phase S8.1 then completed the one remaining S8 usability/hardening item (same-day Daily Deadline reschedule) before any S8 closure documentation existed, so this entry closes **S8 and S8.1 together as one coherent closure record** — no earlier S8 closure documentation commit exists, and none is implied by this entry. No later Safety Engine phase has started or is claimed complete.
+
+**Scope — Phase S8 (SHADZ Admin Safety Module + Hardening):** Adds the missing read/audit and configuration surface the Admin Panel needs, split between "immediate incident response" (Admin Telegram, already live since S6/S6.1/S7) and "management / visibility / configuration / audit / history" (Admin Panel, new in S8):
+- SHADZ Admin Safety module in `static/admin.html`, reachable from the existing Admin nav/home card pattern
+- Admin Safety overview (active `SafetyUser` count, today's pending/safe/missed breakdown, open missed-checkin alert count, active SOS incident count)
+- `SafetyUser` management — list, activate/deactivate, `daily_deadline` and `early_reminder_minutes` configuration (`timezone` remains read-only; provisioning/create/delete stays out of scope)
+- Daily check-in history (`SafetyCheckIn`, GPS included) and daily-state history (`SafetyDailyState`)
+- `SafetyAlert` history (early-reminder / missed-checkin) and late-check-in alert history (`SafetyLateCheckinAlert`) — read-only audit, no action buttons
+- `SafetyEmergency` / SOS management — list (full audit history, resolved rows included) plus authenticated acknowledge/resolve routes reusing S7's `safety_notify.acknowledge_sos`/`resolve_sos` unchanged
+- Admin Safety authentication and hardening — every new route inherits the existing `admin_router`/`verify_admin` Basic Auth; no parallel auth or lifecycle logic introduced
+- Check-in Link display + Copy Link (the full public `/safety/c/{secure_token}` URL, derived and read-only — raw `secure_token`/`nfc_token` are never exposed by any S8 admin schema)
+- Admin timestamps localized for Cambodia display (`Asia/Phnom_Penh`) in the Admin Panel UI
+- Late check-in visible in the Admin Panel (via the late-checkin alert history above) and routed to SHADZ Admin Telegram (S6.1 routing, unchanged)
+- SOS routed to SHADZ Admin Telegram with GPS (S6/S7 routing, unchanged) and visible as `open` in the Admin Panel
+- Telegram SOS inline actions: `ACKNOWLEDGE` button on an `open` SOS message; `acknowledged` swaps the message to a `RESOLVE` button; `resolved` removes the keyboard entirely (explicit empty keyboard on edit, never omission) — the tap handler fails closed on any chat id other than the configured Admin recipient and reuses `safety_notify.acknowledge_sos`/`resolve_sos` exactly as the Admin Panel routes do, so the strict S7 `open → acknowledged → resolved` lifecycle (idempotency, TOCTOU handling) is never duplicated
+
+**Scope — Phase S8.1 (remaining S8 hardening/usability completion tranche): Same-Day Daily Deadline reschedule.** The same-day Daily Deadline reschedule was an already-known, explicitly carried-forward remaining S8 usability item — not a gap newly discovered by generic reconnaissance: changing a `SafetyUser`'s `daily_deadline` had no effect on that user's own already-created `SafetyDailyState` row for today until the next local safety day, so an Admin correcting a wrong deadline earlier in the day saw no effect until tomorrow. S8.1 completed exactly that known remaining work. A subsequent hardening/security review of Admin Safety authorization/CSRF/IDOR/lifecycle-integrity/stale-callback behavior confirmed no additional material S8 runtime gap beyond it (see the Locked design facts above). S8.1 closes the deadline-reschedule gap as follows:
+- When an Admin PATCH actually changes `daily_deadline` **and** today's `SafetyDailyState` row (this user's own local safety date, via the existing `safety_deadline.local_safety_date`) is still `pending`, that same row's `deadline_utc` is recalculated in place using the existing `safety_deadline.local_deadline_utc` helper — no duplicated timezone/deadline math
+- The row's id is preserved; no new `SafetyDailyState` row is ever created by this route
+- `safe` and `missed` states are left completely untouched
+- Past-day states are left completely untouched — only today's row qualifies
+- `timezone` remains read-only, unchanged from S8
+- SOS lifecycle and missed-alert lifecycle are never touched by this change
+- If the recalculated deadline is already in the past, the row is simply left `pending` — the normal evaluator transitions it to `missed` on its own next tick, exactly as for any other pending row past its deadline
+
+**Runtime commits:**
+- S8: `af93655101dffd71d75a8aad9783ff98e6a4c459` (`af93655`) — `feat(safety): add admin safety module and hardening`; `56ff51eefdf961b801d492f0ab15fe1eb3dd54eb` (`56ff51e`) — `fix(safety): expose check-in link and localize admin timestamps`; `50764995aaa042775ac88dfb2579bd6b349beb25` (`5076499`) — `feat(safety): add telegram sos inline actions`
+- S8.1 (production fix): `284352e330145ce129e7bb08f9a3eac9a09b8c95` (`284352e`) — `fix(safety): reschedule pending same-day deadline`
+- S8.1 (test-fixture maintenance, non-runtime): `4afd4152410f0f071cddf705151fa7e8f8cc15eb` (`4afd415`) — `test(safety): stabilize s6 evaluator fixture date` — made a pre-existing wall-clock-dependent S6 test (`test_s5_evaluator_unaffected_by_s6_module`) deterministic by explicitly setting its `SafetyUser.created_at` earlier than its fixed evaluation date, with no change to production Safety semantics
+
+**Files changed:** S8 — `safety_admin.py`, `static/admin.html`, `tests/test_admin_safety_backend_s8.py` (new), `tests/test_admin_safety_config_semantics_s8.py` (new), `tests/test_admin_safety_module_s8.py` (new), `tests/test_admin_safety_checkin_link_and_timezone_s8.py` (new), `tests/test_safety_admin_endpoints_s6_1.py` (updated), `bot_runtime.py`, `safety_telegram.py`, `tests/test_sos_inline_telegram_actions.py` (new). S8.1 — `safety_admin.py` (same-day recalculation), `tests/test_admin_safety_same_day_deadline_recalc_s8.py` (new), `tests/test_safety_notify_s6.py` (fixture-only fix).
+
+**Focused test result (S8.1):** `tests/test_admin_safety_same_day_deadline_recalc_s8.py` — 6/6 passed (today-pending recalculates; today-safe unchanged; today-missed unchanged; past-day-pending unchanged; no-state-today creates no row; recalculated-deadline-already-past stays pending). Previously stale S6 evaluator test (`test_safety_notify_s6.py::SafetyNotifyS6Tests::test_s5_evaluator_unaffected_by_s6_module`) — 1/1 passed.
+
+**Full regression:** Full Safety Engine v1 suite (S1–S8.1, 17 files) — 329/329 passed, 0 failed. Full repository pytest suite — 990/990 passed, 0 failed. `python3 -m py_compile` clean on `main.py`, `models.py`, `safety_admin.py`, `safety_deadline.py`, `safety_notify.py`, `safety_public.py`, `bot_runtime.py`. `git diff --check` clean.
+
+**Production verification:** VPS `HEAD == origin/master == 4afd4152410f0f071cddf705151fa7e8f8cc15eb`; working tree clean; `shadz.service` active and enabled; `/health` 200; `127.0.0.1:8000` listening; restart journal clean.
+
+**Live production test (S8.1 same-day deadline reschedule):** A fresh temporary `SafetyUser` was created with a `pending` `SafetyDailyState` for the current day; an Admin PATCH changed `daily_deadline`; the same `SafetyDailyState` row id remained unchanged; `deadline_utc` updated immediately; the state remained `pending`; the Early Reminder fired at the newly recalculated schedule and routed to the `SafetyUser`'s own Telegram recipient (S6.1 routing, unchanged); the deadline then passed without a check-in and the Missed Check-in alert fired, routed to SHADZ Admin Telegram (S6/S6.1 routing, unchanged). The temporary live-test Safety data was removed afterward.
+
+**Final production Safety state (after cleanup):** Only `MayMay` remains as the retained production `SafetyUser` — active, timezone `Asia/Phnom_Penh`, daily deadline `10:00`, early reminder `15` minutes, with a fresh current `SafetyDailyState` recreated after cleanup. (`secure_token`, `nfc_token`, the check-in URL, and the Telegram chat id are deliberately not recorded here — same exclusion S6.1's admin endpoints already apply to `nfc_token`.)
+
+**Deferred:** No further Safety Engine v1 phase is currently planned beyond S8 + S8.1.
+
+---
+
 ## SHADZ Safety Engine v1 — Phase S7: Late Check-in Resolution + SOS Acknowledge / Resolution
 
-**Status:** Runtime complete, deployed, and production-verified. **Phase S7 closure is pending this documentation commit** (VPS has not yet been fast-forwarded to the closure commit). No later Safety Engine phase (S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
+**Status:** Runtime complete, deployed, and production-verified. **Phase S7 is now complete and closed** (`ea48f90`). Phase S8 (SHADZ Admin Safety Module + Hardening) and Phase S8.1 (same-day Daily Deadline usability completion) are also complete, deployed, and production-verified — see the Phase S8 + S8.1 entry above. No further Safety Engine v1 phase is currently planned.
 
 **Scope:** Adds an explicit resolution lifecycle for the two urgent Safety Engine states, reusing `SafetyAlert.status`/`resolved_at`/`resolved_checkin_id` and `SafetyEmergency.status`/`acknowledged_at`/`resolved_at` — columns present in the production schema since the S6 and S4 table creations respectively but unused until now, so **no migration was required**. New functions `resolve_missed_checkin_alert`, `acknowledge_sos`, and `resolve_sos` in `safety_notify.py`; `resolve_missed_checkin_alert` is wired into `safety_public.submit_check_in`'s existing late-check-in path. New admin routes in `safety_admin.py` (`GET /admin/safety/emergencies`, `POST /admin/safety/emergencies/{id}/acknowledge`, `POST /admin/safety/emergencies/{id}/resolve`), behind the existing `admin_router`/`verify_admin` Basic Auth. No S5 deadline/state logic changed, no S6.1 Telegram recipient routing changed. No changes to Redirect Engine, Page Engine, or Activation Engine.
 
@@ -31,13 +79,13 @@
 
 **Live production test:** Controlled functional test confirmed a late valid check-in resolves the matching `missed_checkin` `SafetyAlert` with correct `resolved_at`/`resolved_checkin_id`, scoped to the correct user/date; `SafetyDailyState.status == "missed"` remains unchanged; a normal check-in does not acknowledge or resolve SOS; the SOS lifecycle enforces strict `open → acknowledged → resolved` with a direct `open → resolved` attempt rejected `409`; SOS escalation continues while `open` or `acknowledged` and stops only once `resolved`; repeated SOS resolve remained idempotent; resolved SOS history stays persisted and auditable; S6.1 Telegram recipient separation is unchanged. The temporary `SafetyUser` and all child rows created for this test were removed afterward.
 
-**Deferred (not implemented in S7):** Admin Safety Module / hardening (Phase S8) — no broader Admin Safety UI beyond the two new SOS routes above. Next active phase: **S8 — SHADZ Admin Safety Module + Hardening** (not started).
+**Deferred (not implemented in S7):** Admin Safety Module / hardening (Phase S8) — no broader Admin Safety UI beyond the two new SOS routes above. S8 (runtime `af93655`/`56ff51e`/`5076499`) and S8.1 (runtime `284352e`) were subsequently completed (see the Phase S8 + S8.1 entry above); no further Safety Engine v1 phase is currently planned.
 
 ---
 
 ## SHADZ Safety Engine v1 — Phase S6.1: Safety Telegram Routing / Recipient Separation
 
-**Status:** Complete, deployed, and production-verified. **Phase S6.1 is now complete and closed.** Phase S7 (Late Check-in Resolution + SOS Acknowledge / Resolution) runtime is also complete, deployed, and production-verified (`b3fcb6e`); its closure is pending this documentation commit. No later Safety Engine phase (S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
+**Status:** Complete, deployed, and production-verified. **Phase S6.1 is now complete and closed.** Phase S7 (Late Check-in Resolution + SOS Acknowledge / Resolution) is also complete and closed (`ea48f90`). Phase S8 and Phase S8.1 have since also been completed, deployed, and production-verified — see the Phase S8 + S8.1 entry above.
 
 **Scope:** Replaces S6's temporary single shared `SAFETY_TELEGRAM_CHAT_ID` destination with real per-domain recipient routing. Adds `safety_users.telegram_chat_id` (nullable), a new `SafetyLateCheckinAlert` one-shot/retry delivery path (`safety_late_checkin_alerts`, deliberately a separate table from `SafetyAlert` rather than a third `alert_type`, to avoid altering `SafetyAlert`'s live `CHECK` constraint), and new minimal authenticated `SafetyUser` Telegram-configuration admin endpoints (`safety_admin.py`). `SafetyUser` remains fully independent of `BotClient` — no coupling introduced. No S5 deadline/state logic changed, no changes to Redirect Engine, Page Engine, or Activation Engine.
 
@@ -64,13 +112,13 @@
 
 **Live production test:** Recipient separation verified with real Telegram delivery to distinct destinations. `SafetyUser` id 1 (`telegram_chat_id` initially `NULL`) was temporarily set to a second Telegram test account to verify live routing, then cleared to `NULL` to confirm a missing target recipient fails closed rather than falling back to Admin or another recipient. The second Telegram test account was set again afterward as the current recipient — the final value was not restored to the pre-test `NULL` state.
 
-**Deferred (not implemented in S6.1):** late/missed check-in alert resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). S7 was subsequently completed in runtime commit `b3fcb6e` (see the Phase S7 entry above); S8 and later phases remain not started.
+**Deferred (not implemented in S6.1):** late/missed check-in alert resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). S7 was subsequently completed in runtime commit `b3fcb6e` (see the Phase S7 entry above); S8 (`af93655`/`56ff51e`/`5076499`) and S8.1 (`284352e`) have since also been completed — see the Phase S8 + S8.1 entry above. No further Safety Engine v1 phase is currently planned.
 
 ---
 
 ## SHADZ Safety Engine v1 — Phase S6: Telegram Reminder + Missed Alert + SOS Escalation
 
-**Status:** Complete, deployed, and production-verified. **Phase S6 is now complete and closed.** Phase S6.1 (Safety Telegram Routing / Recipient Separation) is also complete and closed (`ca9174b`). No later Safety Engine phase (S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
+**Status:** Complete, deployed, and production-verified. **Phase S6 is now complete and closed.** Phase S6.1 (Safety Telegram Routing / Recipient Separation) is also complete and closed (`ca9174b`). Phase S7, Phase S8, and Phase S8.1 have since also been completed, deployed, and production-verified — see the Phase S7 entry and the Phase S8 + S8.1 entry above.
 
 **Scope:** New `safety_notify.py` (due-notification collection, delivery leasing, and retry layer) and `safety_telegram.py` (Telegram delivery layer) implementing Early Reminder, Missed Check-in, and SOS Telegram notifications on top of S5's authoritative `SafetyDailyState` and S4's `SafetyEmergency`. No S5 deadline/state logic changed, no BotClient/self-service Telegram runtime behavior touched, no coupling of `SafetyUser` to `BotClient`, no Admin Safety UI. No changes to Redirect Engine, Page Engine, or Activation Engine.
 
@@ -101,13 +149,13 @@
 
 **Historical limitation (resolved in S6.1):** S6 originally sent every notification (Early Reminder, Missed Check-in, and SOS) to one shared `SAFETY_TELEGRAM_CHAT_ID` destination as a temporary stand-in, accepted only for S6 engine completion/testing. This was resolved in Phase S6.1 (`ca9174b`) — see the Phase S6.1 entry above for the final locked recipient routing.
 
-**Deferred (not implemented in S6):** recipient routing/separation (Phase S6.1), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). S6.1 was subsequently completed in runtime commit `ca9174b` (see the Phase S6.1 entry above); S7 and later phases remain not started.
+**Deferred (not implemented in S6):** recipient routing/separation (Phase S6.1), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). S6.1 was subsequently completed in runtime commit `ca9174b` (see the Phase S6.1 entry above); S7 (`b3fcb6e`), S8 (`af93655`/`56ff51e`/`5076499`), and S8.1 (`284352e`) have since also been completed — see the Phase S7 entry and the Phase S8 + S8.1 entry above. No further Safety Engine v1 phase is currently planned.
 
 ---
 
 ## SHADZ Safety Engine v1 — Phase S5: Daily Safety State / Deadline Engine
 
-**Status:** Complete, deployed, and production-verified. **Phase S5 is now complete and closed.** Phase S6 (Telegram Reminder + Missed Alert + SOS Escalation) is also complete and closed (`28c4cba`; production ORM-handoff hotfix `e9bbfaa`). No later Safety Engine phase (S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
+**Status:** Complete, deployed, and production-verified. **Phase S5 is now complete and closed.** Phase S6 (Telegram Reminder + Missed Alert + SOS Escalation) is also complete and closed (`28c4cba`; production ORM-handoff hotfix `e9bbfaa`). Phase S6.1, Phase S7, Phase S8, and Phase S8.1 have since also been completed, deployed, and production-verified — see their respective entries above.
 
 **Scope:** New `SafetyDailyState` model and `safety_deadline.py` module implementing the daily safety lifecycle for each `SafetyUser` — timezone-aware local safety-day/deadline calculation, on-time check-in resolution, deadline evaluation, restart/multi-day recovery, and a lightweight periodic background trigger. No Telegram runtime, no reminder/escalation delivery, no late-check-in resolution workflow, no Admin Safety UI. No changes to Redirect Engine, Page Engine, Activation Engine, or `BotClient`.
 
@@ -133,13 +181,13 @@
 
 **Live production test:** a temporary test `SafetyUser` submitted a valid on-time `I'M SAFE` check-in through the public token flow with browser GPS captured; the check-in persisted, and the corresponding `SafetyDailyState` for that local safety day correctly resolved to `safe` with `checkin_id` linked to the new check-in; the public check-in route returned 200. Testing data created during Safety Engine development is temporary and will be deleted/reset before final publication; formal `SafetyUser` configuration will later be managed through the SHADZ Admin Panel.
 
-**Deferred (not implemented in S5):** Telegram reminders / missed-alert / SOS escalation (Phase S6), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). Next active phase: **S6 — Telegram Reminder + Missed Alert + SOS Escalation** (not started).
+**Deferred (not implemented in S5):** Telegram reminders / missed-alert / SOS escalation (Phase S6), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). S6 (`28c4cba`), S6.1 (`ca9174b`), S7 (`b3fcb6e`), S8 (`af93655`/`56ff51e`/`5076499`), and S8.1 (`284352e`) have since all been completed — see their respective entries above. No further Safety Engine v1 phase is currently planned.
 
 ---
 
 ## SHADZ Safety Engine v1 — Phase S4: Secure Check-in / SOS Submission
 
-**Status:** Complete, deployed, and production-verified. **Phase S4 is now complete and closed.** Phase S5 (Daily Safety State / Deadline Engine) is also complete and closed (`48e2fe3`). No later Safety Engine phase (S6 — Telegram Reminder + Missed Alert + SOS Escalation; S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
+**Status:** Complete, deployed, and production-verified. **Phase S4 is now complete and closed.** Phase S5 (Daily Safety State / Deadline Engine) is also complete and closed (`48e2fe3`). Phase S6, Phase S6.1, Phase S7, Phase S8, and Phase S8.1 have since also been completed, deployed, and production-verified — see their respective entries above.
 
 **Scope:** Two new secure POST routes on the existing public Safety flow — `POST /safety/c/{secure_token}/check-in` and `POST /safety/c/{secure_token}/sos` — wired to the S3 `I'M SAFE`/`SOS🚨` buttons. No new column, no schema/migration change, no Telegram runtime, no reminder/escalation logic, no Admin Safety UI. No changes to Redirect Engine, Page Engine, Activation Engine, or `BotClient`.
 
@@ -167,13 +215,13 @@
 
 **Live production test:** confirmed `I'M SAFE` securely POSTs through the public token flow with the active `SafetyUser` resolved server-side, mandatory GPS (latitude/longitude, plus accuracy when available) persisted, `SafetyCheckIn.source = "public_web"`, and a server-authoritative UTC check-in timestamp that correctly converts to the `SafetyUser` timezone for human-facing/local verification; confirmed SOS securely persists an open `SafetyEmergency` with the truthful `"SOS received."` message only; confirmed unknown-token 404 and identical inactive-user 404; confirmed the mandatory GPS gate remains intact. The production rapid-click defect above was found and fixed during this same live test, then re-verified: one page-session action now produces exactly one row. The temporary S4 test `SafetyUser` and all associated `SafetyCheckIn`/`SafetyEmergency` rows created for this verification were removed afterward, returning production Safety tables to a clean state.
 
-**Deferred (not implemented in S4):** daily deadline/state engine (Phase S5 — now complete, see above), Telegram reminders / missed-alert / SOS escalation (Phase S6), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). Next active phase: **S6 — Telegram Reminder + Missed Alert + SOS Escalation** (not started).
+**Deferred (not implemented in S4):** daily deadline/state engine (Phase S5 — now complete, see above), Telegram reminders / missed-alert / SOS escalation (Phase S6), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). S6 (`28c4cba`), S6.1 (`ca9174b`), S7 (`b3fcb6e`), S8 (`af93655`/`56ff51e`/`5076499`), and S8.1 (`284352e`) have since all been completed — see their respective entries above. No further Safety Engine v1 phase is currently planned.
 
 ---
 
 ## SHADZ Safety Engine v1 — Phase S3: Safety Check-in UI + Mandatory GPS + SOS UI
 
-**Status:** Complete, deployed, and production-verified. **Phase S3 is now complete and closed.** Phase S4 (secure check-in/SOS submission) is also complete and closed (`fa0dc62`; rapid-click fix `f3c648e`). No later Safety Engine phase (S5 — Daily Safety State / Deadline Engine; S6 — Telegram Reminder + Missed Alert + SOS Escalation; S7 — Late Check-in Resolution + SOS Acknowledge / Resolution; S8 — SHADZ Admin Safety Module + Hardening) has started or is claimed complete.
+**Status:** Complete, deployed, and production-verified. **Phase S3 is now complete and closed.** Phase S4 (secure check-in/SOS submission) is also complete and closed (`fa0dc62`; rapid-click fix `f3c648e`). Phase S5, Phase S6, Phase S6.1, Phase S7, Phase S8, and Phase S8.1 have since also been completed, deployed, and production-verified — see their respective entries above.
 
 **Scope:** Upgrades the existing valid public Safety page (`GET /safety/c/{secure_token}`) into the v1 check-in interface — mobile-first UI, mandatory browser Geolocation gating, and SOS UI. No new route, no new column, no schema/migration change, no admin UI, no Telegram runtime, no server-side check-in/SOS execution. No changes to Redirect Engine, Page Engine, Activation Engine, or `BotClient`.
 
@@ -196,13 +244,13 @@
 
 **Live production test (real iPhone Safari):** location allowed → location acquired; `I'M SAFE` enabled only after GPS acquisition and remains a client-side placeholder only; `SOS` enabled only after GPS acquisition and clearly remains pre-S4 / non-operational; location denied → both actions stay disabled. The temporary "SHADZ S3 Live Test" `SafetyUser` created for this verification was explicitly deleted afterward, returning the S3 test identity to a clean production state.
 
-**Deferred (not implemented in S3):** secure check-in/SOS submission (Phase S4 — now complete, see above; S4's actual scope was check-in/SOS submission only — no Telegram notifications, reminder/deadline logic, alert escalation, scheduler/background jobs, or alert resolution); daily deadline/state engine (Phase S5), Telegram reminders / missed-alert / SOS escalation (Phase S6), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). Next active phase: **S5 — Daily Safety State / Deadline Engine** (not started).
+**Deferred (not implemented in S3):** secure check-in/SOS submission (Phase S4 — now complete, see above; S4's actual scope was check-in/SOS submission only — no Telegram notifications, reminder/deadline logic, alert escalation, scheduler/background jobs, or alert resolution); daily deadline/state engine (Phase S5), Telegram reminders / missed-alert / SOS escalation (Phase S6), late check-in resolution and SOS acknowledge/resolution (Phase S7), and Admin Safety Module / hardening (Phase S8). S5 (`48e2fe3`), S6 (`28c4cba`), S6.1 (`ca9174b`), S7 (`b3fcb6e`), S8 (`af93655`/`56ff51e`/`5076499`), and S8.1 (`284352e`) have since all been completed — see their respective entries above. No further Safety Engine v1 phase is currently planned.
 
 ---
 
 ## SHADZ Safety Engine v1 — Phase S2: NFC Safety Identity / Public Entry
 
-**Status:** Complete, deployed, and production-verified. **Phase S2 is now complete and closed.** Phase S3 (check-in UI, mandatory browser GPS, SOS UI) is also complete and closed (`34aa780`). No later Safety Engine phase (secure check-in/SOS submission, reminders/escalation, resolution, admin UI) has started or is claimed complete.
+**Status:** Complete, deployed, and production-verified. **Phase S2 is now complete and closed.** Phase S3 (check-in UI, mandatory browser GPS, SOS UI) is also complete and closed (`34aa780`). Every later Safety Engine phase (S4 through S8.1 — secure check-in/SOS submission, reminders/escalation, resolution, admin UI) has since also been completed, deployed, and production-verified — see their respective entries above.
 
 **Scope:** One new column (`SafetyUser.secure_token`) and one new public route (`GET /safety/c/{secure_token}`), plus a focused regression test file. Render-only public identity entry — no check-in UI, no GPS capture, no I'M SAFE/SOS controls, no Telegram workflow, no Admin UI. S2 did not modify any existing Redirect Engine, Page Engine, Activation Engine, or Media Engine runtime logic, and did not touch `BotClient`. It did add `"safety"` to `main.py`'s `RESERVED_SLUGS`, changing the generic `RedirectLink` slug surface so a bare `/safety` slug is now rejected as reserved — no other existing route's behavior changed.
 
@@ -228,13 +276,13 @@
 
 **Live production test:** an active valid secure token returned public HTTPS 200 HTML end-to-end (Nginx → FastAPI); an unknown secure token returned a 404 through the same public HTTPS path to FastAPI; the identical-404 behavior for an inactive token versus an unknown token was verified directly against the production FastAPI runtime locally (not separately re-verified through external HTTPS); the Safety entry GET caused zero runtime writes; temporary test `SafetyUser`s created for verification were explicitly deleted afterward, returning production Safety tables to a clean state; final public `/health` check returned 200.
 
-**Deferred (not implemented in S2):** check-in UI, mandatory browser GPS capture, SOS UI (Phase S3 — now complete, see above); secure check-in/SOS submission (Phase S4); reminders, deadlines, escalation, resolution, and admin UI (later phases). Next active phase: **S4 — secure check-in/SOS submission** (not started).
+**Deferred (not implemented in S2):** check-in UI, mandatory browser GPS capture, SOS UI (Phase S3 — now complete, see above); secure check-in/SOS submission (Phase S4); reminders, deadlines, escalation, resolution, and admin UI (later phases). S4 (`fa0dc62`), S5 (`48e2fe3`), S6 (`28c4cba`), S6.1 (`ca9174b`), S7 (`b3fcb6e`), S8 (`af93655`/`56ff51e`/`5076499`), and S8.1 (`284352e`) have since all been completed — see their respective entries above. No further Safety Engine v1 phase is currently planned.
 
 ---
 
 ## SHADZ Safety Engine v1 — Phase S1: Foundation & Data Model
 
-**Status:** Complete, deployed, and production-verified. **Phase S1 is now complete and closed.** No later Safety Engine phase (browser-location capture, check-in runtime, alerts/reminders, SOS/escalation, Telegram workflows, admin UI) has started or is claimed complete.
+**Status:** Complete, deployed, and production-verified. **Phase S1 is now complete and closed.** Every later Safety Engine phase (S2 through S8.1 — browser-location capture, check-in runtime, alerts/reminders, SOS/escalation, Telegram workflows, admin UI) has since also been completed, deployed, and production-verified — see their respective entries above.
 
 **Scope:** Data foundation only for a new, independent Safety Engine — four new tables added to `models.py` under one Safety Engine section, plus a focused regression test file. No routes, no Admin UI, no Telegram runtime, no browser-location capture, no check-in/alert/reminder/SOS runtime. No changes to Redirect Engine, Page Engine, Activation Engine, `BotClient`, or any existing table/route.
 
@@ -260,7 +308,7 @@
 
 **Production verification:** `HEAD == origin/master == 3f35c40`; `shadz.service` active and enabled; `/health` returned 200; port 8000 listening; all four Safety Engine tables (`safety_users`, `safety_check_ins`, `safety_alerts`, `safety_emergencies`) confirmed present in production with 0 rows; no startup/runtime errors observed.
 
-**Deferred (not implemented in S1):** browser-location capture/workflow, check-in runtime, I'M SAFE workflow, SOS/emergency workflow, reminder/escalation runtime, monitoring, frontend UI, Telegram workflows, admin routes/UI for Safety Engine. All later Safety Engine phases remain unscheduled beyond this data foundation.
+**Deferred (not implemented in S1):** browser-location capture/workflow, check-in runtime, I'M SAFE workflow, SOS/emergency workflow, reminder/escalation runtime, monitoring, frontend UI, Telegram workflows, admin routes/UI for Safety Engine. S2 through S8.1 have since all been completed — see their respective entries above. No further Safety Engine v1 phase is currently planned.
 
 ---
 
