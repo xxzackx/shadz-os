@@ -356,8 +356,8 @@ class SafetyNotifyS6Tests(unittest.TestCase):
         self.assertEqual(row.status, "pending")
 
     def test_s5_evaluator_unaffected_by_s6_module(self):
-        user = self._make_user(deadline=time(21, 0))
         now = datetime(2026, 8, 19, 10, 0, tzinfo=timezone.utc)
+        user = self._make_user(deadline=time(21, 0), created_at=now - timedelta(days=1))
         row = evaluate_user_deadline(self.db, user, now_utc=now)
         self.assertEqual(row.status, "pending")
 
