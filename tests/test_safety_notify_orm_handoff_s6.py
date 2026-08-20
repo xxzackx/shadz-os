@@ -260,7 +260,14 @@ class SafetyNotifyOrmHandoffTests(unittest.TestCase):
         # time the collector returns it -- the actual production boundary.
         self.assertTrue(payload["reminder_detached"])
         self.assertTrue(payload.get("reminder_ok"), payload.get("reminder_error"))
-        self.assertIn("Reminder User", payload["reminder_message"])
+        # H1B: the message itself no longer carries display_name, but it
+        # still reads other detached attributes (daily_deadline, timezone)
+        # off the same instance -- this remains a real detached-read check.
+        self.assertRegex(
+            payload["reminder_message"],
+            r"^⏰ Reminder: You haven.t checked in yet today\.\n"
+            r"• Daily deadline: \d{2}:\d{2} \(UTC\)\.$",
+        )
         self.assertTrue(payload["reminder_delivery_claimed_at_set"])
         self.assertTrue(payload["reminder_notified_at_is_none"])
         self.assertTrue(payload["reminder_claim_at_set"])

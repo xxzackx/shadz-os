@@ -352,8 +352,8 @@ async def edit_sos_message(
 
 def _format_early_reminder(user: "models.SafetyUser") -> str:
     return (
-        f"⏰ Reminder: {user.display_name} hasn't checked in yet today.\n"
-        f"Daily deadline: {user.daily_deadline.strftime('%H:%M')} ({user.timezone})."
+        "⏰ Reminder: You haven’t checked in yet today.\n"
+        f"• Daily deadline: {user.daily_deadline.strftime('%H:%M')} ({user.timezone})."
     )
 
 
