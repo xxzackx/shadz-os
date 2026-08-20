@@ -2,6 +2,29 @@
 
 ---
 
+## SHADZ Safety Engine v1 — Hotfix H1: Early Reminder Copy Update (H1A Cancelled)
+
+**Status:** H1B complete, deployed, and production-verified. **H1A cancelled** — investigation during H1 found the Admin Link Engine already allows a permanent redirect slug's `destination_url` to be set to the Safety public check-in URL (`https://shadz.io/safety/c/{secure_token}`); `link_admin.py`'s Admin create/update/convert routes never call the Telegram self-service `_is_blocked_destination_url` guard, so no Redirect Engine exception was needed. No H1A runtime code or tests were shipped.
+
+**Scope — H1B (SafetyUser Early Reminder copy):** `safety_telegram._format_early_reminder` changed from `"{display_name} hasn't checked in yet today.\nDaily deadline: HH:MM (timezone)."` to:
+```
+⏰ Reminder: You haven’t checked in yet today.
+• Daily deadline: HH:MM (timezone).
+```
+No SafetyUser name prefix. Deadline/timezone values are still read from the same `daily_deadline`/`timezone` fields, unchanged. Admin-facing Missed Check-in alerts, SOS alerts/escalation, and S6/S6.1 notification routing are untouched.
+
+**Runtime commit:** `8b34c7348fdf2c0b6d0dc49d2cd62e282f8da7dd` — `fix(safety): update early reminder copy`
+
+**Files changed:** `safety_telegram.py`, `tests/test_safety_early_reminder_copy_h1b.py` (new), `tests/test_safety_notify_orm_handoff_s6.py` (one assertion updated to match the new copy, still verifying the same detached-instance read).
+
+**Test result:** Focused H1B suite (`test_safety_early_reminder_copy_h1b.py`, `test_safety_notify_orm_handoff_s6.py`, `test_safety_telegram_routing_s6_1.py`) — 22/22 passed.
+
+**Production verification:** VPS `HEAD == origin/master == 8b34c7348fdf2c0b6d0dc49d2cd62e282f8da7dd`; working tree clean; `shadz.service` active and enabled; `/health` 200; `127.0.0.1:8000` listening. Live test intentionally skipped — copy-only change, no functional-path change.
+
+**Deferred:** No further Safety Engine v1 phase is currently planned beyond S8 + S8.1; H1 closes as a standalone hotfix.
+
+---
+
 ## SHADZ Safety Engine v1 — Phase S8 + S8.1: SHADZ Admin Safety Module + Hardening (Closure)
 
 **Status:** Complete, deployed, and production-verified. **This is the first formal closure documentation commit for Phase S8** — S8's runtime work landed across three commits (`af93655`, `56ff51e`, `5076499`) without a closure documentation commit at the time. Phase S8.1 then completed the one remaining S8 usability/hardening item (same-day Daily Deadline reschedule) before any S8 closure documentation existed, so this entry closes **S8 and S8.1 together as one coherent closure record** — no earlier S8 closure documentation commit exists, and none is implied by this entry. No later Safety Engine phase has started or is claimed complete.
