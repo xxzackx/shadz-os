@@ -46,6 +46,21 @@ class PageOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PageListItemOut(BaseModel):
+    """One row of GET /admin/pages — only the fields the UI3F browse view needs.
+
+    active_slugs holds every slug with an active (is_active=True)
+    PageSlugAttachment pointing at this page; empty when none.
+    """
+    id: int
+    title: str
+    template_type: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    active_slugs: list[str]
+
+
 class PageAttachRequest(BaseModel):
     page_id: int
     slug: str
@@ -173,6 +188,41 @@ def register_page_admin_routes(admin_router) -> None:
 </body>
 </html>"""
         return HTMLResponse(content=html)
+
+    @admin_router.get("/pages", response_model=list[PageListItemOut])
+    def list_pages(db: Session = Depends(get_db)):
+        """Read-only list of every page for the Admin browse view (UI3F-A).
+
+        Ordered newest-first by id (descending) for a deterministic result.
+        Includes pages with zero active attachments. Only active
+        PageSlugAttachment rows are reported; a page may have several active
+        slugs, each listed and ordered by slug ascending. Two queries total —
+        one for pages, one for all active attachments — no per-page N+1.
+        """
+        pages = db.query(models.Page).order_by(models.Page.id.desc()).all()
+
+        attachments = (
+            db.query(models.PageSlugAttachment)
+            .filter(models.PageSlugAttachment.is_active == True)
+            .order_by(models.PageSlugAttachment.slug.asc())
+            .all()
+        )
+        slugs_by_page: dict[int, list[str]] = {}
+        for att in attachments:
+            slugs_by_page.setdefault(att.page_id, []).append(att.slug)
+
+        return [
+            PageListItemOut(
+                id=p.id,
+                title=p.title,
+                template_type=p.template_type,
+                status=p.status,
+                created_at=p.created_at,
+                updated_at=p.updated_at,
+                active_slugs=slugs_by_page.get(p.id, []),
+            )
+            for p in pages
+        ]
 
     @admin_router.post("/pages", response_model=PageOut, status_code=201)
     def create_page(payload: PageCreateRequest, db: Session = Depends(get_db)):

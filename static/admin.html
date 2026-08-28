@@ -689,6 +689,11 @@
             <div class="home-card-desc">Link or unlink a page from a slug</div>
             <div class="home-card-arrow">›</div>
           </div>
+          <div class="home-card" onclick="loadPageList(); show('pageListSection')">
+            <div class="home-card-title">Page List</div>
+            <div class="home-card-desc">Browse existing pages</div>
+            <div class="home-card-arrow">›</div>
+          </div>
         </div>
       </div>
 
@@ -1169,6 +1174,37 @@
       </div>
     </div>
 
+    <!-- Page List / Browse section (UI3F-A) — read-only browse of existing pages -->
+    <div id="pageListSection" class="section">
+      <div class="section-header">
+        <button class="back-btn" onclick="goHome()">← Back</button>
+        <span class="section-title">Page List</span>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem">
+        <span style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em">All Pages</span>
+        <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadPageList()">Refresh</button>
+      </div>
+      <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap">
+        <input type="text" id="pl-search" placeholder="Search ID, title, or slug…" autocomplete="off" style="margin-bottom:0;flex:1;min-width:180px" oninput="filterPageList()" />
+        <select id="pl-templateFilter" style="margin-bottom:0;width:auto;flex-shrink:0" onchange="filterPageList()">
+          <option value="all">All templates</option>
+          <option value="invitation">invitation</option>
+          <option value="brand_product">brand_product</option>
+          <option value="child_safety">child_safety</option>
+        </select>
+        <select id="pl-statusFilter" style="margin-bottom:0;width:auto;flex-shrink:0" onchange="filterPageList()">
+          <option value="all">All statuses</option>
+          <option value="draft">draft</option>
+          <option value="ready">ready</option>
+          <option value="archived">archived</option>
+        </select>
+      </div>
+      <div id="pageList" class="card-grid"></div>
+
+      <div id="pl-msg" class="msg"></div>
+    </div>
+
     <!-- Telegram Bot Clients section -->
     <div id="botSection" class="section">
       <div class="section-header">
@@ -1360,7 +1396,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
   </div>
 
   <script>
-    const GRID_SECTIONS = new Set(['statsSection', 'storageSection', 'botSection', 'safetySection']);
+    const GRID_SECTIONS = new Set(['statsSection', 'storageSection', 'botSection', 'safetySection', 'pageListSection']);
 
     // Keyed by asset id (number). Populated by loadStorage() before rendering.
     // renameAsset() reads current display_name from here — avoids passing any
@@ -1378,6 +1414,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
       createSection: 'slugs', updateSection: 'slugs', statsSection: 'slugs',
       mediaUploadSection: 'media', attachSection: 'media', storageSection: 'media',
       pageCreateSection: 'pages', pageEditSection: 'pages', pageAttachSection: 'pages',
+      pageListSection: 'pages',
       botSection: 'bot', safetySection: 'safety'
     };
 
@@ -1468,6 +1505,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
       lastSlugLookupMode = 'phone';
       document.getElementById('storageList').innerHTML = '';
       document.getElementById('st-historyResults').innerHTML = '';
+      document.getElementById('pageList').innerHTML = '';
       document.getElementById('mu-result').style.display = 'none';
       document.getElementById('bc-result').style.display = 'none';
       document.getElementById('pc-result').style.display = 'none';
@@ -3394,6 +3432,101 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
       } finally {
         btn.disabled = false;
       }
+    }
+
+    // ── Page List / Browse (UI3F-A) ─────────────────────────────────────────
+    // Read-only. Fetches /admin/pages once, then search/template/status
+    // filtering happens client-side against this cache (Media Manager UI3E-C
+    // pattern). Refresh re-fetches. No mutation controls in this phase.
+    let _allPages = [];
+
+    async function loadPageList() {
+      const container = document.getElementById('pageList');
+      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+
+      try {
+        const res  = await fetch('/admin/pages', { credentials: 'same-origin' });
+        const data = await res.json();
+
+        if (!res.ok) {
+          _allPages = [];
+          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          return;
+        }
+
+        if (data.length === 0) {
+          _allPages = [];
+          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No pages yet.</div>';
+          return;
+        }
+
+        _allPages = data;
+        renderPageList();
+      } catch {
+        _allPages = [];
+        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+      }
+    }
+
+    // Renders _allPages filtered by the search box + template + status
+    // dropdowns. No API request — client-side only (UI3F-A).
+    function renderPageList() {
+      const container = document.getElementById('pageList');
+      const query    = document.getElementById('pl-search').value.trim().toLowerCase();
+      const template = document.getElementById('pl-templateFilter').value;
+      const status   = document.getElementById('pl-statusFilter').value;
+
+      const filtered = _allPages.filter(p => {
+        if (template !== 'all' && p.template_type !== template) return false;
+        if (status !== 'all' && p.status !== status) return false;
+        if (!query) return true;
+        return String(p.id).toLowerCase().includes(query)
+          || (p.title || '').toLowerCase().includes(query)
+          || (p.active_slugs || []).some(s => s.toLowerCase().includes(query));
+      });
+
+      if (filtered.length === 0) {
+        container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No matching pages.</div>';
+        return;
+      }
+      container.innerHTML = filtered.map(p => buildPageCard(p)).join('');
+    }
+
+    function filterPageList() {
+      renderPageList();
+    }
+
+    function buildPageCard(p) {
+      const slugs = (p.active_slugs && p.active_slugs.length)
+        ? esc(p.active_slugs.join(', '))
+        : '—';
+      return `
+        <div class="stats-box" style="display:block">
+          <div class="stats-row">
+            <span class="stats-label">Page ID</span>
+            <span class="stats-value gold">${esc(p.id)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Title</span>
+            <span class="stats-value value-overflow">${esc(p.title)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Template</span>
+            <span class="stats-value">${esc(p.template_type)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Status</span>
+            <span class="stats-value">${esc(p.status)}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Active Slugs</span>
+            <span class="stats-value value-overflow">${slugs}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Updated</span>
+            <span class="stats-value">${esc(new Date(p.updated_at).toLocaleString())}</span>
+          </div>
+        </div>`;
     }
 
     // Initialize template guide for Create Page (invitation is pre-selected)
