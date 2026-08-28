@@ -1380,6 +1380,27 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
     </div>
   </div>
 
+  <!-- Replace-page confirmation modal (UI3F-C) — shown before /admin/pages/attach
+       when the target slug is already attached to a DIFFERENT page. Same
+       modal-overlay / modal-box pattern as the replace-media modal above. -->
+  <div id="pageAttachReplaceModal" class="modal-overlay" style="display:none">
+    <div class="modal-box stats-box" style="display:block">
+      <h3>Replace Attached Page?</h3>
+      <div class="stats-row">
+        <span class="stats-label">Slug</span>
+        <span class="stats-value" id="par-slug"></span>
+      </div>
+      <div class="stats-row">
+        <span class="stats-label">Current → New</span>
+        <span class="stats-value" id="par-change"></span>
+      </div>
+      <div>
+        <button class="ghost-btn" onclick="closePageAttachReplace()">Cancel</button>
+        <button class="action-btn" onclick="confirmPageAttachReplace()">Replace</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Delete dependency warning modal (UI3E-D2) — informational only, no override -->
   <div id="deleteBlockedModal" class="modal-overlay" style="display:none">
     <div class="modal-box stats-box" style="display:block">
@@ -3330,30 +3351,38 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
     }
 
     async function attachPageInline(slug, index) {
-      const pageId = document.getElementById(`pai-pageId-${index}`).value.trim();
-      const msgId  = `pai-attach-msg-${index}`;
+      const pageIdRaw = document.getElementById(`pai-pageId-${index}`).value.trim();
+      const msgId     = `pai-attach-msg-${index}`;
 
-      if (!pageId) { showMsg(msgId, 'error', 'Page ID is required.'); return; }
+      if (!pageIdRaw) { showMsg(msgId, 'error', 'Page ID is required.'); return; }
+      const pageId = parseInt(pageIdRaw, 10);
 
       const btn = document.getElementById(`pai-attach-btn-${index}`);
       btn.disabled = true;
       showMsg(msgId, '', '');
 
-      try {
-        const res  = await fetch('/admin/pages/attach', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ page_id: parseInt(pageId, 10), slug }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          showMsg(msgId, 'error', data.detail || 'Error attaching page.');
-        } else {
-          showMsg(msgId, 'ok', data.message || 'Attached.');
+      const doAttach = async () => {
+        try {
+          const res  = await fetch('/admin/pages/attach', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ page_id: pageId, slug }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            showMsg(msgId, 'error', data.detail || 'Error attaching page.');
+          } else {
+            showMsg(msgId, 'ok', data.message || 'Attached.');
+          }
+        } catch {
+          showMsg(msgId, 'error', 'Network error.');
         }
-      } catch {
-        showMsg(msgId, 'error', 'Network error.');
+      };
+
+      try {
+        await guardedPageAttach(pageId, slug, doAttach,
+          (m) => showMsg(msgId, 'error', m));
       } finally {
         btn.disabled = false;
       }
@@ -3385,32 +3414,98 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
       }
     }
 
-    async function attachPage() {
-      const pageId = document.getElementById('pa-pageId').value.trim();
-      const slug   = document.getElementById('pa-slug').value.trim();
+    // ── UI3F-C: safe page-attach replacement confirmation ───────────────────
+    // POST /admin/pages/attach silently deactivates the slug's current active
+    // page. Before calling it, the two Admin attach flows (attachPage and
+    // attachPageInline) both route through guardedPageAttach() so a replacement
+    // of a DIFFERENT page is confirmed first. Backend contract is unchanged.
 
-      if (!pageId) { showMsg('pa-msg', 'error', 'Page ID is required.'); return; }
-      if (!slug)   { showMsg('pa-msg', 'error', 'Slug is required.'); return; }
+    // Read-only lookup of the slug's current active Page id (or null). Reuses
+    // the existing GET /admin/links/search exact-slug lookup — the same
+    // response buildResultCard() consumes, carrying page_attachment (UI3D-C2).
+    // No new endpoint. Throws on HTTP/network error so callers fail closed.
+    async function fetchActivePageIdForSlug(slug) {
+      const res = await fetch(
+        `/admin/links/search?slug=${encodeURIComponent(slug)}&include_archived=true`,
+        { credentials: 'same-origin' }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || `Error ${res.status}`);
+      const row = (data.results || []).find(r => r.slug === slug);
+      return (row && row.page_attachment) ? row.page_attachment.page_id : null;
+    }
+
+    // The single confirmation path for both attach flows. `proceed` is the
+    // caller's real POST; `onError` surfaces a read failure in the caller's
+    // own message element. No current page, or the SAME page -> proceed with
+    // no dialog. A DIFFERENT page -> open the modal; Replace runs `proceed`,
+    // Cancel runs nothing.
+    let _pendingPageAttach = null;
+
+    async function guardedPageAttach(pageId, slug, proceed, onError) {
+      let currentPageId;
+      try {
+        currentPageId = await fetchActivePageIdForSlug(slug);
+      } catch (e) {
+        onError((e && e.message) || 'Could not check the current attachment.');
+        return;
+      }
+      if (currentPageId === null || currentPageId === pageId) {
+        await proceed();
+        return;
+      }
+      _pendingPageAttach = { proceed };
+      document.getElementById('par-slug').textContent   = slug;
+      document.getElementById('par-change').textContent = `Page ${currentPageId} → Page ${pageId}`;
+      document.getElementById('pageAttachReplaceModal').style.display = 'flex';
+    }
+
+    function closePageAttachReplace() {
+      _pendingPageAttach = null;
+      document.getElementById('pageAttachReplaceModal').style.display = 'none';
+    }
+
+    async function confirmPageAttachReplace() {
+      if (!_pendingPageAttach) return;
+      const { proceed } = _pendingPageAttach;
+      closePageAttachReplace();
+      await proceed();
+    }
+
+    async function attachPage() {
+      const pageIdRaw = document.getElementById('pa-pageId').value.trim();
+      const slug      = document.getElementById('pa-slug').value.trim();
+
+      if (!pageIdRaw) { showMsg('pa-msg', 'error', 'Page ID is required.'); return; }
+      if (!slug)      { showMsg('pa-msg', 'error', 'Slug is required.'); return; }
+      const pageId = parseInt(pageIdRaw, 10);
 
       const btn = document.getElementById('pa-btn');
       btn.disabled = true;
       showMsg('pa-msg', '', '');
 
-      try {
-        const res  = await fetch('/admin/pages/attach', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ page_id: parseInt(pageId, 10), slug }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          showMsg('pa-msg', 'error', data.detail || 'Error attaching page.');
-        } else {
-          showMsg('pa-msg', 'ok', data.message || 'Attached.');
+      const doAttach = async () => {
+        try {
+          const res  = await fetch('/admin/pages/attach', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ page_id: pageId, slug }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            showMsg('pa-msg', 'error', data.detail || 'Error attaching page.');
+          } else {
+            showMsg('pa-msg', 'ok', data.message || 'Attached.');
+          }
+        } catch {
+          showMsg('pa-msg', 'error', 'Network error.');
         }
-      } catch {
-        showMsg('pa-msg', 'error', 'Network error.');
+      };
+
+      try {
+        await guardedPageAttach(pageId, slug, doAttach,
+          (m) => showMsg('pa-msg', 'error', m));
       } finally {
         btn.disabled = false;
       }
@@ -3508,9 +3603,15 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
     }
 
     function buildPageCard(p) {
-      const slugs = (p.active_slugs && p.active_slugs.length)
-        ? esc(p.active_slugs.join(', '))
-        : '—';
+      const active = Array.isArray(p.active_slugs) ? p.active_slugs : [];
+      // One slug per line so multiple active attachments stay readable; each
+      // rendered as a monospace token. Count shown on the label when > 1.
+      const slugs = active.length
+        ? active.map(s =>
+            `<span style="display:block;font-family:monospace;font-size:0.85em">${esc(s)}</span>`
+          ).join('')
+        : '<span style="color:var(--text-muted)">— not attached —</span>';
+      const slugsLabel = active.length > 1 ? `Active Slugs (${active.length})` : 'Active Slugs';
       return `
         <div class="stats-box" style="display:block">
           <div class="stats-row">
@@ -3530,8 +3631,8 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
             <span class="stats-value">${esc(p.status)}</span>
           </div>
           <div class="stats-row">
-            <span class="stats-label">Active Slugs</span>
-            <span class="stats-value value-overflow">${slugs}</span>
+            <span class="stats-label">${slugsLabel}</span>
+            <span class="stats-value value-overflow" style="text-align:right">${slugs}</span>
           </div>
           <div class="stats-row">
             <span class="stats-label">Updated</span>

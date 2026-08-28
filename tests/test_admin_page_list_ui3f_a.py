@@ -248,6 +248,137 @@ class AdminPageListUI3FATests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, body)
 
+    # ── UI3F-C: attachment visibility + safe replace confirmation ───────
+
+    def _fn_body(self, signature):
+        m = re.search(
+            re.escape(signature) + r" \{(.*?)\n    \}", self.html, re.DOTALL
+        )
+        self.assertIsNotNone(m, f"{signature} body not found")
+        return m.group(1)
+
+    def _render_page_list_body(self):
+        return self._fn_body("function renderPageList()")
+
+    # A. Page List attachment visibility
+
+    def test_page_list_card_still_renders_active_slugs(self):
+        body = self._build_page_card_body()
+        self.assertIn("p.active_slugs", body)
+        # each active slug rendered individually (readable when there are many)
+        self.assertIn(".map(s =>", body)
+
+    def test_page_list_search_by_slug_preserved(self):
+        body = self._render_page_list_body()
+        self.assertIn("active_slugs", body)
+        self.assertRegex(body, r"active_slugs.*\.some\(")
+
+    # B. Safe attach replacement confirmation
+
+    def test_guarded_page_attach_helper_defined_once(self):
+        self.assertEqual(
+            len(re.findall(r"async function guardedPageAttach\(", self.html)), 1
+        )
+        self.assertEqual(self.html.count('id="pageAttachReplaceModal"'), 1)
+
+    def test_current_attachment_read_reuses_existing_search_endpoint(self):
+        body = self._fn_body("async function fetchActivePageIdForSlug(slug)")
+        self.assertIn("/admin/links/search?slug=", body)
+        self.assertIn("page_attachment", body)
+        # no bespoke page-attachment GET endpoint was invented
+        self.assertNotIn("/admin/pages/attachment", self.html)
+        self.assertNotIn("/admin/pages/for-slug", self.html)
+
+    def test_guard_proceeds_without_modal_for_no_current_or_same_page(self):
+        body = self._fn_body(
+            "async function guardedPageAttach(pageId, slug, proceed, onError)"
+        )
+        # same-page / none check runs, calls proceed(), and returns BEFORE the
+        # modal is ever shown
+        guard_idx = body.index("currentPageId === null || currentPageId === pageId")
+        proceed_idx = body.index("await proceed()")
+        modal_idx = body.index("pageAttachReplaceModal")
+        self.assertLess(guard_idx, proceed_idx)
+        self.assertLess(proceed_idx, modal_idx)
+
+    def test_guard_opens_modal_for_different_page(self):
+        body = self._fn_body(
+            "async function guardedPageAttach(pageId, slug, proceed, onError)"
+        )
+        self.assertIn("_pendingPageAttach = { proceed }", body)
+        self.assertRegex(
+            body, r"getElementById\('pageAttachReplaceModal'\)\.style\.display\s*=\s*'flex'"
+        )
+
+    def test_guard_fails_closed_on_read_error(self):
+        body = self._fn_body(
+            "async function guardedPageAttach(pageId, slug, proceed, onError)"
+        )
+        # a failed current-attachment read calls onError and returns; it must
+        # not fall through to proceed()
+        catch_region = body.split("catch (e)", 1)[1].split("if (currentPageId", 1)[0]
+        self.assertIn("onError(", catch_region)
+        self.assertIn("return", catch_region)
+
+    def test_cancel_does_not_mutate(self):
+        body = self._fn_body("function closePageAttachReplace()")
+        self.assertIn("_pendingPageAttach = null", body)
+        self.assertRegex(
+            body, r"getElementById\('pageAttachReplaceModal'\)\.style\.display\s*=\s*'none'"
+        )
+        self.assertNotIn("proceed(", body)
+        self.assertNotIn("fetch(", body)
+
+    def test_confirm_runs_pending_proceed_exactly_once(self):
+        body = self._fn_body("async function confirmPageAttachReplace()")
+        self.assertEqual(body.count("await proceed()"), 1)
+        # modal state cleared before running the real POST
+        self.assertLess(body.index("closePageAttachReplace()"), body.index("await proceed()"))
+        # guard against acting on a cleared pending attach
+        self.assertIn("if (!_pendingPageAttach) return", body)
+
+    def test_main_attach_flow_routes_through_guard(self):
+        body = self._fn_body("async function attachPage()")
+        self.assertIn("guardedPageAttach(", body)
+        self.assertIn("/admin/pages/attach", body)
+        self.assertIn("page_id: pageId, slug", body)
+
+    def test_inline_attach_flow_routes_through_same_guard(self):
+        body = self._fn_body("async function attachPageInline(slug, index)")
+        self.assertIn("guardedPageAttach(", body)
+        self.assertIn("/admin/pages/attach", body)
+        self.assertIn("page_id: pageId, slug", body)
+
+    def test_detach_flows_unchanged_and_ungated(self):
+        for sig in ("async function detachPage()",
+                    "async function detachPageInline(slug, index)"):
+            body = self._fn_body(sig)
+            self.assertIn("/admin/pages/detach", body)
+            self.assertNotIn("guardedPageAttach", body)
+            self.assertNotIn("pageAttachReplaceModal", body)
+
+    def test_no_native_confirm_dialog_for_page_attach(self):
+        for sig in ("async function attachPage()",
+                    "async function attachPageInline(slug, index)",
+                    "async function guardedPageAttach(pageId, slug, proceed, onError)"):
+            body = self._fn_body(sig)
+            self.assertNotIn("confirm(", body)
+
+    def test_replace_page_modal_reuses_existing_modal_pattern(self):
+        m = re.search(
+            r'<div id="pageAttachReplaceModal".*?</div>\s*</div>\s*</div>',
+            self.html, re.DOTALL,
+        )
+        self.assertIsNotNone(m, "pageAttachReplaceModal markup not found")
+        modal = m.group(0)
+        for marker in (
+            'class="modal-overlay"', 'class="modal-box stats-box"',
+            'id="par-slug"', 'id="par-change"',
+            "closePageAttachReplace()", "confirmPageAttachReplace()",
+            ">Cancel<", ">Replace<",
+        ):
+            self.assertIn(marker, modal)
+
 
 if __name__ == "__main__":
     unittest.main()
