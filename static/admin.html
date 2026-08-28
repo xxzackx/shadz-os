@@ -3287,6 +3287,9 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
           document.getElementById('pe-template').value = '';
           document.getElementById('pe-status').value   = '';
           document.getElementById('pe-content').value  = '';
+          // Invalidate the UI3F-A browse cache so Page List reloads fresh
+          // values on next entry (UI3F-B).
+          _allPages = [];
         }
       } catch {
         showMsg('pe-msg', 'error', 'Network error.');
@@ -3526,7 +3529,33 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
             <span class="stats-label">Updated</span>
             <span class="stats-value">${esc(new Date(p.updated_at).toLocaleString())}</span>
           </div>
+          <div class="stats-row" style="justify-content:flex-end;align-items:center">
+            <button class="ghost-btn sm" onclick="editPageFromList(${p.id})">Edit</button>
+          </div>
         </div>`;
+    }
+
+    // Opens the existing Edit Page form (#pageEditSection) prefilled with the
+    // selected page's current values, taken from the _allPages cache that
+    // loadPageList() already populated — no extra request, no second form.
+    // Submission still goes through the unchanged editPage() -> POST
+    // /admin/pages/{id}. (UI3F-B)
+    function editPageFromList(pageId) {
+      const p = _allPages.find(x => x.id === pageId);
+      if (!p) {
+        showMsg('pl-msg', 'error', 'Page not found — try Refresh.');
+        return;
+      }
+      document.getElementById('pe-id').value       = p.id;
+      document.getElementById('pe-title').value    = p.title || '';
+      document.getElementById('pe-template').value = p.template_type || '';
+      document.getElementById('pe-status').value   = p.status || '';
+      document.getElementById('pe-content').value  = p.content_json || '';
+      updateTemplateGuide('pe');
+      validateJsonField('pe');
+      document.getElementById('pe-result').style.display = 'none';
+      showMsg('pe-msg', '', '');
+      show('pageEditSection');
     }
 
     // Initialize template guide for Create Page (invitation is pre-selected)

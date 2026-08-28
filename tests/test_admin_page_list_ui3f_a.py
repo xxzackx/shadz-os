@@ -70,7 +70,9 @@ class AdminPageListUI3FATests(unittest.TestCase):
         ):
             self.assertIn(marker, self.html)
 
-    def test_no_mutation_controls_added_in_browse_view(self):
+    def test_page_list_static_section_has_only_filter_controls(self):
+        # The static #pageListSection markup carries the search box + filters +
+        # Refresh only. Any per-row control is JS-rendered in buildPageCard.
         section = re.search(
             r'<div id="pageListSection".*?</div>\s*\n\s*<!-- Telegram Bot Clients section -->',
             self.html,
@@ -78,10 +80,106 @@ class AdminPageListUI3FATests(unittest.TestCase):
         )
         self.assertIsNotNone(section, "pageListSection block not found")
         body = section.group(0)
-        # browse-only: no edit/archive/attach/detach/preview affordances this phase
         for forbidden in (
-            "editPage(", "attachPage(", "detachPage(",
-            "archiveSlug(", ">Archive<", ">Edit<", "action-btn",
+            "editPage(", "editPageFromList(", "attachPage(", "detachPage(",
+            "archiveSlug(", ">Archive<", ">Edit<", ">Delete<", "action-btn",
+        ):
+            self.assertNotIn(forbidden, body)
+
+    # ── UI3F-B: Edit by selection / prefill ─────────────────────────────
+
+    def _build_page_card_body(self):
+        m = re.search(
+            r"function buildPageCard\(p\) \{(.*?)\n    \}", self.html, re.DOTALL
+        )
+        self.assertIsNotNone(m, "buildPageCard function body not found")
+        return m.group(1)
+
+    def _edit_from_list_body(self):
+        m = re.search(
+            r"function editPageFromList\(pageId\) \{(.*?)\n    \}", self.html, re.DOTALL
+        )
+        self.assertIsNotNone(m, "editPageFromList function body not found")
+        return m.group(1)
+
+    def _edit_page_body(self):
+        m = re.search(
+            r"async function editPage\(\) \{(.*?)\n    \}", self.html, re.DOTALL
+        )
+        self.assertIsNotNone(m, "editPage function body not found")
+        return m.group(1)
+
+    def test_edit_action_present_on_each_page_card(self):
+        body = self._build_page_card_body()
+        self.assertIn(">Edit<", body)
+        self.assertIn("editPageFromList(${p.id})", body)
+
+    def test_edit_from_list_function_exists(self):
+        self.assertRegex(self.html, r"function editPageFromList\(pageId\)")
+
+    def test_edit_from_list_reads_cached_pages_without_fetch(self):
+        body = self._edit_from_list_body()
+        self.assertIn("_allPages.find(", body)
+        self.assertNotIn("fetch(", body)
+
+    def test_edit_from_list_prefills_all_existing_form_fields(self):
+        body = self._edit_from_list_body()
+        for target in (
+            "getElementById('pe-id')",
+            "getElementById('pe-title')",
+            "getElementById('pe-template')",
+            "getElementById('pe-status')",
+            "getElementById('pe-content')",
+        ):
+            self.assertIn(target, body)
+
+    def test_edit_from_list_uses_page_id_and_current_values(self):
+        body = self._edit_from_list_body()
+        self.assertIn("p.id", body)
+        self.assertIn("p.title", body)
+        self.assertIn("p.template_type", body)
+        self.assertIn("p.status", body)
+
+    def test_edit_from_list_prefills_content_json(self):
+        self.assertIn("p.content_json", self._edit_from_list_body())
+
+    def test_edit_from_list_opens_existing_edit_section(self):
+        self.assertIn("show('pageEditSection')", self._edit_from_list_body())
+
+    def test_no_duplicate_edit_form_created(self):
+        # exactly one Edit Page section, one #pe-id input, one editPage() def
+        self.assertEqual(self.html.count('id="pageEditSection"'), 1)
+        self.assertEqual(self.html.count('id="pe-id"'), 1)
+        self.assertEqual(len(re.findall(r"async function editPage\(\)", self.html)), 1)
+
+    def test_editpage_remains_the_submit_path(self):
+        self.assertIn('onclick="editPage()"', self.html)
+        self.assertIn("/admin/pages/${encodeURIComponent(pageId)}", self._edit_page_body())
+
+    def test_successful_edit_invalidates_page_list_cache(self):
+        # cache reset lives in editPage()'s success (res.ok) branch
+        body = self._edit_page_body()
+        self.assertIn("_allPages = []", body)
+        ok_branch = body.split("if (!res.ok)", 1)[1]
+        self.assertIn("_allPages = []", ok_branch)
+
+    def test_manual_edit_page_workflow_still_present(self):
+        for marker in (
+            'id="pageEditSection"',
+            'id="pe-id"',
+            'id="pe-title"',
+            'id="pe-template"',
+            'id="pe-status"',
+            'id="pe-content"',
+            'id="pe-btn"',
+        ):
+            self.assertIn(marker, self.html)
+
+    def test_no_archive_delete_or_attach_controls_in_page_card(self):
+        body = self._build_page_card_body()
+        for forbidden in (
+            "archive", "Archive", ">Delete<", "softDelete",
+            "attachPage", "detachPage", "preview", "Preview",
         ):
             self.assertNotIn(forbidden, body)
 

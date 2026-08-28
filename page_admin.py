@@ -51,11 +51,16 @@ class PageListItemOut(BaseModel):
 
     active_slugs holds every slug with an active (is_active=True)
     PageSlugAttachment pointing at this page; empty when none.
+
+    content_json is the page's raw stored JSON string (or null) — included so
+    the UI3F-B "Edit from list" flow can prefill the existing Edit Page form
+    with current values without a second request. Not parsed or reshaped here.
     """
     id: int
     title: str
     template_type: str
     status: str
+    content_json: str | None = None
     created_at: datetime
     updated_at: datetime
     active_slugs: list[str]
@@ -198,6 +203,9 @@ def register_page_admin_routes(admin_router) -> None:
         PageSlugAttachment rows are reported; a page may have several active
         slugs, each listed and ordered by slug ascending. Two queries total —
         one for pages, one for all active attachments — no per-page N+1.
+
+        content_json is returned raw (UI3F-B prefill); no other page columns
+        are exposed.
         """
         pages = db.query(models.Page).order_by(models.Page.id.desc()).all()
 
@@ -217,6 +225,7 @@ def register_page_admin_routes(admin_router) -> None:
                 title=p.title,
                 template_type=p.template_type,
                 status=p.status,
+                content_json=p.content_json,
                 created_at=p.created_at,
                 updated_at=p.updated_at,
                 active_slugs=slugs_by_page.get(p.id, []),

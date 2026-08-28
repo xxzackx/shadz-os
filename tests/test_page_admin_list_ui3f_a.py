@@ -103,10 +103,30 @@ class PageListEndpointTests(unittest.TestCase):
         self.assertEqual(item["template_type"], "invitation")
         self.assertEqual(item["status"], "draft")
         self.assertEqual(item["active_slugs"], [])
-        # exact field set — no leakage of content_json / archived_at etc.
+        # a page created with no content_json reports it as null
+        self.assertIsNone(item["content_json"])
+        # exact field set — no leakage of archived_at / storage columns etc.
         self.assertEqual(
             set(item.keys()),
-            {"id", "title", "template_type", "status",
+            {"id", "title", "template_type", "status", "content_json",
+             "created_at", "updated_at", "active_slugs"},
+        )
+
+    def test_list_returns_raw_content_json_unchanged(self):
+        # UI3F-B prefill needs the page's current raw content_json so the
+        # existing Edit Page form can be populated without a second request.
+        raw = '{"message": "Hi <there> & \\"friends\\"", "n": 3}'
+        with_content = self._create_page(title="Has Content", content_json=raw)
+        without_content = self._create_page(title="No Content")
+
+        by_id = {p["id"]: p for p in self.client.get("/admin/pages").json()}
+        # byte-for-byte the same string that was stored — not parsed/reshaped
+        self.assertEqual(by_id[with_content["id"]]["content_json"], raw)
+        self.assertIsNone(by_id[without_content["id"]]["content_json"])
+        # still no unrelated columns leaked alongside the new field
+        self.assertEqual(
+            set(by_id[with_content["id"]].keys()),
+            {"id", "title", "template_type", "status", "content_json",
              "created_at", "updated_at", "active_slugs"},
         )
 
