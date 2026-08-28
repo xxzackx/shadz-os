@@ -156,12 +156,46 @@ class AdminPageListUI3FATests(unittest.TestCase):
         self.assertIn('onclick="editPage()"', self.html)
         self.assertIn("/admin/pages/${encodeURIComponent(pageId)}", self._edit_page_body())
 
-    def test_successful_edit_invalidates_page_list_cache(self):
-        # cache reset lives in editPage()'s success (res.ok) branch
+    def _edit_page_success_branch(self):
+        # the body of the `} else {` (res.ok) arm of editPage()'s fetch handler
+        after_guard = self._edit_page_body().split("if (!res.ok)", 1)[1]
+        return after_guard.split("} else {", 1)[1]
+
+    def _edit_page_failure_region(self):
+        # everything from the !res.ok check up to (not including) the else arm,
+        # plus the catch block — the paths that must NOT navigate
         body = self._edit_page_body()
-        self.assertIn("_allPages = []", body)
-        ok_branch = body.split("if (!res.ok)", 1)[1]
-        self.assertIn("_allPages = []", ok_branch)
+        err_branch = body.split("if (!res.ok)", 1)[1].split("} else {", 1)[0]
+        catch_block = body.split("} catch {", 1)[1]
+        return err_branch + "\n" + catch_block
+
+    def test_successful_edit_invalidates_page_list_cache(self):
+        # cache reset still lives in editPage()'s success (res.ok) branch
+        self.assertIn("_allPages = []", self._edit_page_success_branch())
+
+    def test_successful_edit_reloads_and_returns_to_page_list(self):
+        # UI3F-B.1: on success, reload the list then show the list section.
+        # The reload is awaited so the list is populated before it is shown.
+        branch = self._edit_page_success_branch()
+        self.assertIn("await loadPageList()", branch)
+        self.assertIn("show('pageListSection')", branch)
+        # cache cleared -> awaited reload -> switch to the list view, in order
+        self.assertLess(
+            branch.index("_allPages = []"),
+            branch.index("await loadPageList()"),
+        )
+        self.assertLess(
+            branch.index("await loadPageList()"),
+            branch.index("show('pageListSection')"),
+        )
+
+    def test_successful_edit_shows_pl_msg(self):
+        self.assertIn("showMsg('pl-msg'", self._edit_page_success_branch())
+
+    def test_failure_path_does_not_navigate_to_page_list(self):
+        region = self._edit_page_failure_region()
+        self.assertNotIn("show('pageListSection')", region)
+        self.assertNotIn("loadPageList(", region)
 
     def test_manual_edit_page_workflow_still_present(self):
         for marker in (
