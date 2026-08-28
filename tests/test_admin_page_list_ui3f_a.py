@@ -173,29 +173,60 @@ class AdminPageListUI3FATests(unittest.TestCase):
         # cache reset still lives in editPage()'s success (res.ok) branch
         self.assertIn("_allPages = []", self._edit_page_success_branch())
 
+    def test_successful_edit_hides_edit_section(self):
+        # UI3F-B.1 hotfix: show() only hides #home, so the open Edit section
+        # must be closed explicitly on success.
+        branch = self._edit_page_success_branch()
+        self.assertRegex(
+            branch,
+            r"getElementById\('pageEditSection'\)\.style\.display\s*=\s*'none'",
+        )
+
     def test_successful_edit_reloads_and_returns_to_page_list(self):
         # UI3F-B.1: on success, reload the list then show the list section.
         # The reload is awaited so the list is populated before it is shown.
         branch = self._edit_page_success_branch()
         self.assertIn("await loadPageList()", branch)
         self.assertIn("show('pageListSection')", branch)
-        # cache cleared -> awaited reload -> switch to the list view, in order
-        self.assertLess(
-            branch.index("_allPages = []"),
-            branch.index("await loadPageList()"),
+        # Full ordering:
+        #   _allPages = []
+        #   -> hide #pageEditSection
+        #   -> await loadPageList()
+        #   -> show('pageListSection')
+        #   -> showMsg('pl-msg' ...)
+        hide_edit = re.search(
+            r"getElementById\('pageEditSection'\)\.style\.display\s*=\s*'none'",
+            branch,
         )
-        self.assertLess(
+        self.assertIsNotNone(hide_edit)
+        order = [
+            branch.index("_allPages = []"),
+            hide_edit.start(),
             branch.index("await loadPageList()"),
             branch.index("show('pageListSection')"),
-        )
+            branch.index("showMsg('pl-msg'"),
+        ]
+        self.assertEqual(order, sorted(order))
 
     def test_successful_edit_shows_pl_msg(self):
         self.assertIn("showMsg('pl-msg'", self._edit_page_success_branch())
 
-    def test_failure_path_does_not_navigate_to_page_list(self):
+    def test_failure_path_does_not_hide_edit_or_navigate(self):
         region = self._edit_page_failure_region()
         self.assertNotIn("show('pageListSection')", region)
         self.assertNotIn("loadPageList(", region)
+        self.assertNotIn("getElementById('pageEditSection')", region)
+
+    def test_show_function_stays_generic_and_unchanged(self):
+        # The hotfix must not touch show(): it still hides only #home and does
+        # not sweep every .section.
+        m = re.search(r"function show\(sectionId\) \{(.*?)\n    \}", self.html, re.DOTALL)
+        self.assertIsNotNone(m, "show() function body not found")
+        show_body = m.group(1)
+        self.assertIn("getElementById('home').style.display = 'none'", show_body)
+        self.assertIn("getElementById(sectionId).style.display = 'block'", show_body)
+        self.assertNotIn("querySelectorAll('.section')", show_body)
+        self.assertNotIn("pageEditSection", show_body)
 
     def test_manual_edit_page_workflow_still_present(self):
         for marker in (

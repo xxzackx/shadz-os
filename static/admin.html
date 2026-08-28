@@ -3290,8 +3290,11 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
           // On success, invalidate the browse cache, reload it, and return to
           // the Page List so the updated values are visible immediately
           // (UI3F-B.1). Reuses the existing loadPageList() / show() — no new
-          // navigation or state. The failure paths above/below never navigate.
+          // navigation or state. show() only hides #home, so the currently
+          // open Edit section is closed explicitly here. The failure paths
+          // above/below never navigate.
           _allPages = [];
+          document.getElementById('pageEditSection').style.display = 'none';
           await loadPageList();
           show('pageListSection');
           showMsg('pl-msg', 'ok', 'Page updated.');
