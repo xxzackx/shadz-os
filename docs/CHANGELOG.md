@@ -2,6 +2,36 @@
 
 ---
 
+## Admin Panel UI v0.3 — Phase UI3F: Page Engine Management UI
+
+**Status:** Complete, deployed, and production-verified. **Phase UI3F is now complete and closed.** UI3F-D was intentionally skipped by product decision (see below) — not failed, not forgotten.
+
+**Scope:** A Page Engine management surface added to the Admin Panel (`static/admin.html`) plus one new authenticated read-only endpoint, across three subphases (UI3F-A, UI3F-B + hotfix UI3F-B.1, UI3F-C). No database schema/model/migration changes. No change to the existing Page create/update/attach/detach backend contract.
+
+**Final runtime commit:** `484b8ec925e8e1a4fd2fb9eff168e7164f4b4218` — `feat(admin): add safe page attachment replacement`
+
+- **UI3F-A — Page List / Browse** (`035ee728a0270c8998c7f90d8c9189eafa638899`, `feat(admin): add UI3F page browse list`) — new authenticated read-only `GET /admin/pages`: every page, newest-id-first, each with its list of active attached slugs; two queries total, no per-page N+1; pages with zero active attachments are included. New Page List / Browse section under the existing Pages module — client-side search by Page ID / title / active slug, template filter, status filter, all filtering over a single cached fetch (Media Manager UI3E-C pattern); a Refresh action re-fetches. Production live test passed.
+
+- **UI3F-B — Edit by Selection / Prefill** (`af772be6107e33700158a012f9851e2109813f52`, `feat(admin): add UI3F page edit prefill`; `f7a69bd0ae9bca2ca564b3d65a0a5521c0665638`, `fix(admin): return to page list after edit`) — an Edit action on each Page List card opens the existing Edit Page form pre-filled with that page's current Page ID / title / template / status / content_json, taken from the cached list payload. `GET /admin/pages` was minimally extended to return the page's raw `content_json` for this prefill — no other columns exposed, no new endpoint. The existing `editPage()` → `POST /admin/pages/{id}` submission path is unchanged. After a successful update the Page List cache is invalidated, the list is reloaded, and the view returns to the Page List automatically.
+
+- **UI3F-B.1 — Edit-navigation hotfix** (`ead5e99141c7710b92256b84b4ba318f2350c5ff`, `fix(admin): close edit section after page update`) — root cause: `show()` reveals the target section but does not hide sibling `.section` elements, so the return-to-list step left `#pageEditSection` still visible, stacked above the list. Minimal fix: explicitly hide `#pageEditSection` in `editPage()`'s success branch before reloading and showing the Page List. `show()` and `goHome()` unchanged. Production live test passed.
+
+- **UI3F-C — Attachment Visibility + Safe Replace** (`484b8ec925e8e1a4fd2fb9eff168e7164f4b4218`, `feat(admin): add safe page attachment replacement`) — Page List cards now render each active slug on its own line, with a count shown when there is more than one. A single shared client-side confirmation gate (`guardedPageAttach`) now sits in front of `POST /admin/pages/attach` for **both** the main Page Attach/Detach form and the Slug Management inline Page attach: no dialog when the target slug has no active page or is already attached to the same page; a modal ("Page X → Page Y", Cancel / Replace) when it is attached to a different page — Cancel performs no mutation, Replace continues through the unchanged `POST /admin/pages/attach`. The current-attachment check reuses the existing `GET /admin/links/search` exact-slug lookup (which already returns `page_attachment`) — no new endpoint. The modal reuses the existing `modal-overlay` / `modal-box` pattern; no native `confirm()`. Detach flows are untouched. Production live test passed.
+
+**UI3F-D — intentionally skipped by product decision.** Not failed, not forgotten. The following are deferred to a future **Page Engine v2**:
+- Public Page Preview / Open action
+- Archive / Unarchive UX
+- Page Card quick-action / presentation polish
+- Structured per-template content editor replacing raw JSON editing
+
+**Files changed across the phase:** `page_admin.py` (new `PageListItemOut` schema + `GET /admin/pages` route; `content_json` added to that response in UI3F-B), `static/admin.html`, plus focused tests `tests/test_page_admin_list_ui3f_a.py` (endpoint regression) and `tests/test_admin_page_list_ui3f_a.py` (Admin HTML structure). No other files.
+
+**Production:** VPS synchronized to `484b8ec`; runtime and live tests passed. This closure documentation is a separate commit.
+
+**Next:** UI3G (Bot Client Control Center), UI3H (UX / Safety Polish), and UI3I (Regression & Production Closure) remain ON HOLD, not cancelled or abandoned.
+
+---
+
 ## SHADZ Safety Engine v1 — Hotfix H1: Early Reminder Copy Update (H1A Cancelled)
 
 **Status:** H1B complete, deployed, and production-verified. **H1A cancelled** — investigation during H1 found the Admin Link Engine already allows a permanent redirect slug's `destination_url` to be set to the Safety public check-in URL (`https://shadz.io/safety/c/{secure_token}`); `link_admin.py`'s Admin create/update/convert routes never call the Telegram self-service `_is_blocked_destination_url` guard, so no Redirect Engine exception was needed. No H1A runtime code or tests were shipped.
@@ -373,7 +403,7 @@ No SafetyUser name prefix. Deadline/timezone values are still read from the same
 
 **Final runtime code commit: `d744ee5` (`d744ee524976e3a83ebabd139d26368a49380bf8`). Admin Panel UI v0.3 Phase UI3E implementation and post-closure repair are complete. Final re-closure is pending the re-closure documentation commit and final VPS synchronization to that re-closure commit.**
 
-**Roadmap update:** Once UI3E is fully re-closed, the next active milestone is **SHADZ Safety Engine v1** — not UI3F. Admin Panel UI v0.3's remaining phases (UI3F — Page Manager, UI3G — Bot Client Control Center, UI3H — UX / Safety Polish, UI3I — Regression & Production Closure) are **ON HOLD**, not cancelled or abandoned, and remain part of the roadmap to resume later.
+**Roadmap update:** Once UI3E is fully re-closed, the next active milestone is **SHADZ Safety Engine v1** — not UI3F. Admin Panel UI v0.3's remaining phases (UI3F — Page Manager, UI3G — Bot Client Control Center, UI3H — UX / Safety Polish, UI3I — Regression & Production Closure) are **ON HOLD**, not cancelled or abandoned, and remain part of the roadmap to resume later. _(Update: Safety Engine v1 has since completed through Phase S8.1 + Hotfix H1, and UI3F — Page Engine Management UI has since been completed and closed at runtime `484b8ec`, with UI3F-D skipped by product decision — see the Phase UI3F section at the top of this file. UI3G / UI3H / UI3I remain ON HOLD.)_
 
 ---
 
