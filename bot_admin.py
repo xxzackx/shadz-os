@@ -95,6 +95,11 @@ class AssignedSlugOut(BaseModel):
     activation_status: str | None = None
     activation_owner_client_id: int | None = None
     activation_state: str = "Legacy"
+    # UI3G-C: read-only ActivationRecord.activated_at, taken from the same
+    # OUTER-joined record UI3G-B already loads (no extra query). None for
+    # Legacy / not-yet-activated slugs. Feeds the "Slug activated" candidate
+    # of the card's Last Activity summary.
+    activated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -110,6 +115,12 @@ class BotClientOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     assigned_slugs: list[AssignedSlugOut] = Field(default_factory=list)
+    # UI3G-C: read-only "most recent meaningful activity" summary, derived
+    # server-side (single source of truth) from timestamps that already
+    # exist — never invented Telegram "last seen" / scan / login activity.
+    # See _derive_last_activity for the candidate list and tie-break order.
+    last_activity_at: datetime
+    last_activity_source: str
 
     model_config = {"from_attributes": True}
 
@@ -177,13 +188,71 @@ def _build_assigned_slugs(client: models.BotClient, db: Session) -> list[Assigne
             activation_status=(ar.activation_status if ar is not None else None),
             activation_owner_client_id=(ar.owner_client_id if ar is not None else None),
             activation_state=_derive_activation_state(client, ar),
+            activated_at=(ar.activated_at if ar is not None else None),
         )
         for bcs, link, ar in rows
     ]
 
 
+def _as_utc(dt: datetime) -> datetime:
+    """Coerce a possibly-naive timestamp to aware UTC for comparison only.
+
+    SQLite hands back naive datetimes even for DateTime(timezone=True)
+    columns; treat those as UTC (every writer in this codebase stores
+    datetime.now(timezone.utc)). The original value is still what gets
+    serialized — this is used purely to make max()/> total-orderable.
+    """
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def _derive_last_activity(
+    client: models.BotClient, assigned_slugs: list[AssignedSlugOut]
+) -> tuple[datetime, str]:
+    """Latest meaningful activity for a Bot Client, from existing timestamps
+    only. Candidates, highest tie-break priority first:
+
+      1. "Slug activated" — newest AssignedSlugOut.activated_at
+      2. "Slug assigned"  — newest AssignedSlugOut.assigned_at
+      3. "Client updated" — BotClient.updated_at, only when it post-dates
+                            creation (a never-touched client has
+                            updated_at == created_at and is not "updated")
+      4. "Client created" — BotClient.created_at (always-present fallback)
+
+    The newest timestamp wins; exact ties resolve by the order above.
+    No invented Telegram "last seen" / scan / login semantics.
+    """
+    candidates: list[tuple[int, datetime, str]] = []
+
+    activated = [s.activated_at for s in assigned_slugs if s.activated_at is not None]
+    if activated:
+        candidates.append((1, max(activated, key=_as_utc), "Slug activated"))
+
+    assigned = [s.assigned_at for s in assigned_slugs if s.assigned_at is not None]
+    if assigned:
+        candidates.append((2, max(assigned, key=_as_utc), "Slug assigned"))
+
+    if (
+        client.updated_at is not None
+        and _as_utc(client.updated_at) > _as_utc(client.created_at)
+    ):
+        candidates.append((3, client.updated_at, "Client updated"))
+
+    candidates.append((4, client.created_at, "Client created"))
+
+    best_pri, best_ts, best_label = candidates[0]
+    for pri, ts, label in candidates[1:]:
+        if _as_utc(ts) > _as_utc(best_ts) or (
+            _as_utc(ts) == _as_utc(best_ts) and pri < best_pri
+        ):
+            best_pri, best_ts, best_label = pri, ts, label
+
+    return best_ts, best_label
+
+
 def _client_out(client: models.BotClient, db: Session) -> BotClientOut:
     """Build a BotClientOut response including assigned slugs."""
+    assigned = _build_assigned_slugs(client, db)
+    last_activity_at, last_activity_source = _derive_last_activity(client, assigned)
     return BotClientOut(
         id=client.id,
         client_name=client.client_name,
@@ -194,7 +263,9 @@ def _client_out(client: models.BotClient, db: Session) -> BotClientOut:
         is_active=client.is_active,
         created_at=client.created_at,
         updated_at=client.updated_at,
-        assigned_slugs=_build_assigned_slugs(client, db),
+        assigned_slugs=assigned,
+        last_activity_at=last_activity_at,
+        last_activity_source=last_activity_source,
     )
 
 

@@ -3935,6 +3935,21 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
           ? '<span style="color:var(--gold-light)">Linked</span>'
           : '<span style="color:var(--text-muted)">Not linked yet</span>';
 
+      // UI3G-C: read-only identity + activity. Telegram fields are display
+      // only — never editable here. Display name is already shown as the
+      // primary Client name above (UI3D-C1 Polish: never a second name row).
+      // last_activity_* is derived server-side (bot_admin._derive_last_activity),
+      // never recomputed in JS.
+      const mutedDash = '<span style="color:var(--text-muted)">—</span>';
+      const telegramUserId = c.telegram_user_id
+        ? `<span class="value-overflow">${esc(c.telegram_user_id)}</span>` : mutedDash;
+      const createdAt = c.created_at
+        ? esc(new Date(c.created_at).toLocaleString()) : mutedDash;
+      const lastActivity = c.last_activity_at
+        ? `${esc(new Date(c.last_activity_at).toLocaleString())}`
+          + `<span style="color:var(--text-muted);font-size:0.85em"> · ${esc(c.last_activity_source || '')}</span>`
+        : mutedDash;
+
       const assignedSlugs = Array.isArray(c.assigned_slugs) ? c.assigned_slugs : [];
       const slugsHtml = assignedSlugs.length
         ? assignedSlugs.map(s => `
@@ -3973,6 +3988,18 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
           <div class="stats-row">
             <span class="stats-label">Telegram</span>
             <span class="stats-value">${telegramStatus}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Telegram User ID</span>
+            <span class="stats-value">${telegramUserId}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Created</span>
+            <span class="stats-value">${createdAt}</span>
+          </div>
+          <div class="stats-row">
+            <span class="stats-label">Last Activity</span>
+            <span class="stats-value value-overflow">${lastActivity}</span>
           </div>
           <div class="stats-row" style="justify-content:flex-end;gap:0.5rem">
             <button class="ghost-btn sm" onclick="regenerateAccessCode(${c.id})">Regenerate Access Code</button>
