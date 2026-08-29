@@ -3901,6 +3901,19 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
       }
     }
 
+    // UI3G-B: compact activation-state badge for one assigned slug on a Bot
+    // Client card. Wording matches the UI3D slug-search activation panel;
+    // the state itself is derived server-side (bot_admin._derive_activation_state)
+    // so the 5-state logic is never duplicated here.
+    function botSlugActivationBadge(state) {
+      const label = state || 'Legacy';
+      const alert = label === 'Ownership Conflict' || label === 'Activation Sync Required';
+      const color = label === 'Activated' ? 'var(--gold-light)'
+        : alert ? '#e07070'
+        : 'var(--text-muted)';
+      return `<span style="font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;color:${color};white-space:nowrap">${esc(label)}</span>`;
+    }
+
     function buildBotClientCard(c) {
       // Show one human-readable name: Telegram display name once known,
       // falling back to the admin-assigned client_name until the client's
@@ -3925,9 +3938,12 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
       const assignedSlugs = Array.isArray(c.assigned_slugs) ? c.assigned_slugs : [];
       const slugsHtml = assignedSlugs.length
         ? assignedSlugs.map(s => `
-            <div class="stats-row" style="justify-content:space-between;align-items:center">
+            <div class="stats-row" style="justify-content:space-between;align-items:center;gap:0.5rem">
               <span class="stats-value value-overflow">${esc(s.slug)} <span style="color:var(--text-muted);font-size:0.85em">(${esc(s.content_type)})</span></span>
-              <button class="ghost-btn sm danger" onclick="unassignBotSlug(${c.id}, '${escVal(s.slug)}')">Unassign</button>
+              <span style="display:flex;align-items:center;gap:0.5rem;flex-shrink:0">
+                ${botSlugActivationBadge(s.activation_state)}
+                <button class="ghost-btn sm danger" onclick="unassignBotSlug(${c.id}, '${escVal(s.slug)}')">Unassign</button>
+              </span>
             </div>`).join('')
         : '<div style="font-size:0.72rem;color:var(--text-muted)">No slugs assigned.</div>';
 

@@ -86,6 +86,15 @@ class AssignedSlugOut(BaseModel):
     notes: str | None = None
     is_archived: bool
     assigned_at: datetime
+    # UI3G-B: read-only activation visibility for the Bot Client card.
+    # activation_status is None when the slug has no ActivationRecord — that
+    # is a Legacy slug (predates the Activation Engine), never "unactivated".
+    # activation_state is a derived label mirroring the existing UI3D
+    # activation semantics so the fragile 5-state derivation is not
+    # duplicated in JS. Never mutated/reconciled on the read path.
+    activation_status: str | None = None
+    activation_owner_client_id: int | None = None
+    activation_state: str = "Legacy"
 
     model_config = {"from_attributes": True}
 
@@ -120,12 +129,42 @@ def _get_bot_client_or_404(client_id: int, db: Session) -> models.BotClient:
     return client
 
 
-def _build_assigned_slugs(client_id: int, db: Session) -> list[AssignedSlugOut]:
-    """Return assigned slug rows joined with redirect_links metadata."""
+def _derive_activation_state(client: models.BotClient, record) -> str:
+    """Classify one assigned slug's activation state, mirroring UI3D.
+
+    Pure read-only classification — never mutates or reconciles anything.
+      - No ActivationRecord            -> "Legacy" (never "unactivated")
+      - Client has not linked Telegram -> "Awaiting Telegram Login"
+      - activated & owned by client    -> "Activated"
+      - owned by a different client    -> "Ownership Conflict"
+      - anything else                  -> "Activation Sync Required"
+    """
+    if record is None:
+        return "Legacy"
+    if client.telegram_user_id is None:
+        return "Awaiting Telegram Login"
+    if record.activation_status == "activated" and record.owner_client_id == client.id:
+        return "Activated"
+    if record.owner_client_id is not None and record.owner_client_id != client.id:
+        return "Ownership Conflict"
+    return "Activation Sync Required"
+
+
+def _build_assigned_slugs(client: models.BotClient, db: Session) -> list[AssignedSlugOut]:
+    """Return assigned slug rows joined with redirect_links metadata and
+    read-only Activation Engine state.
+
+    ActivationRecord is joined with an OUTER join so Legacy assigned slugs
+    (no ActivationRecord) stay in the response. Single query — no N+1.
+    """
     rows = (
-        db.query(models.BotClientSlug, models.RedirectLink)
+        db.query(models.BotClientSlug, models.RedirectLink, models.ActivationRecord)
         .join(models.RedirectLink, models.BotClientSlug.slug == models.RedirectLink.slug)
-        .filter(models.BotClientSlug.bot_client_id == client_id)
+        .outerjoin(
+            models.ActivationRecord,
+            models.ActivationRecord.slug == models.BotClientSlug.slug,
+        )
+        .filter(models.BotClientSlug.bot_client_id == client.id)
         .all()
     )
     return [
@@ -135,8 +174,11 @@ def _build_assigned_slugs(client_id: int, db: Session) -> list[AssignedSlugOut]:
             notes=link.notes,
             is_archived=link.is_archived is True,
             assigned_at=bcs.created_at,
+            activation_status=(ar.activation_status if ar is not None else None),
+            activation_owner_client_id=(ar.owner_client_id if ar is not None else None),
+            activation_state=_derive_activation_state(client, ar),
         )
-        for bcs, link in rows
+        for bcs, link, ar in rows
     ]
 
 
@@ -152,7 +194,7 @@ def _client_out(client: models.BotClient, db: Session) -> BotClientOut:
         is_active=client.is_active,
         created_at=client.created_at,
         updated_at=client.updated_at,
-        assigned_slugs=_build_assigned_slugs(client.id, db),
+        assigned_slugs=_build_assigned_slugs(client, db),
     )
 
 
