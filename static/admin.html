@@ -1254,6 +1254,23 @@
         <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadBotClients()">Refresh</button>
       </div>
 
+      <!-- UI3G-F: Control Centre summary — client-side counts over the full
+           loaded dataset (never just the filtered view). -->
+      <div id="bot-summary" style="display:none;flex-wrap:wrap;gap:0.85rem;font-size:0.7rem;color:var(--text-muted);margin-bottom:0.75rem"></div>
+
+      <!-- UI3G-D: client-side search + status filter over the already-fetched
+           dataset — no extra API requests. -->
+      <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap">
+        <input type="text" id="bc-search" placeholder="Search name, Telegram @user, User ID, or slug…" autocomplete="off" style="margin-bottom:0;flex:1;min-width:180px" oninput="renderBotClients()" />
+        <select id="bc-filter" style="margin-bottom:0;width:auto;flex-shrink:0" onchange="renderBotClients()">
+          <option value="all">All clients</option>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+          <option value="linked">Telegram Linked</option>
+          <option value="unlinked">Not Linked</option>
+        </select>
+      </div>
+
       <!-- Test data cleanup selection tools -->
       <div id="bot-selection-tools" style="display:none;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
         <button class="ghost-btn sm" onclick="selectAllBotClients()">Select All</button>
@@ -1428,6 +1445,13 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
     let _allAssets = [];
     const selectedSlugs = new Set();
     const selectedBotClients = new Set();
+    // UI3G-D: full Bot Client list from the last loadBotClients() fetch —
+    // search/status filtering re-renders from this with no extra API request.
+    let _allBotClients = [];
+    // UI3G-E: single in-flight guard for Bot Client lifecycle actions
+    // (regenerate / deactivate / reactivate / delete / unassign) so rapid
+    // repeated clicks cannot fire duplicate requests before the re-render.
+    let _botActionBusy = false;
 
     // Admin shell navigation (UI3B) — maps each section to its home-screen
     // module group so the primary nav can reflect/reach the active area.
@@ -3782,7 +3806,13 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
     }
 
     async function unassignBotSlug(clientId, slug) {
-      if (!confirm(`Remove slug '${slug}' from bot client ${clientId}?`)) return;
+      if (_botActionBusy) return;
+      if (!confirm(
+        `Unassign slug '${slug}' from bot client ${clientId}?\n\n` +
+        `This only removes the bot client's control of this slug. The slug ` +
+        `itself and its content are not deleted or archived.`
+      )) return;
+      _botActionBusy = true;
       try {
         const res  = await fetch(`/admin/bot/clients/${clientId}/slugs/${encodeURIComponent(slug)}`, {
           method: 'DELETE',
@@ -3797,9 +3827,15 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         }
       } catch {
         showMsg('bl-msg', 'error', 'Network error.');
+      } finally {
+        _botActionBusy = false;
       }
     }
 
+    // Fetches /admin/bot/clients once, caches into _allBotClients, then hands
+    // off to renderBotClients() for all search/filter/summary rendering.
+    // Called on section open, Refresh, and after every successful lifecycle
+    // action so the view always re-renders from authoritative server state.
     async function loadBotClients() {
       const container = document.getElementById('botClientList');
       container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
@@ -3810,23 +3846,85 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         const data = await res.json();
 
         if (!res.ok) {
+          _allBotClients = [];
           container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
           document.getElementById('bot-selection-tools').style.display = 'none';
+          document.getElementById('bot-summary').style.display = 'none';
           return;
         }
 
-        if (data.length === 0) {
+        _allBotClients = Array.isArray(data) ? data : [];
+
+        if (_allBotClients.length === 0) {
           container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No bot clients yet.</div>';
           document.getElementById('bot-selection-tools').style.display = 'none';
+          document.getElementById('bot-summary').style.display = 'none';
           return;
         }
 
-        container.innerHTML = data.map(c => buildBotClientCard(c)).join('');
-        document.getElementById('bot-selection-tools').style.display = 'flex';
+        renderBotClients();
       } catch {
+        _allBotClients = [];
         container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
         document.getElementById('bot-selection-tools').style.display = 'none';
+        document.getElementById('bot-summary').style.display = 'none';
       }
+    }
+
+    // UI3G-D: renders _allBotClients filtered by the search box + status
+    // dropdown. No API request — client-side only. Search matches (case-
+    // insensitively) client name, Telegram username, Telegram User ID, and
+    // any assigned slug. Selection is cleared on every re-render so the bulk
+    // cleanup bar never references a card hidden by the current filter.
+    function renderBotClients() {
+      const container = document.getElementById('botClientList');
+      if (!container) return;
+      clearBotClientSelection();
+      renderBotSummary();
+
+      const query  = (document.getElementById('bc-search').value || '').trim().toLowerCase();
+      const filter = document.getElementById('bc-filter').value;
+
+      const filtered = _allBotClients.filter(c => {
+        const linked = !!c.telegram_user_id;
+        if (filter === 'active'   && !c.is_active) return false;
+        if (filter === 'inactive' &&  c.is_active) return false;
+        if (filter === 'linked'   && !linked)      return false;
+        if (filter === 'unlinked' &&  linked)      return false;
+        if (!query) return true;
+        const slugs = Array.isArray(c.assigned_slugs) ? c.assigned_slugs : [];
+        return (c.client_name || '').toLowerCase().includes(query)
+          || (c.telegram_username || '').toLowerCase().includes(query)
+          || String(c.telegram_user_id || '').toLowerCase().includes(query)
+          || slugs.some(s => (s.slug || '').toLowerCase().includes(query));
+      });
+
+      document.getElementById('bot-selection-tools').style.display = 'flex';
+
+      if (filtered.length === 0) {
+        container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No bot clients match your search or filter.</div>';
+        return;
+      }
+      container.innerHTML = filtered.map(c => buildBotClientCard(c)).join('');
+    }
+
+    // UI3G-F: compact counts over the FULL loaded dataset (not the filtered
+    // view). Client-side derived — no summary endpoint.
+    function renderBotSummary() {
+      const box = document.getElementById('bot-summary');
+      if (!box) return;
+      const all      = _allBotClients;
+      const active   = all.filter(c => c.is_active).length;
+      const linked   = all.filter(c => !!c.telegram_user_id).length;
+      const chip = (label, n) =>
+        `<span><strong style="color:var(--text)">${n}</strong> ${esc(label)}</span>`;
+      box.innerHTML =
+        chip('Total', all.length)
+        + chip('Active', active)
+        + chip('Inactive', all.length - active)
+        + chip('Telegram Linked', linked)
+        + chip('Not Linked', all.length - linked);
+      box.style.display = all.length ? 'flex' : 'none';
     }
 
     // ── Bot Client cleanup selection ────────────────────────────────────────
@@ -4014,8 +4112,14 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
     }
 
     async function setBotClientActive(clientId, active) {
-      const verb = active ? 'Activate' : 'Deactivate';
-      if (!confirm(`${verb} bot client ${clientId}?`)) return;
+      if (_botActionBusy) return;
+      const prompt = active
+        ? `Reactivate bot client ${clientId}? Its previously assigned slugs ` +
+          `stay assigned and its access code works again.`
+        : `Deactivate bot client ${clientId}? Its access code stops working ` +
+          `until reactivated. Assigned slugs are preserved, not removed.`;
+      if (!confirm(prompt)) return;
+      _botActionBusy = true;
       try {
         const res  = await fetch(`/admin/bot/clients/${clientId}`, {
           method: 'PATCH',
@@ -4025,18 +4129,26 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         });
         const data = await res.json();
         if (res.ok) {
-          showMsg('bl-msg', 'ok', `Bot client ${clientId} ${active ? 'activated' : 'deactivated'}.`);
+          showMsg('bl-msg', 'ok', `Bot client ${clientId} ${active ? 'reactivated' : 'deactivated'}.`);
           loadBotClients();
         } else {
           showMsg('bl-msg', 'error', data.detail || `Error ${res.status}`);
         }
       } catch {
         showMsg('bl-msg', 'error', 'Network error.');
+      } finally {
+        _botActionBusy = false;
       }
     }
 
     async function regenerateAccessCode(clientId) {
-      if (!confirm(`Regenerate access code for bot client ${clientId}? The old code will stop working immediately.`)) return;
+      if (_botActionBusy) return;
+      if (!confirm(
+        `Regenerate the access code for bot client ${clientId}?\n\n` +
+        `The current code becomes invalid immediately and cannot be ` +
+        `recovered. The client must be given the new code to log in again.`
+      )) return;
+      _botActionBusy = true;
       try {
         const res  = await fetch(`/admin/bot/clients/${clientId}/regenerate-code`, {
           method: 'POST',
@@ -4051,11 +4163,20 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         }
       } catch {
         showMsg('bl-msg', 'error', 'Network error.');
+      } finally {
+        _botActionBusy = false;
       }
     }
 
     async function deleteBotClient(clientId) {
-      if (!confirm(`Permanently delete bot client ${clientId}? This removes its slug assignments (slugs themselves are untouched) and cannot be undone.`)) return;
+      if (_botActionBusy) return;
+      if (!confirm(
+        `Permanently delete bot client ${clientId}?\n\n` +
+        `This removes the bot client's access and all of its slug ` +
+        `assignments. The underlying SHADZ slugs and their content are NOT ` +
+        `deleted or archived. This cannot be undone.`
+      )) return;
+      _botActionBusy = true;
       try {
         const res  = await fetch(`/admin/bot/clients/${clientId}`, {
           method: 'DELETE',
@@ -4070,6 +4191,8 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         }
       } catch {
         showMsg('bl-msg', 'error', 'Network error.');
+      } finally {
+        _botActionBusy = false;
       }
     }
 
