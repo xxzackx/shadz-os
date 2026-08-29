@@ -12,7 +12,7 @@ import string
 from datetime import datetime, timezone
 
 from fastapi import Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -56,6 +56,28 @@ def _generate_access_code(db: Session) -> str:
         status_code=500,
         detail="Could not generate a unique access code after 10 attempts — please try again",
     )
+
+
+# ---------------------------------------------------------------------------
+# UTC timestamp normalization (shared: response serialization + comparison)
+# ---------------------------------------------------------------------------
+
+def _as_utc(value):
+    """Tag a naive datetime as UTC before JSON serialization / comparison.
+
+    Every SHADZ writer stores timestamps with datetime.now(timezone.utc),
+    but SQLite/SQLAlchemy reads DateTime(timezone=True) columns back naive.
+    A naive value serializes to JSON with no offset, which the browser's
+    `new Date(...)` (used throughout static/admin.html) misreads as local
+    time — e.g. Bot Client 13's 2026-08-27T10:15:54 UTC showed as 10:15
+    Cambodia time, 7 hours early (UI3G-C.1). Already-aware values pass
+    through unchanged, so this never double-converts; non-datetime / None
+    values (nullable fields) pass through untouched. Mirrors
+    link_admin._as_utc — the established convention for this project.
+    """
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +125,9 @@ class AssignedSlugOut(BaseModel):
 
     model_config = {"from_attributes": True}
 
+    # UI3G-C.1: serialize naive-from-SQLite timestamps with explicit UTC.
+    _tag_utc = field_validator("assigned_at", "activated_at", mode="before")(_as_utc)
+
 
 class BotClientOut(BaseModel):
     id: int
@@ -123,6 +148,11 @@ class BotClientOut(BaseModel):
     last_activity_source: str
 
     model_config = {"from_attributes": True}
+
+    # UI3G-C.1: serialize naive-from-SQLite timestamps with explicit UTC.
+    _tag_utc = field_validator(
+        "created_at", "updated_at", "last_activity_at", mode="before"
+    )(_as_utc)
 
 
 # ---------------------------------------------------------------------------
@@ -192,17 +222,6 @@ def _build_assigned_slugs(client: models.BotClient, db: Session) -> list[Assigne
         )
         for bcs, link, ar in rows
     ]
-
-
-def _as_utc(dt: datetime) -> datetime:
-    """Coerce a possibly-naive timestamp to aware UTC for comparison only.
-
-    SQLite hands back naive datetimes even for DateTime(timezone=True)
-    columns; treat those as UTC (every writer in this codebase stores
-    datetime.now(timezone.utc)). The original value is still what gets
-    serialized — this is used purely to make max()/> total-orderable.
-    """
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
 def _derive_last_activity(
