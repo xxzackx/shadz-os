@@ -4025,7 +4025,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
 
       const toggleBtn = c.is_active
         ? `<button class="ghost-btn sm danger" onclick="setBotClientActive(${c.id}, false)">Deactivate</button>`
-        : `<button class="ghost-btn sm" onclick="setBotClientActive(${c.id}, true)">Activate</button>`;
+        : `<button class="ghost-btn sm" onclick="setBotClientActive(${c.id}, true)">Reactivate</button>`;
 
       const telegramStatus = c.telegram_username
         ? `<span style="color:var(--gold-light)">@${esc(c.telegram_username)}</span>`
