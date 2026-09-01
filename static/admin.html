@@ -1645,7 +1645,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
           document.getElementById('resPhone').textContent   = data.phone_number   || '—';
           document.getElementById('resDest').textContent    = data.destination_url || '—';
           document.getElementById('resNotes').textContent   = data.notes          || '—';
-          document.getElementById('resCreated').textContent = new Date(data.created_at).toLocaleString();
+          document.getElementById('resCreated').textContent = fmtTimestamp(data.created_at);
           document.getElementById('createResult').style.display = 'block';
           // Clear inputs so user can create another link immediately
           document.getElementById('c-destUrl').value = '';
@@ -1776,6 +1776,15 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
+    // Shared timestamp display. Presentation only — the browser's own locale
+    // and timezone control the output; the value's UTC offset is never touched.
+    // Missing or unparseable input renders a calm dash instead of "Invalid Date".
+    function fmtTimestamp(value) {
+      if (!value) return '—';
+      const d = new Date(value);
+      return isNaN(d.getTime()) ? '—' : d.toLocaleString();
+    }
+
     // UI3D-C3 Part B: pressing Enter inside a single-line input triggers the
     // same primary-action function as clicking that input area's button —
     // never duplicated logic, just a scoped keydown->click equivalent.
@@ -1821,7 +1830,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         ['NFC URL',      r.nfc_url],
       ];
       const rowsAfter = [
-        ['Created',      new Date(r.created_at).toLocaleString()],
+        ['Created',      fmtTimestamp(r.created_at)],
         ['Scans',        r.scan_count],
         ['Notes',        r.notes],
       ];
@@ -1963,7 +1972,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
               </div>
               <div class="compact-row">
                 <span class="stats-label">Activated At</span>
-                <span class="stats-value">${a.activated_at ? esc(new Date(a.activated_at).toLocaleString()) : '—'}</span>
+                <span class="stats-value">${esc(fmtTimestamp(a.activated_at))}</span>
               </div>
               <div class="compact-row">
                 <span class="stats-label">Activation Token</span>
@@ -2010,7 +2019,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
               </div>
               <div class="compact-row">
                 <span class="stats-label">Activated At</span>
-                <span class="stats-value">${a.activated_at ? esc(new Date(a.activated_at).toLocaleString()) : '—'}</span>
+                <span class="stats-value">${esc(fmtTimestamp(a.activated_at))}</span>
               </div>
               <div class="compact-row">
                 <span class="stats-label">Activation Token</span>
@@ -2732,7 +2741,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
           </div>
           <div class="stats-row">
             <span class="stats-label">Created</span>
-            <span class="stats-value">${esc(new Date(a.created_at).toLocaleString())}</span>
+            <span class="stats-value">${esc(fmtTimestamp(a.created_at))}</span>
           </div>
           <div class="stats-row" style="justify-content:space-between;align-items:center">
             <button class="ghost-btn sm" onclick="renameAsset(${a.id})">${renameLabel}</button>
@@ -2848,7 +2857,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
           </div>
           <div class="stats-row">
             <span class="stats-label">Removed At</span>
-            <span class="stats-value">${a.deleted_at ? esc(new Date(a.deleted_at).toLocaleString()) : '—'}</span>
+            <span class="stats-value">${esc(fmtTimestamp(a.deleted_at))}</span>
           </div>
         </div>`;
     }
@@ -3138,7 +3147,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
             </div>
             <div class="stats-row">
               <span class="stats-label">Attached</span>
-              <span class="stats-value">${esc(new Date(sm.created_at).toLocaleString())}</span>
+              <span class="stats-value">${esc(fmtTimestamp(sm.created_at))}</span>
             </div>
           </div>`).join('');
       } catch {
@@ -3286,7 +3295,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
           document.getElementById('pc-resTitle').textContent    = data.title;
           document.getElementById('pc-resTemplate').textContent = data.template_type;
           document.getElementById('pc-resStatus').textContent   = data.status;
-          document.getElementById('pc-resCreated').textContent  = new Date(data.created_at).toLocaleString();
+          document.getElementById('pc-resCreated').textContent  = fmtTimestamp(data.created_at);
           showMsg('pc-msg', 'ok', `Page ${data.id} created.`);
           document.getElementById('pc-title').value   = '';
           document.getElementById('pc-content').value = '';
@@ -3338,7 +3347,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
           document.getElementById('pe-resTitle').textContent    = data.title;
           document.getElementById('pe-resTemplate').textContent = data.template_type;
           document.getElementById('pe-resStatus').textContent   = data.status;
-          document.getElementById('pe-resUpdated').textContent  = new Date(data.updated_at).toLocaleString();
+          document.getElementById('pe-resUpdated').textContent  = fmtTimestamp(data.updated_at);
           showMsg('pe-msg', 'ok', `Page ${data.id} updated.`);
           document.getElementById('pe-id').value       = '';
           document.getElementById('pe-title').value    = '';
@@ -3673,7 +3682,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
           </div>
           <div class="stats-row">
             <span class="stats-label">Updated</span>
-            <span class="stats-value">${esc(new Date(p.updated_at).toLocaleString())}</span>
+            <span class="stats-value">${esc(fmtTimestamp(p.updated_at))}</span>
           </div>
           <div class="stats-row" style="justify-content:flex-end;align-items:center">
             <button class="ghost-btn sm" onclick="editPageFromList(${p.id})">Edit</button>
@@ -4055,9 +4064,9 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
       const telegramUserId = c.telegram_user_id
         ? `<span class="value-overflow">${esc(c.telegram_user_id)}</span>` : mutedDash;
       const createdAt = c.created_at
-        ? esc(new Date(c.created_at).toLocaleString()) : mutedDash;
+        ? esc(fmtTimestamp(c.created_at)) : mutedDash;
       const lastActivity = c.last_activity_at
-        ? `${esc(new Date(c.last_activity_at).toLocaleString())}`
+        ? `${esc(fmtTimestamp(c.last_activity_at))}`
           + `<span style="color:var(--text-muted);font-size:0.85em"> · ${esc(c.last_activity_source || '')}</span>`
         : mutedDash;
 
