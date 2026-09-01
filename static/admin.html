@@ -359,6 +359,8 @@
     }
 
     .msg.success { background: #120e00; border: 1px solid var(--gold-dim); color: var(--gold-light); }
+    /* Alias: several modules call showMsg(..., 'ok', ...) — style it the same as success. */
+    .msg.ok      { background: #120e00; border: 1px solid var(--gold-dim); color: var(--gold-light); }
     .msg.error   { background: #1a0000; border: 1px solid #5a1e1e;         color: #e07070; }
 
     /* ── Toast notifications (Storage Manager card Attach shortcut only) ── */
@@ -461,6 +463,12 @@
     .ghost-btn.danger               { color: #e07070; border-color: #5a1e1e; }
     .ghost-btn.danger:hover         { color: #f09090; border-color: #7a2e2e; }
     .ghost-btn.sm                   { width: auto; padding: 0.2rem 0.65rem; font-size: 0.65rem; }
+    /* Reversible lifecycle actions (archive / deactivate / detach / unassign) —
+       deliberately distinct from the red permanent-Delete treatment. */
+    .ghost-btn.reversible           { color: var(--text); border-color: var(--gold-dim); }
+    .ghost-btn.reversible:hover     { color: var(--gold); border-color: var(--gold); }
+    /* Thin divider to separate a permanent Delete from adjacent benign actions. */
+    .action-sep { width: 1px; align-self: stretch; background: var(--border-2); margin: 0 0.2rem; flex-shrink: 0; }
 
     /* ── Utility: sub-panel container (active media, empty-state blocks) ── */
     .inset-panel {
@@ -870,7 +878,7 @@
       <!-- Bulk action bar — visible when one or more result cards are selected -->
       <div id="bulk-bar" class="bulk-bar">
         <span id="bulk-count" class="bulk-count">0 selected</span>
-        <button id="bulk-archive-btn" class="ghost-btn sm danger" onclick="bulkArchive()">Bulk Archive</button>
+        <button id="bulk-archive-btn" class="ghost-btn sm reversible" onclick="bulkArchive()">Bulk Archive</button>
         <button id="bulk-restore-btn" class="ghost-btn sm" onclick="bulkRestore()">Bulk Restore</button>
       </div>
 
@@ -1875,7 +1883,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
                    style="font-size:0.65rem;color:var(--gold-dim);letter-spacing:.08em;text-transform:uppercase;text-decoration:none"
                    onmouseover="this.style.color='var(--gold)'" onmouseout="this.style.color='var(--gold-dim)'">Open Media ↗</a>
               </div>
-              <button class="ghost-btn danger"
+              <button class="ghost-btn reversible"
                 style="margin-top:0.5rem"
                 onclick="detachMedia('${escVal(r.slug)}', ${index})">Detach Media</button>
               <div id="detach-msg-${index}" class="msg"></div>
@@ -2049,7 +2057,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         ? `<span style="font-size:0.68rem;color:var(--text-muted)">Use phone search for archive controls</span>`
         : isArchived
           ? `<button class="ghost-btn sm" onclick="restoreSlug('${escVal(r.slug)}')">Restore</button>`
-          : `<button class="ghost-btn sm danger" onclick="archiveSlug('${escVal(r.slug)}')">Archive</button>`;
+          : `<button class="ghost-btn sm reversible" onclick="archiveSlug('${escVal(r.slug)}')">Archive</button>`;
       const lifecycleRow = `
         <div class="edit-toggle-row" style="justify-content:space-between">
           ${statusBadge}${lifecycleBtn}
@@ -2129,7 +2137,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
               onclick="attachPageInline('${escVal(r.slug)}', ${index})">Attach Page</button>
             <div id="pai-attach-msg-${index}" class="msg"></div>
             <div style="height:1px;background:var(--border-2);margin:0.9rem 0"></div>
-            <button class="ghost-btn danger" id="pai-detach-btn-${index}"
+            <button class="ghost-btn reversible" id="pai-detach-btn-${index}"
               onclick="detachPageInline('${escVal(r.slug)}', ${index})">Detach Page</button>
             <div id="pai-detach-msg-${index}" class="msg"></div>
           </div>`;
@@ -2723,7 +2731,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
           </div>
           <div class="stats-row" style="justify-content:space-between;align-items:center">
             <button class="ghost-btn sm" onclick="renameAsset(${a.id})">${renameLabel}</button>
-            <span>${attach}${deleted}</span>
+            <span style="display:inline-flex;align-items:center;gap:0.4rem">${attach}${attach && !a.is_deleted ? '<span class="action-sep"></span>' : ''}${deleted}</span>
           </div>
         </div>`;
     }
@@ -4024,7 +4032,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         : '<span style="color:var(--text-muted)">Inactive</span>';
 
       const toggleBtn = c.is_active
-        ? `<button class="ghost-btn sm danger" onclick="setBotClientActive(${c.id}, false)">Deactivate</button>`
+        ? `<button class="ghost-btn sm reversible" onclick="setBotClientActive(${c.id}, false)">Deactivate</button>`
         : `<button class="ghost-btn sm" onclick="setBotClientActive(${c.id}, true)">Reactivate</button>`;
 
       const telegramStatus = c.telegram_username
@@ -4055,7 +4063,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
               <span class="stats-value value-overflow">${esc(s.slug)} <span style="color:var(--text-muted);font-size:0.85em">(${esc(s.content_type)})</span></span>
               <span style="display:flex;align-items:center;gap:0.5rem;flex-shrink:0">
                 ${botSlugActivationBadge(s.activation_state)}
-                <button class="ghost-btn sm danger" onclick="unassignBotSlug(${c.id}, '${escVal(s.slug)}')">Unassign</button>
+                <button class="ghost-btn sm reversible" onclick="unassignBotSlug(${c.id}, '${escVal(s.slug)}')">Unassign</button>
               </span>
             </div>`).join('')
         : '<div style="font-size:0.72rem;color:var(--text-muted)">No slugs assigned.</div>';
@@ -4102,6 +4110,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
           <div class="stats-row" style="justify-content:flex-end;gap:0.5rem">
             <button class="ghost-btn sm" onclick="regenerateAccessCode(${c.id})">Regenerate Access Code</button>
             ${toggleBtn}
+            <span class="action-sep"></span>
             <button class="ghost-btn sm danger" onclick="deleteBotClient(${c.id})">Delete</button>
           </div>
           <div class="stats-row">
