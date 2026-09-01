@@ -458,6 +458,8 @@
     }
 
     .ghost-btn:hover { border-color: var(--gold-dim); color: var(--gold); }
+    /* Consistent busy/disabled feedback, mirroring .action-btn:disabled. */
+    .ghost-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
     /* ── Ghost button modifiers ── */
     .ghost-btn.danger               { color: #e07070; border-color: #5a1e1e; }
@@ -469,6 +471,9 @@
     .ghost-btn.reversible:hover     { color: var(--gold); border-color: var(--gold); }
     /* Thin divider to separate a permanent Delete from adjacent benign actions. */
     .action-sep { width: 1px; align-self: stretch; background: var(--border-2); margin: 0 0.2rem; flex-shrink: 0; }
+
+    /* Shared loading / empty note for list containers (Slugs, Media, Pages, Bot Clients). */
+    .list-note { font-size: 0.75rem; color: var(--text-muted); padding: 0.5rem 0; }
 
     /* ── Utility: sub-panel container (active media, empty-state blocks) ── */
     .inset-panel {
@@ -2628,7 +2633,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
 
     async function loadStorage() {
       const container = document.getElementById('storageList');
-      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+      container.innerHTML = '<div class="list-note">Loading…</div>';
 
       try {
         const res  = await fetch('/admin/media/assets', { credentials: 'same-origin' });
@@ -2644,7 +2649,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         if (data.length === 0) {
           _allAssets = [];
           _assetMap = {};
-          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No assets yet.</div>';
+          container.innerHTML = '<div class="list-note">No assets yet.</div>';
           return;
         }
 
@@ -2675,7 +2680,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
       });
 
       if (filtered.length === 0) {
-        container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No matching assets.</div>';
+        container.innerHTML = '<div class="list-note">No matching assets.</div>';
         return;
       }
       container.innerHTML = filtered.map(a => buildAssetCard(a)).join('');
@@ -2756,7 +2761,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
 
     async function loadRemovedAssets() {
       const container = document.getElementById('removedList');
-      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+      container.innerHTML = '<div class="list-note">Loading…</div>';
 
       try {
         const res  = await fetch('/admin/media/assets?include_deleted=true', { credentials: 'same-origin' });
@@ -2773,7 +2778,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         _removedAssetsLoaded = true;
 
         if (_removedAssets.length === 0) {
-          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No removed assets.</div>';
+          container.innerHTML = '<div class="list-note">No removed assets.</div>';
           return;
         }
         renderRemovedList();
@@ -2801,7 +2806,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
       });
 
       if (filtered.length === 0) {
-        container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No matching removed assets.</div>';
+        container.innerHTML = '<div class="list-note">No matching removed assets.</div>';
         return;
       }
       container.innerHTML = filtered.map(a => buildRemovedAssetCard(a)).join('');
@@ -3095,7 +3100,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         return;
       }
 
-      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted)">Loading…</div>';
+      container.innerHTML = '<div class="list-note">Loading…</div>';
 
       try {
         const res  = await fetch(`/admin/media/slug/${encodeURIComponent(slug)}`,
@@ -3107,7 +3112,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
           return;
         }
         if (data.length === 0) {
-          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted)">No media history for this slug.</div>';
+          container.innerHTML = '<div class="list-note">No media history for this slug.</div>';
           return;
         }
 
@@ -3580,7 +3585,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
 
     async function loadPageList() {
       const container = document.getElementById('pageList');
-      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+      container.innerHTML = '<div class="list-note">Loading…</div>';
 
       try {
         const res  = await fetch('/admin/pages', { credentials: 'same-origin' });
@@ -3594,7 +3599,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
 
         if (data.length === 0) {
           _allPages = [];
-          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No pages yet.</div>';
+          container.innerHTML = '<div class="list-note">No pages yet.</div>';
           return;
         }
 
@@ -3624,7 +3629,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
       });
 
       if (filtered.length === 0) {
-        container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No matching pages.</div>';
+        container.innerHTML = '<div class="list-note">No matching pages.</div>';
         return;
       }
       container.innerHTML = filtered.map(p => buildPageCard(p)).join('');
@@ -3846,7 +3851,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
     // action so the view always re-renders from authoritative server state.
     async function loadBotClients() {
       const container = document.getElementById('botClientList');
-      container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">Loading…</div>';
+      container.innerHTML = '<div class="list-note">Loading…</div>';
       clearBotClientSelection();
 
       try {
@@ -3864,7 +3869,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         _allBotClients = Array.isArray(data) ? data : [];
 
         if (_allBotClients.length === 0) {
-          container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No bot clients yet.</div>';
+          container.innerHTML = '<div class="list-note">No bot clients yet.</div>';
           document.getElementById('bot-selection-tools').style.display = 'none';
           document.getElementById('bot-summary').style.display = 'none';
           return;
@@ -3910,7 +3915,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
       document.getElementById('bot-selection-tools').style.display = 'flex';
 
       if (filtered.length === 0) {
-        container.innerHTML = '<div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem 0">No bot clients match your search or filter.</div>';
+        container.innerHTML = '<div class="list-note">No bot clients match your search or filter.</div>';
         return;
       }
       container.innerHTML = filtered.map(c => buildBotClientCard(c)).join('');
