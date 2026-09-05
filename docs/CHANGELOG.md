@@ -2,6 +2,51 @@
 
 ---
 
+## Admin Panel UI v0.3 — Phase UI3H: UX Consistency & Feedback Polish
+
+**Status:** Complete, deployed, and production-verified. **Phase UI3H is now complete and closed.** Closed **once as a whole** covering UI3H-A → UI3H-G — no separate closure entries per subphase.
+
+**Objective:** A final UX hardening pass over the existing Admin Panel (`static/admin.html`) for the Dashboard, Slugs, Media, Pages, and Bot Clients modules — success/error feedback consistency, reversible-vs-destructive action hierarchy, loading/empty/busy-state consistency, timestamp-display normalization, narrow-screen/mobile polish, and stronger list error surfaces. Frontend-only and presentation-only. **No new routes. No backend / API / database / model / migration change. No change to fetch control flow, retry architecture, lifecycle semantics, timestamp values, the UTC serialization contract, the badge system, the modal system, or search/filter behaviour.**
+
+**Final production runtime commit:** `b895c804434d52489dfee7e47b17bc5a800508fa` — `feat(admin): strengthen list error surfaces`
+
+- **UI3H-A — Admin UX Consistency Audit** (audit only, no runtime commit) — read-only audit of the Admin Panel (Dashboard, Slugs / Link Engine, Media, Pages, Bot Clients, and Safety for reference) across heading hierarchy, search/filter layout, status badges, action hierarchy, destructive-action placement, empty / loading / error states, spacing, card density, narrow-screen behaviour, and cross-module consistency. Produced the P0 / P1 / P2 finding set and the ranked next-target list that drove the rest of the phase. No file change.
+
+- **UI3H-B — Feedback & Action Hierarchy Polish** (`ae729227ef5a41d7dcaece32907080ce5e64b6e8`, `feat(admin): polish feedback and action hierarchy`) — added a `.msg.ok` CSS rule equal to `.msg.success` so the many `showMsg(..., 'ok', ...)` call sites across Pages and Bot Clients render as styled confirmations instead of unstyled text (no call sites changed). Introduced a `.ghost-btn.reversible` modifier — a third visual tier between the plain ghost button and the red `.ghost-btn.danger` — and moved reversible lifecycle actions (Archive / Bulk Archive in Slugs, Detach Media, Detach Page, Deactivate and Unassign in Bot Clients) onto it, leaving permanent Delete on `danger`. Added a thin `.action-sep` divider before the Bot Client card's Delete button to reduce mis-click risk. No confirmation logic or backend semantics changed.
+
+- **UI3H-C — Loading / Empty / Busy States** (`e11754c96f1d130e3f05dad4498a906a70db1835`, `feat(admin): normalize list and busy states`) — added one `.list-note` CSS class carrying the loading / empty note style already inlined at every list container, and switched the Slugs / Media / Pages / Bot Clients list loaders to it (also fixing the one `loadSlugHistory` note that lacked the shared padding). Added `.ghost-btn:disabled` (mirroring `.action-btn:disabled`) so ghost buttons that already toggle `disabled` in a `try/finally` show consistent busy feedback. Existing guards (`_botActionBusy`) and `confirm()` flows unchanged. One Bot Clients filtered-empty wording string was left as-is because a locked test asserts it.
+
+- **UI3H-D — Timestamp / Timezone Consistency** (`7e4c37e326d3e1103c5183069aeb76bbcc4db60e`, `feat(admin): normalize timestamp display`) — added a shared `fmtTimestamp(value)` helper (falsy or unparseable → calm `—`, valid → `new Date(value).toLocaleString()`) and routed all 12 Slugs / Media / Pages / Bot Clients timestamp displays through it, replacing bare `new Date(x).toLocaleString()` calls that previously rendered `Invalid Date` on null. Browser locale and timezone still control display; no `Z` added or removed, no offset math, no backend serialization change. Safety's separate `fmtSafetyTime` helper was deliberately not consolidated.
+
+- **UI3H-E — Mobile / Narrow-Screen Polish** (`2ac4f74b80494ea561339c20561e745442e970e5`, `feat(admin): improve narrow-screen layout`) — CSS / layout only: the `≤480px` nav rule now forms an even 3-per-row grid instead of a lopsided wrap; `.bulk-bar` and five previously non-wrapping flex rows (four Slugs / Media search / lookup toolbars plus the Bot Client card action row) gained `flex-wrap: wrap`, with `min-width: 180px` on the four toolbar inputs to match the existing Page / Bot list toolbars. Desktop layout unchanged; existing breakpoints reused.
+
+- **UI3H-F — Safety-specific UX polish — intentionally skipped.** Not failed, not forgotten. The Safety Engine and Safety Admin surface are intentionally frozen for now because current Safety usage does not justify further UX work; Safety was explicitly out of scope for UI3H-B through UI3H-G and left completely untouched (its markup, JS, `fmtSafetyTime`, error divs, and lifecycle all unchanged). Safety is **not** removed or deprecated — the frozen surface remains fully live (see the Safety Engine v1 entries below).
+
+- **UI3H-G — Error Surface / Final UX Consistency Polish** (`b895c804434d52489dfee7e47b17bc5a800508fa`, `feat(admin): strengthen list error surfaces`) — added a `.list-error` CSS class with the same treatment as `.msg.error` but always visible (unlike `.msg`, which is `display:none` until shown), and switched the 10 bare inline error `<div>`s in the Media / Pages / Bot Clients list loaders (`loadStorage`, `loadRemovedAssets`, `loadSlugHistory`, `loadPageList`, `loadBotClients` — the HTTP-error and network-error branch of each) from weak `font-size:.8rem` red text to that class. Error wording unchanged; `data.detail` still surfaced; no fetch or error-handling control flow changed.
+
+**Main UX outcomes:**
+- **Success / error feedback consistency** — `.msg.ok` now styled like `.msg.success`; list load failures use a `.list-error` box matching `.msg.error` instead of weak red text.
+- **Reversible vs destructive action hierarchy** — three visual tiers: plain ghost button, `.reversible` (Archive / Deactivate / Detach / Unassign), and red `.danger` reserved for permanent Delete, with a divider before Delete on the Bot Client card.
+- **Loading / empty / busy-state consistency** — one `.list-note` class for loading and empty notes across the target modules; `.ghost-btn:disabled` gives ghost buttons the same busy feedback as `.action-btn`.
+- **Timestamp display normalization** — one `fmtTimestamp()` helper; null / invalid renders `—`, never `Invalid Date`; browser locale and timezone still control formatting; the UTC contract is preserved.
+- **Narrow-screen / mobile improvements** — even 3-up nav at `≤480px`; wrapping toolbars, bulk bars, and Bot Client action row; no desktop change.
+- **Stronger list error surfaces** — `.list-error` box replaces bare red text in the Media / Pages / Bot Clients loaders.
+
+**Files changed across the phase:** `static/admin.html` only, across all five runtime commits. No backend, API, schema, model, migration, or test files changed. UI3H-A produced audit findings only, with no file change.
+
+**Runtime commit range:** `ae72922` → `b895c80` — five sequential commits, each fast-forwarded onto `origin/master` in order:
+- `ae729227ef5a41d7dcaece32907080ce5e64b6e8` — `feat(admin): polish feedback and action hierarchy`
+- `e11754c96f1d130e3f05dad4498a906a70db1835` — `feat(admin): normalize list and busy states`
+- `7e4c37e326d3e1103c5183069aeb76bbcc4db60e` — `feat(admin): normalize timestamp display`
+- `2ac4f74b80494ea561339c20561e745442e970e5` — `feat(admin): improve narrow-screen layout`
+- `b895c804434d52489dfee7e47b17bc5a800508fa` — `feat(admin): strengthen list error surfaces`
+
+**Production verification:** VPS synchronized to `b895c80`; `HEAD == origin/master`; `shadz.service` active and enabled; `/health` returned 200; port 8000 listening; UI3H live Admin Panel tests passed. This closure documentation is a separate commit.
+
+**Next:** UI3I — Regression & Production Closure.
+
+---
+
 ## Admin Panel UI v0.3 — Phase UI3G: Bot Client Control Centre
 
 **Status:** Complete, deployed, and production-verified. **Phase UI3G is now complete and closed.** Closed **once as a whole** covering UI3G-A → UI3G-G — no separate closure entries per subphase.
