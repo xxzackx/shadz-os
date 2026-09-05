@@ -2,6 +2,24 @@
 
 ---
 
+## Admin Panel UI v0.3 — Phase UI3I: Regression & Production Closure
+
+**Status:** Complete. **Phase UI3I is now complete and closed, and with it Admin Panel UI v0.3 (UI3A → UI3I) is fully closed.** No production code changes were required — UI3I is a verification / closure phase and introduced no runtime, API, schema, or test changes.
+
+**Production runtime:** unchanged — `b895c804434d52489dfee7e47b17bc5a800508fa` (`feat(admin): strengthen list error surfaces`, the UI3H final runtime). This closure documentation is a separate commit.
+
+**Regression audit (read-only):** final regression pass over the completed Admin Panel UI v0.3 modules — Dashboard / Home, Link Engine / Slugs, Media Manager, Page Engine, Bot Client Control Centre, Safety Admin read-only UI, shared navigation / UX helpers, desktop + narrow / mobile layout, loading / empty / error / busy states, timestamp formatting, and existing confirmation / action semantics. The cumulative UI3H delta to `static/admin.html` (the only Admin UI change since UI3G) was reviewed line-by-line: CSS / presentation plus the additive `fmtTimestamp()` helper only — no `onclick`, `id`, `fetch`, `confirm()`, or in-flight-guard code changed. **No Admin Panel UI v0.3 regression found.**
+
+**Test results:**
+- Admin / UI3 + Safety-admin read-only suites (30 files): **446 passed, 0 failed**.
+- Full repository suite: **1070 passed, 7 failed** — all 7 failures are the pre-existing, wall-clock-sensitive `tests/test_safety_deadline_engine_s5.py` failures (`SafetyDeadlineEngineS5Tests`), which exercise `safety_deadline.py` (last modified at `48e2fe3`, Safety Phase S5), predate UI3, and are outside UI3I scope. Safety runtime and Safety tests were not touched by any UI3 phase and were not modified in UI3I. The repository suite is **not** fully passing; this exception is accurate and is carried forward as a known Safety-test-fixture item (a same-nature exclusion was already recorded in the UI3G closure).
+
+**Production verification (VPS `/opt/shadz-os`):** branch `master`; `HEAD == origin/master == 11ae3bd9f67bfc74e1f7a28429883ddd5b1d7628`; working tree clean; `shadz.service` active and enabled; port 8000 listening; `/health` HTTP 200; `/admin/` HTTP 307; no error / traceback / exception / critical entries in recent service logs. Production runtime is on UI3H `b895c80` (the parent of `11ae3bd`). No new manual UI retest was required for UI3I — UI3H already received successful live functional acceptance and no runtime / Admin UI code changed after UI3H closure.
+
+**Outcome:** Admin Panel UI v0.3 — Phases UI3A, UI3B, UI3C, UI3D, UI3E, UI3F, UI3G, UI3H, UI3I — is now **fully closed**, complete, deployed, and production-verified (production runtime UI3H `b895c80`). UI3H-F (Safety-specific UX polish) remains intentionally skipped, with the Safety Engine / Safety Admin surface intentionally frozen — not removed or deprecated.
+
+---
+
 ## Admin Panel UI v0.3 — Phase UI3H: UX Consistency & Feedback Polish
 
 **Status:** Complete, deployed, and production-verified. **Phase UI3H is now complete and closed.** Closed **once as a whole** covering UI3H-A → UI3H-G — no separate closure entries per subphase.
