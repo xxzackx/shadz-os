@@ -475,6 +475,18 @@
 
     /* Shared loading / empty note for list containers (Slugs, Media, Pages, Bot Clients). */
     .list-note { font-size: 0.75rem; color: var(--text-muted); padding: 0.5rem 0; }
+    /* Shared error box for list containers — same treatment as .msg.error,
+       always visible (unlike .msg, which is display:none until shown). */
+    .list-error {
+      margin: 0.5rem 0;
+      padding: 0.65rem 0.8rem;
+      border-radius: var(--radius-md);
+      background: #1a0000;
+      border: 1px solid #5a1e1e;
+      color: #e07070;
+      font-size: 0.82rem;
+      letter-spacing: 0.01em;
+    }
 
     /* ── Utility: sub-panel container (active media, empty-state blocks) ── */
     .inset-panel {
@@ -2653,7 +2665,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         if (!res.ok) {
           _allAssets = [];
           _assetMap = {};
-          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          container.innerHTML = `<div class="list-error">${esc(data.detail || 'Error')}</div>`;
           return;
         }
 
@@ -2671,7 +2683,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
       } catch {
         _allAssets = [];
         _assetMap = {};
-        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+        container.innerHTML = '<div class="list-error">Network error</div>';
       }
     }
 
@@ -2781,7 +2793,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         if (!res.ok) {
           _removedAssets = [];
           _removedAssetsLoaded = false;
-          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          container.innerHTML = `<div class="list-error">${esc(data.detail || 'Error')}</div>`;
           return;
         }
 
@@ -2796,7 +2808,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
       } catch {
         _removedAssets = [];
         _removedAssetsLoaded = false;
-        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+        container.innerHTML = '<div class="list-error">Network error</div>';
       }
     }
 
@@ -3119,7 +3131,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         const data = await res.json();
 
         if (!res.ok) {
-          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          container.innerHTML = `<div class="list-error">${esc(data.detail || 'Error')}</div>`;
           return;
         }
         if (data.length === 0) {
@@ -3153,7 +3165,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
             </div>
           </div>`).join('');
       } catch {
-        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+        container.innerHTML = '<div class="list-error">Network error</div>';
       }
     }
 
@@ -3604,7 +3616,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
 
         if (!res.ok) {
           _allPages = [];
-          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          container.innerHTML = `<div class="list-error">${esc(data.detail || 'Error')}</div>`;
           return;
         }
 
@@ -3618,7 +3630,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         renderPageList();
       } catch {
         _allPages = [];
-        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+        container.innerHTML = '<div class="list-error">Network error</div>';
       }
     }
 
@@ -3871,7 +3883,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
 
         if (!res.ok) {
           _allBotClients = [];
-          container.innerHTML = `<div style="color:#e07070;font-size:.8rem">${esc(data.detail || 'Error')}</div>`;
+          container.innerHTML = `<div class="list-error">${esc(data.detail || 'Error')}</div>`;
           document.getElementById('bot-selection-tools').style.display = 'none';
           document.getElementById('bot-summary').style.display = 'none';
           return;
@@ -3889,7 +3901,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
         renderBotClients();
       } catch {
         _allBotClients = [];
-        container.innerHTML = '<div style="color:#e07070;font-size:.8rem">Network error</div>';
+        container.innerHTML = '<div class="list-error">Network error</div>';
         document.getElementById('bot-selection-tools').style.display = 'none';
         document.getElementById('bot-summary').style.display = 'none';
       }
