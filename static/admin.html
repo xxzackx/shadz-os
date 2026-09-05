@@ -102,7 +102,8 @@
 
     @media (max-width: 480px) {
       .admin-nav { gap: 0.4rem; }
-      .nav-link { flex: 1 1 auto; padding: 0.55rem 0.5rem; }
+      /* Even 3-per-row grid instead of an uneven last row. */
+      .nav-link { flex: 1 1 28%; padding: 0.55rem 0.4rem; text-align: center; }
     }
 
     /* ── Module group headers (home screen) ── */
@@ -549,6 +550,7 @@
     .bulk-bar {
       display: none;
       align-items: center;
+      flex-wrap: wrap;
       gap: 0.6rem;
       margin-top: 0.75rem;
       padding: 0.55rem 0.8rem;
@@ -855,8 +857,8 @@
       </div>
 
       <label for="s-slug">Slug</label>
-      <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem">
-        <input type="text" id="s-slug" placeholder="url-a1b2c3" autocomplete="off" style="margin-bottom:0;flex:1" onkeydown="onEnterTrigger(event, lookupSlugDirect)" />
+      <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap">
+        <input type="text" id="s-slug" placeholder="url-a1b2c3" autocomplete="off" style="margin-bottom:0;flex:1;min-width:180px" onkeydown="onEnterTrigger(event, lookupSlugDirect)" />
         <button class="action-btn" style="width:auto;padding:0.65rem 1rem;margin-top:0;flex-shrink:0" onclick="lookupSlugDirect()">Find</button>
       </div>
 
@@ -981,8 +983,8 @@
       <div id="st-activeView">
         <!-- Slug history lookup -->
         <label for="st-slug">Check Media History by Slug</label>
-        <div style="display:flex;gap:0.5rem;margin-bottom:1rem">
-          <input type="text" id="st-slug" placeholder="media-abc123" autocomplete="off" style="margin-bottom:0;flex:1" onkeydown="onEnterTrigger(event, loadSlugHistory)" />
+        <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
+          <input type="text" id="st-slug" placeholder="media-abc123" autocomplete="off" style="margin-bottom:0;flex:1;min-width:180px" onkeydown="onEnterTrigger(event, loadSlugHistory)" />
           <button class="action-btn" style="width:auto;padding:0.65rem 1rem;margin-top:0;flex-shrink:0" onclick="loadSlugHistory()">Check</button>
         </div>
         <div id="st-historyResults" style="margin-bottom:1.25rem"></div>
@@ -992,8 +994,8 @@
           <span style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em">All Assets</span>
           <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadStorage()">Refresh</button>
         </div>
-        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem">
-          <input type="text" id="st-search" placeholder="Search ID, name, or filename…" autocomplete="off" style="margin-bottom:0;flex:1" oninput="filterStorageList()" />
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap">
+          <input type="text" id="st-search" placeholder="Search ID, name, or filename…" autocomplete="off" style="margin-bottom:0;flex:1;min-width:180px" oninput="filterStorageList()" />
           <select id="st-typeFilter" style="margin-bottom:0;width:auto;flex-shrink:0" onchange="filterStorageList()">
             <option value="all">All</option>
             <option value="image">Image</option>
@@ -1013,8 +1015,8 @@
           <span style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em">Removed Assets</span>
           <button class="ghost-btn" style="width:auto;padding:0.25rem 0.75rem" onclick="loadRemovedAssets()">Refresh</button>
         </div>
-        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem">
-          <input type="text" id="rm-search" placeholder="Search ID, name, filename, or R2 key…" autocomplete="off" style="margin-bottom:0;flex:1" oninput="filterRemovedList()" />
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap">
+          <input type="text" id="rm-search" placeholder="Search ID, name, filename, or R2 key…" autocomplete="off" style="margin-bottom:0;flex:1;min-width:180px" oninput="filterRemovedList()" />
           <select id="rm-typeFilter" style="margin-bottom:0;width:auto;flex-shrink:0" onchange="filterRemovedList()">
             <option value="all">All</option>
             <option value="image">Image</option>
@@ -4121,7 +4123,7 @@ Timezone is shown for reference only and cannot be changed here. Daily Deadline 
             <span class="stats-label">Last Activity</span>
             <span class="stats-value value-overflow">${lastActivity}</span>
           </div>
-          <div class="stats-row" style="justify-content:flex-end;gap:0.5rem">
+          <div class="stats-row" style="justify-content:flex-end;gap:0.5rem;flex-wrap:wrap">
             <button class="ghost-btn sm" onclick="regenerateAccessCode(${c.id})">Regenerate Access Code</button>
             ${toggleBtn}
             <span class="action-sep"></span>
